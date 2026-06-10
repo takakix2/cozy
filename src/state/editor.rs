@@ -1,0 +1,652 @@
+use std::fs::File;
+use std::io::{self, Write};
+use std::path::PathBuf;
+use std::time::Instant;
+use crate::state::Cursor;
+use crate::state::TextBuffer;
+use serde::Deserialize;
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct Config {
+    pub page_size: usize,
+    pub theme: Option<String>,
+    pub show_line_numbers: Option<bool>,
+    pub status_duration: Option<u64>,
+    pub keys: Option<std::collections::HashMap<String, String>>,
+    pub line_number_bg: Option<String>,
+    pub line_number_fg: Option<String>,
+    pub cursor_blink: Option<bool>,
+    /// Which mode you rest in. "edit" (default) = type like nano. "glide" =
+    /// navigate like vim. Affects every action's return target, not just startup.
+    pub default_mode: Option<String>,
+}
+
+impl Config {
+    pub fn load() -> Self {
+        Self::load_from(None)
+    }
+
+    /// Load config, optionally overriding the search directory (for iOS sandbox etc.).
+    pub fn load_from(config_dir: Option<&PathBuf>) -> Self {
+        let paths: Vec<PathBuf> = if let Some(dir) = config_dir {
+            vec![dir.join("cozy.toml"), dir.join("config.toml")]
+        } else {
+            vec![
+                PathBuf::from("config.toml"),
+                dirs::config_dir().map(|p| p.join("cozy/config.toml")).unwrap_or_default(),
+                dirs::home_dir().map(|p| p.join(".cozy/config.toml")).unwrap_or_default(),
+            ]
+        };
+
+        for path in &paths {
+            if path.exists() {
+                if let Ok(content) = std::fs::read_to_string(path) {
+                    match toml::from_str::<Config>(&content) {
+                        Ok(config) => return config,
+                        Err(e) => {
+                            eprintln!("warning: Failed to parse config file '{}': {}", path.display(), e);
+                            eprintln!("warning: Using default configuration");
+                            // Continue to next path or use defaults
+                        }
+                    }
+                }
+            }
+        }
+
+        Self {
+            page_size: 20,
+            theme: Some("dark".to_string()),
+            show_line_numbers: Some(true),
+            status_duration: Some(3),
+            line_number_bg: Some("darkgray".to_string()),
+            line_number_fg: Some("white".to_string()),
+            cursor_blink: Some(true),
+            keys: None,
+            default_mode: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+
+pub enum EditorMode {
+    Edit,
+    Glide,
+    Search,
+    Replace,
+    Save,
+    Open,
+    Help,
+    Quit,
+    Welcome,
+    Goto,
+    Browse,
+    Markdown,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum StatusKind {
+    Info,
+    Success,
+    Error,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum SearchMode {
+    MatchCase,
+    Regex,
+    ByWord,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ReplaceFocus {
+    Query,
+    Replace,
+}
+
+pub struct EditorState {
+    pub buffer: TextBuffer,
+    pub cursor: Cursor,
+    pub filename: Option<PathBuf>,       // PathBufに変更
+    pub _working_dir: PathBuf,            // 新規: カレントディレクトリ
+    pub modified: bool,                  // 新規: 変更フラグ
+    pub mode: EditorMode,                // 新規: モード管理
+    pub save_filename_buffer: String,    // 新規: 保存時の入力バッファ
+    pub open_filename_buffer: String,    // 新規: 読み込み時の入力バッファ
+    pub filename_cursor: usize,          // 新規: ファイル名入力カーソル位置 (byte index)
+    pub status_message: Option<String>,  // Optionに変更
+    pub status_timestamp: Option<Instant>, // 名前変更 & Option化
+    pub status_persistent: bool,         // 新規: 常時表示フラグ
+    pub status_kind: StatusKind,         // 新規: ステータス種別
+    pub scroll_offset: usize,            // 新規: スクロール位置
+    pub _startup_args: Vec<String>,       // 新規: 将来用
+    pub _startup_time: Instant,           // 新規: 将来用
+    pub _footer_shortcuts: Vec<String>,   // 新規: 将来用
+    pub shortcut_map: std::collections::HashMap<(crate::state::key::KeyCode, crate::state::key::KeyModifiers), crate::shortcuts::EditorAction>, // 新規: ショートカットマップ
+    pub search_buffer: String,           // 新規: 検索用バッファ
+    pub replace_buffer: String,          // 新規: 置換用バッファ
+    pub search_cursor: usize,            // 検索/置換入力欄のカーソル位置 (byte index)
+    pub replace_focus: ReplaceFocus,     // 新規: 置換モードのフォーカス
+    pub page_size: usize,                // 新規: ページサイズ
+    pub config: Config,                  // 新規: 設定
+    pub cursor_blink: bool,              // 新規: カーソル点滅フラグ
+    pub search_mode: SearchMode,         // 新規: 検索モード
+    pub undo_stack: Vec<(TextBuffer, Cursor)>, // 新規: Undoスタック
+    pub redo_stack: Vec<(TextBuffer, Cursor)>, // 新規: Redoスタック
+    pub last_saved_id: usize,             // 新規: 保存時のスナップショットID（dirty判定用）
+    pub help_scroll_offset: u16,         // 新規: ヘルプ画面のスクロール位置
+    pub markdown_scroll_offset: u16,     // Markdown preview のスクロール位置
+    pub markdown_cursor_line: u16,       // Markdown preview の現在行
+    pub markdown_view_height: u16,       // Markdown preview の表示行数
+    pub show_line_numbers_runtime: Option<bool>, // 新規: ランタイム行番号表示フラグ (Noneならconfigに従う)
+    pub goto_line_buffer: String,         // 行ジャンプ入力バッファ
+    /// All search match positions: (line_y, byte_start, byte_end)
+    pub search_matches: Vec<(usize, usize, usize)>,
+    /// Index of the currently focused match in search_matches
+    pub search_current: usize,
+    /// Whether soft-wrap is active (long lines wrap within the viewport)
+    pub soft_wrap: bool,
+    /// Text display width (columns after subtracting line-number gutter); set by renderer
+    pub text_display_width: usize,
+    /// Pending prefix key in Glide mode (e.g. Some('g') while waiting for second 'g')
+    pub glide_prefix: Option<char>,
+    /// Digit accumulation buffer for Glide count prefix (e.g. "53" for 53j)
+    pub glide_count: String,
+    /// Unnamed register holding the last delete/yank, for `p`/`P`.
+    pub register: Register,
+    /// Operator awaiting a motion in Glide mode (`d`/`c`/`y` pressed).
+    pub pending_operator: Option<crate::glide::Operator>,
+    /// Set while waiting for the target char of a find motion (e.g. after `df`,
+    /// `dt`, `dF`, `dT`); the variant records which find family is pending.
+    pub glide_find_pending: Option<crate::glide::FindKind>,
+    /// The span flashed after a yank, shown until the next keypress.
+    pub yank_highlight: Option<YankHighlight>,
+    /// The last to-char motion (`>`/`<`/`t`/`T`), replayed by `.` (forward) and
+    /// `,` (backward).
+    pub last_find: Option<(crate::glide::FindKind, char)>,
+    /// The folder tree shown in Browse mode (built on entry, `None` otherwise).
+    pub browse_tree: Option<crate::browse::BrowseTree>,
+}
+
+/// The unnamed register: holds cut/yanked text. `linewise` means the content is
+/// whole lines (`dd`, `yy`) rather than an inline span (`D`, `dw`).
+#[derive(Debug, Clone, Default)]
+pub struct Register {
+    pub text: String,
+    pub linewise: bool,
+}
+
+/// The span just yanked, flashed in the buffer so you can see what was copied
+/// (yank has no other visible effect). Cleared on the next keypress.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct YankHighlight {
+    /// Inclusive start `(line, byte)`.
+    pub start: (usize, usize),
+    /// Exclusive end `(line, byte)` for charwise; for linewise only `end.0` matters.
+    pub end: (usize, usize),
+    pub linewise: bool,
+}
+
+impl YankHighlight {
+    /// Whether the char at `(y, byte)` falls inside this highlight.
+    pub fn contains(&self, y: usize, byte: usize) -> bool {
+        if self.linewise {
+            y >= self.start.0 && y <= self.end.0
+        } else {
+            (y, byte) >= self.start && (y, byte) < self.end
+        }
+    }
+}
+
+/// Pick a default save name for a new buffer that doesn't clobber an existing
+/// file in `dir`: `untitled.txt`, then `untitled (1).txt`, `untitled (2).txt`, …
+fn default_save_name(dir: &std::path::Path) -> String {
+    let first = "untitled.txt".to_string();
+    if !dir.join(&first).exists() {
+        return first;
+    }
+    for n in 1..10_000 {
+        let candidate = format!("untitled ({}).txt", n);
+        if !dir.join(&candidate).exists() {
+            return candidate;
+        }
+    }
+    first
+}
+
+impl EditorState {
+    pub fn new(filename: Option<String>) -> Self {
+        Self::new_with_config_dir(filename, None)
+    }
+
+
+    pub fn new_with_config_dir(filename: Option<String>, config_dir: Option<&PathBuf>) -> Self {
+        let config = Config::load_from(config_dir);
+        let mut lines = vec![String::new()];
+        let mut path_buf = None;
+        let mut initial_mode = EditorMode::Welcome;
+        let mut browse_tree = None;
+
+        if let Some(ref path) = filename {
+            // `cozy <folder>` opens the tree; `cozy <file>` edits as before. Without
+            // this branch a directory path fell through to Edit with the dir as
+            // `filename`, which then broke on save.
+            if std::path::Path::new(path).is_dir() {
+                browse_tree = Some(crate::browse::BrowseTree::build(std::path::Path::new(path)));
+                initial_mode = EditorMode::Browse;
+            } else {
+                if let Ok(content) = std::fs::read_to_string(path) {
+                    lines = content.lines().map(|s| s.to_string()).collect();
+                    if lines.is_empty() {
+                        lines.push(String::new());
+                    }
+                }
+                path_buf = Some(PathBuf::from(path));
+                initial_mode = Self::resolve_home(&config);
+            }
+        }
+
+        let working_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+
+        Self {
+            buffer: TextBuffer::from_lines(lines),
+            cursor: Cursor::default(),
+            filename: path_buf,
+            _working_dir: working_dir,
+            modified: false,
+            mode: initial_mode,
+            save_filename_buffer: String::new(),
+            open_filename_buffer: String::new(),
+            filename_cursor: 0,
+            status_message: None,
+            status_timestamp: None,
+            status_persistent: true, // デフォルトは常時表示
+            status_kind: StatusKind::Info,
+            scroll_offset: 0,
+            _startup_args: std::env::args().collect(),
+            _startup_time: Instant::now(),
+            _footer_shortcuts: crate::shortcuts::footer_labels(),
+            shortcut_map: crate::shortcuts::build_shortcut_map(config.keys.as_ref()),
+            search_buffer: String::new(),
+            replace_buffer: String::new(),
+            search_cursor: 0,
+            replace_focus: ReplaceFocus::Query,
+            page_size: config.page_size,
+            config,
+            cursor_blink: true,
+            search_mode: SearchMode::ByWord,
+            undo_stack: Vec::new(),
+            redo_stack: Vec::new(),
+            last_saved_id: 0,
+            help_scroll_offset: 0,
+            markdown_scroll_offset: 0,
+            markdown_cursor_line: 0,
+            markdown_view_height: 0,
+            show_line_numbers_runtime: None,
+            goto_line_buffer: String::new(),
+            search_matches: Vec::new(),
+            search_current: 0,
+            soft_wrap: true,
+            text_display_width: 0,
+            glide_prefix: None,
+            glide_count: String::new(),
+            register: Register::default(),
+            pending_operator: None,
+            glide_find_pending: None,
+            yank_highlight: None,
+            last_find: None,
+            browse_tree,
+        }
+    }
+
+    pub fn save_snapshot(&mut self) {
+        self.undo_stack.push((self.buffer.clone(), self.cursor.clone()));
+        self.redo_stack.clear();
+    }
+
+    pub fn undo(&mut self) {
+        if let Some((buffer, cursor)) = self.undo_stack.pop() {
+            self.redo_stack.push((self.buffer.clone(), self.cursor));
+            self.buffer = buffer;
+            self.cursor = cursor;
+        }
+    }
+
+    pub fn redo(&mut self) {
+        if let Some((buffer, cursor)) = self.redo_stack.pop() {
+            self.undo_stack.push((self.buffer.clone(), self.cursor));
+            self.buffer = buffer;
+            self.cursor = cursor;
+        }
+    }
+
+    pub fn set_status_message(&mut self, msg: String, kind: StatusKind, persistent: bool) {
+        self.status_message = Some(msg);
+        self.status_timestamp = Some(Instant::now());
+        self.status_kind = kind;
+        self.status_persistent = persistent;
+    }
+
+    pub fn should_show_status(&self) -> bool {
+        if self.status_persistent {
+            return true;
+        }
+        if let Some(timestamp) = self.status_timestamp {
+            let duration = self.config.status_duration.unwrap_or(3);
+            if timestamp.elapsed() < std::time::Duration::from_secs(duration) {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// The resting/return mode the user lands in after an action completes,
+    /// resolved from `config.default_mode`. Unknown/missing → Edit (the safe
+    /// default that keeps zero hidden state for newcomers).
+    pub fn home_mode(&self) -> EditorMode {
+        Self::resolve_home(&self.config)
+    }
+
+    /// Same resolution as [`home_mode`], usable before `EditorState` exists
+    /// (e.g. when picking the startup mode in `new_with_config_dir`).
+    pub fn resolve_home(config: &Config) -> EditorMode {
+        match config.default_mode.as_deref() {
+            Some("glide") => EditorMode::Glide,
+            _ => EditorMode::Edit,
+        }
+    }
+
+    pub fn enter_mode(&mut self, mode: EditorMode) {
+        self.mode = mode;
+        match mode {
+            EditorMode::Save | EditorMode::Quit => {
+                // A new, unnamed buffer gets a default name so the user can just
+                // hit Enter to drop a memo into the current folder. The default
+                // dodges existing files by counting up: untitled (1).txt, etc.
+                let dir = self._working_dir.clone();
+                self.save_filename_buffer = self.filename
+                    .as_ref()
+                    .map(|p| p.to_string_lossy().to_string())
+                    .unwrap_or_else(|| default_save_name(&dir));
+                self.filename_cursor = self.save_filename_buffer.len();
+                self.status_message = None;
+            }
+            EditorMode::Open => {
+                self.open_filename_buffer = self.filename
+                    .as_ref()
+                    .map(|p| p.to_string_lossy().to_string())
+                    .unwrap_or_default();
+                self.filename_cursor = self.open_filename_buffer.len();
+                self.status_message = None;
+            }
+            EditorMode::Search => {
+                self.search_buffer.clear();
+                self.search_matches.clear();
+                self.search_current = 0;
+                self.search_mode = crate::state::SearchMode::ByWord;
+                self.search_cursor = 0;
+                self.status_message = None;
+            }
+            EditorMode::Replace => {
+                self.search_buffer.clear();
+                self.replace_buffer.clear();
+                self.search_matches.clear();
+                self.search_current = 0;
+                self.replace_focus = crate::state::ReplaceFocus::Query;
+                self.search_cursor = 0;
+                self.status_message = None;
+            }
+            EditorMode::Goto => {
+                self.goto_line_buffer.clear();
+                self.status_message = None;
+            }
+            EditorMode::Glide => {
+                self.glide_prefix = None;
+                self.glide_count.clear();
+                self.status_message = None;
+            }
+            EditorMode::Browse => {
+                // Root the tree at the current file's parent so Ctrl+O shows "around
+                // here"; fall back to the working dir when no file is open.
+                let root = self.filename.as_ref()
+                    .and_then(|p| p.parent())
+                    .map(|p| p.to_path_buf())
+                    .unwrap_or_else(|| self._working_dir.clone());
+                let mut tree = crate::browse::BrowseTree::build(&root);
+                if let Some(file) = &self.filename {
+                    tree.select_path(file);
+                }
+                self.browse_tree = Some(tree);
+                self.status_message = None;
+            }
+            EditorMode::Markdown => {
+                self.markdown_scroll_offset = 0;
+                self.markdown_cursor_line = 0;
+                self.markdown_view_height = 0;
+                self.glide_prefix = None;
+                self.glide_count.clear();
+                self.status_message = None;
+            }
+            _ => {
+                self.status_message = None;
+            }
+        }
+    }
+}
+
+// --- 保存系メソッド ---
+impl EditorState {
+    /// Resolve a possibly-relative save target against the folder cozy is anchored
+    /// to (`_working_dir`). This keeps the actual write in the same folder the
+    /// default-name collision check looked at — and the same folder regardless of
+    /// the process cwd, which matters once Browse can span multiple repos.
+    fn resolve_in_working_dir(&self, path: &std::path::Path) -> PathBuf {
+        if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            self._working_dir.join(path)
+        }
+    }
+
+    /// 通常保存（現在のファイル名に保存）
+    pub fn save(&mut self) -> io::Result<()> {
+        let Some(path) = self.filename.clone() else {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "No filename set. Use Save As to specify a filename."
+            ));
+        };
+        let target = self.resolve_in_working_dir(&path);
+
+        // ディレクトリが存在するか確認（空の親 = カレントディレクトリは常に存在）
+        if let Some(parent) = target.parent() {
+            if !parent.as_os_str().is_empty() && !parent.exists() {
+                return Err(io::Error::new(
+                    io::ErrorKind::NotFound,
+                    format!("Directory not found:{}", parent.display())
+                ));
+            }
+        }
+
+        let mut file = File::create(&target).map_err(|e| {
+            io::Error::new(
+                e.kind(),
+                format!("Failed to save '{}': {}", target.display(), e)
+            )
+        })?;
+
+        for line in &self.buffer.lines {
+            writeln!(file, "{}", line).map_err(|e| {
+                io::Error::new(
+                    io::ErrorKind::WriteZero,
+                    format!("Write error: {}", e)
+                )
+            })?;
+        }
+
+        self.last_saved_id = self.undo_stack.len(); // 保存時のスナップショットIDを記録
+        self.modified = false; // 互換性のため（将来削除可）
+        Ok(())
+    }
+
+    /// 名前をつけて保存（新しいファイル名を指定して保存し、記憶する）
+    pub fn save_as(&mut self, path: &str) -> io::Result<()> {
+        if path.is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Filename is empty"
+            ));
+        }
+        
+        let path_buf = PathBuf::from(path);
+        let target = self.resolve_in_working_dir(&path_buf);
+
+        // ディレクトリが存在するか確認（空の親 = カレントディレクトリは常に存在）
+        if let Some(parent) = target.parent() {
+            if !parent.as_os_str().is_empty() && !parent.exists() {
+                return Err(io::Error::new(
+                    io::ErrorKind::NotFound,
+                    format!("Directory not found:{}", parent.display())
+                ));
+            }
+        }
+
+        let mut file = File::create(&target).map_err(|e| {
+            let kind = if e.kind() == io::ErrorKind::PermissionDenied {
+                io::ErrorKind::PermissionDenied
+            } else {
+                e.kind()
+            };
+            io::Error::new(
+                kind,
+                format!("Failed to save '{}': {}", path, e)
+            )
+        })?;
+
+        for line in &self.buffer.lines {
+            writeln!(file, "{}", line).map_err(|e| {
+                io::Error::new(
+                    io::ErrorKind::WriteZero,
+                    format!("Write error: {}", e)
+                )
+            })?;
+        }
+
+        self.filename = Some(path_buf);
+        self.last_saved_id = self.undo_stack.len(); // 保存時のスナップショットIDを記録
+        self.modified = false; // 互換性のため（将来削除可）
+        Ok(())
+    }
+
+    /// ファイルを開く
+    pub fn open_file(&mut self, path: &str) -> io::Result<()> {
+        if path.is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Filename is empty"
+            ));
+        }
+        
+        let path_buf = PathBuf::from(path);
+        
+        // ファイルが存在するか確認
+        if !path_buf.exists() {
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("File not found: {}", path)
+            ));
+        }
+        
+        // ファイルかどうか確認（ディレクトリではない）
+        if !path_buf.is_file() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("Not a file: {}", path)
+            ));
+        }
+        
+        let content = std::fs::read_to_string(&path_buf).map_err(|e| {
+            let kind = if e.kind() == io::ErrorKind::PermissionDenied {
+                io::ErrorKind::PermissionDenied
+            } else {
+                e.kind()
+            };
+            io::Error::new(
+                kind,
+                format!("Failed to open '{}': {}", path, e)
+            )
+        })?;
+        
+        let lines: Vec<String> = content.lines().map(|s| s.to_string()).collect();
+        self.buffer = TextBuffer::from_lines(lines);
+        self.filename = Some(path_buf);
+        self.cursor = Cursor::default();
+        self.modified = false;
+        self.scroll_offset = 0; // スクロール位置もリセット
+        Ok(())
+    }
+
+    pub fn adjust_scroll(&mut self, viewport_height: usize) {
+        if viewport_height == 0 { return; }
+
+        // Always scroll up if cursor is above viewport
+        if self.cursor.y < self.scroll_offset {
+            self.scroll_offset = self.cursor.y;
+            return;
+        }
+
+        if !self.soft_wrap || self.text_display_width == 0 {
+            if self.cursor.y >= self.scroll_offset + viewport_height {
+                self.scroll_offset = self.cursor.y - viewport_height + 1;
+            }
+            return;
+        }
+
+        // Soft wrap: check if cursor's visual sub-row is already visible
+        let tw = self.text_display_width;
+        let mut vrows = 0usize;
+        let mut cursor_visible = false;
+
+        for by in self.scroll_offset..=self.cursor.y {
+            if by >= self.buffer.lines.len() { break; }
+            let line = &self.buffer.lines[by];
+            let lrows = crate::utils::wrap::visual_row_count(line, tw);
+            if by == self.cursor.y {
+                let (sub, _) = crate::utils::wrap::cursor_visual_pos(line, self.cursor.x, tw);
+                cursor_visible = vrows + sub < viewport_height;
+                break;
+            }
+            vrows += lrows;
+            if vrows >= viewport_height { break; }
+        }
+
+        if cursor_visible { return; }
+
+        // Cursor is below viewport: find a scroll_offset that shows cursor near bottom
+        let tw = self.text_display_width;
+        let cursor_line = &self.buffer.lines[self.cursor.y];
+        let (cursor_sub, _) = crate::utils::wrap::cursor_visual_pos(cursor_line, self.cursor.x, tw);
+
+        if cursor_sub >= viewport_height {
+            // cursor's sub-row alone fills the viewport; show from cursor.y
+            self.scroll_offset = self.cursor.y;
+            return;
+        }
+
+        // Walk backward from cursor.y, accumulating rows, until viewport is full
+        let mut rows_used = cursor_sub + 1;
+        let mut new_offset = self.cursor.y;
+        let mut y = self.cursor.y;
+        while y > 0 && rows_used < viewport_height {
+            y -= 1;
+            let r = crate::utils::wrap::visual_row_count(&self.buffer.lines[y], tw);
+            if rows_used + r <= viewport_height {
+                rows_used += r;
+                new_offset = y;
+            } else {
+                break;
+            }
+        }
+        self.scroll_offset = new_offset;
+    }
+}

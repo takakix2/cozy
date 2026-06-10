@@ -1,0 +1,44 @@
+[package]
+name = "cozy"
+version = "0.1.17"
+edition = "2024"
+rust-version = "1.85"
+description = "A Comfort First terminal text editor: type like nano, navigate like vim"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/takakix2/cozy"
+homepage = "https://labs.navii.online/"
+readme = "README.md"
+keywords = ["editor", "tui", "terminal", "text-editor", "vim"]
+categories = ["command-line-utilities", "text-editors"]
+# Ship only the crate itself; dev docs/logs/plans live on the repo, not the tarball.
+include = [
+    "src/**/*.rs",
+    "/Cargo.toml",
+    "/README.md",
+    "/README.ja.md",
+    "/CHANGELOG.md",
+    "/LICENSE-MIT",
+    "/LICENSE-APACHE",
+    "/config.toml",
+]
+
+[dependencies]
+ratatui = "0.29"
+crossterm = "0.27"
+serde = { version = "1.0", features = ["derive"] }
+toml = "0.8"
+dirs = "5.0"
+regex = "1.12.2"
+unicode-width = "0.1"
+ignore = "0.4"
+arboard = { version = "3.2", optional = true }
+
+[features]
+default = ["clipboard", "crossterm-events"]
+clipboard = ["dep:arboard"]
+# Disable when embedding in a host that provides its own event source (e.g. hsh-ios)
+crossterm-events = []
+
+[lib]
+name = "cozy"
+path = "src/lib.rs"
