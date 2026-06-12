@@ -11,6 +11,7 @@ pub mod operator;
 pub mod file;
 pub mod status;
 pub mod browse;
+pub mod command;
 
 #[cfg(test)]
 mod editor_test;
@@ -331,6 +332,12 @@ pub fn reduce(editor: &mut EditorState, action: Action) -> EventResult {
         Action::BrowseStartFilter => browse::start_filter(editor),
         Action::BrowseFilterChar(c) => browse::filter_char(editor, c),
         Action::BrowseFilterBackspace => browse::filter_backspace(editor),
+        Action::CommandInput(c) => command::input_char(editor, c),
+        Action::CommandBackspace => command::backspace(editor),
+        Action::CommandMoveUp => command::move_up(editor),
+        Action::CommandMoveDown => command::move_down(editor),
+        Action::CommandComplete => command::complete(editor),
+        Action::CommandExecute => command::execute(editor),
 
         _ => {
             editor::apply_editor_event(editor, &action)

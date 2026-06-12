@@ -12,8 +12,6 @@ pub enum EditorAction {
     ForceQuit,  // Ctrl+Q - Quit immediately without saving
     EnterSearch,
     EnterReplace,
-    SearchNext,
-    SearchPrevious,
     ReplaceAll,
     Enter,
     MoveLeft,
@@ -39,6 +37,7 @@ pub enum EditorAction {
     EnterGoto,
     EnterGlide,
     ToggleMarkdownPreview,
+    EnterCommand,
 }
 
 #[derive(Clone)]
@@ -71,8 +70,6 @@ fn search_shortcuts() -> Vec<Shortcut> {
         sc(KeyCode::Char('f'), KeyModifiers::CONTROL, EditorAction::EnterSearch, "Ctrl+F Find..."),
         sc(KeyCode::Char('r'), KeyModifiers::CONTROL, EditorAction::EnterReplace, "Ctrl+R Replace..."),
         sc(KeyCode::Char('q'), KeyModifiers::CONTROL, EditorAction::ForceQuit, "Ctrl+Q Quit without saving"),
-        sc(KeyCode::Char('n'), KeyModifiers::CONTROL, EditorAction::SearchNext, "Ctrl+N Next"),
-        sc(KeyCode::Char('p'), KeyModifiers::CONTROL, EditorAction::SearchPrevious, "Ctrl+P Previous"),
         sc(KeyCode::Char('t'), KeyModifiers::CONTROL, EditorAction::ToggleSearchMode, "Ctrl+T Toggle"),
     ]
 }
@@ -100,6 +97,7 @@ fn edit_shortcuts() -> Vec<Shortcut> {
 fn utility_shortcuts() -> Vec<Shortcut> {
     vec![
         sc(KeyCode::Char('h'), KeyModifiers::CONTROL, EditorAction::EnterHelp, "Ctrl+H Help"),
+        sc(KeyCode::Char('p'), KeyModifiers::CONTROL, EditorAction::EnterCommand, "Ctrl+P Command"),
         // F1 is an unambiguous Help fallback: Ctrl+H sends the Backspace byte
         // (0x08) on some terminals and can be swallowed there.
         sc(KeyCode::F(1), KeyModifiers::NONE, EditorAction::EnterHelp, "F1 Help"),
@@ -214,8 +212,6 @@ pub fn action_from_name(name: &str) -> Option<EditorAction> {
         "force_quit"         => Some(EditorAction::ForceQuit),
         "enter_search"       => Some(EditorAction::EnterSearch),
         "enter_replace"      => Some(EditorAction::EnterReplace),
-        "search_next"        => Some(EditorAction::SearchNext),
-        "search_previous"    => Some(EditorAction::SearchPrevious),
         "replace_all"        => Some(EditorAction::ReplaceAll),
         "enter_help"         => Some(EditorAction::EnterHelp),
         "undo"               => Some(EditorAction::Undo),
@@ -234,6 +230,7 @@ pub fn action_from_name(name: &str) -> Option<EditorAction> {
         "enter_goto"         => Some(EditorAction::EnterGoto),
         "enter_glide"        => Some(EditorAction::EnterGlide),
         "toggle_markdown"    => Some(EditorAction::ToggleMarkdownPreview),
+        "enter_command"      => Some(EditorAction::EnterCommand),
         "paste"              => Some(EditorAction::Paste),
         _ => None,
     }

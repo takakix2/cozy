@@ -1,4 +1,4 @@
-# config.toml
+# config.example.toml
 
 # ページサイズ（PageUp/PageDown の移動行数）
 page_size = 20
@@ -14,9 +14,18 @@ status_duration = 3
 
 # 行番号パネルの背景色（例: "darkgray", "blue", "black"）
 line_number_bg = "darkgray"
-
-# 行番号パネルの文字色（例: "white", "yellow"）
 line_number_fg = "white"
+
+# フッター（ショートカット表示）の色
+# 色名: "black", "darkgray", "gray", "white", "cyan" など
+# True color: "#222226" のような #RRGGBB も指定できます
+footer_bg = "#222226"
+footer_key_fg = "cyan"
+footer_fg = "gray"
+
+# ステータスバーの色
+status_bar_bg = "darkgray"
+status_bar_fg = "white"
 
 # カーソルの点滅（true: 点滅する, false: 点滅しない）
 cursor_blink = true
@@ -32,7 +41,7 @@ default_mode = "edit"
 # キー形式: "ctrl+s" / "alt+enter" / "pageup" / "f1" 等
 # 利用可能なアクション名（src/shortcuts.rs の action_from_name が正）:
 #   enter_save, enter_save_as, enter_open, enter_exit, force_quit
-#   enter_search, enter_replace, search_next, search_previous, replace_all
+#   enter_search, enter_replace, replace_all
 #   undo, redo, paste, delete_line
 #   page_up, page_down, page_top, page_bottom, home, end
 #   toggle_line_numbers, toggle_wrap, toggle_markdown, reload_config

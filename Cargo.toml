@@ -1,6 +1,6 @@
 [package]
 name = "cozy"
-version = "0.1.17"
+version = "0.1.26"
 edition = "2024"
 rust-version = "1.85"
 description = "A Comfort First terminal text editor: type like nano, navigate like vim"
@@ -19,7 +19,7 @@ include = [
     "/CHANGELOG.md",
     "/LICENSE-MIT",
     "/LICENSE-APACHE",
-    "/config.toml",
+    "/config.example.toml",
 ]
 
 [dependencies]

@@ -43,11 +43,21 @@ cozy <folder>
 - Search and replace with literal, case-sensitive, word-boundary, and regex modes
 - Undo/redo, line cut, clipboard paste, line numbers, line wrap, and goto-line
 - Syntax highlighting for Rust, Python, JavaScript, JSON, and TOML
-- Markdown preview mode with fast reading controls
-- Mermaid fenced block detection in Markdown preview
+- Lightweight Markdown preview mode with fast reading controls
+- Fenced code block and Mermaid block detection in Markdown preview
 - Glide mode for vim-like movement, operators, yanking, changing, deleting, joining, and paste
 - TOML configuration and per-action key overrides
 - Reducer-based architecture with focused tests for cursor behavior, motions, editing, replace, clipboard, and browse mode
+
+## Screenshots
+
+Edit mode is the default: open a file and type directly, with line numbers and a compact shortcut footer.
+
+![cozy edit mode](https://raw.githubusercontent.com/takakix2/cozy/main/docs/assets/edit-mode.png)
+
+Glide mode adds vim-like movement and editing commands while keeping the visible footer focused on the active mode.
+
+![cozy glide mode](https://raw.githubusercontent.com/takakix2/cozy/main/docs/assets/glide-mode.png)
 
 ## Editor Modes
 
@@ -59,7 +69,8 @@ cozy <folder>
 - **Save**: Save dialog (`Ctrl+S`).
 - **Open**: Open-file dialog (`Ctrl+O`).
 - **Browse**: Full-screen file tree (`Ctrl+B`).
-- **Markdown**: Rendered Markdown reading mode (`F2`).
+- **Command**: Command palette (`Ctrl+P`).
+- **Markdown**: Lightweight Markdown reading mode (`F2`).
 - **Help**: Help screen (`Ctrl+H` or `F1`).
 
 ## Key Bindings
@@ -97,7 +108,7 @@ The source of truth for key bindings is `src/shortcuts.rs` (`get_shortcuts()`). 
 
 - `Ctrl+F`: Search
 - `Ctrl+N`: Next match
-- `Ctrl+P`: Previous match
+- `Ctrl+P` in Search/Replace: Previous match
 - `Ctrl+T`: Toggle search options
 - `Ctrl+R`: Replace mode; press again to replace all
 - `Tab` in replace mode: Switch between query and replacement fields
@@ -111,9 +122,35 @@ The source of truth for key bindings is `src/shortcuts.rs` (`get_shortcuts()`). 
 - `F2`: Toggle Markdown preview
 - `Esc` / `Ctrl+[`: Cancel current operation or leave the current mode
 
+### Command Palette
+
+- `Ctrl+P`: Open Command mode
+- Type to filter commands
+- `Up` / `Down` or `j` / `k`: Select a command
+- `Tab`: Complete the common label prefix
+- `Enter`: Run the selected command
+- `Esc`: Return to the home mode
+
+Built-in commands are currently grouped as:
+
+- `Mode.*`: sustained editing and navigation modes
+- `Search.Find`
+- `Search.Replace`
+- `File.SaveAs`
+- `File.Open`
+- `Browse.Files`
+- `Navigate.GotoLine`
+- `View.Markdown`
+- `View.ToggleLineNumbers`
+- `View.ToggleWrap`
+- `Config.Open`
+- `Config.Reload`
+- `App.Quit`
+- `App.QuitWithoutSaving`
+
 ## Markdown Preview
 
-Markdown preview is available with `F2`. It is a read-only view for quickly reading README files, plans, notes, and other Markdown documents.
+Markdown preview is available with `F2`. It is a read-only view for quickly reading README files, plans, notes, and other Markdown documents. The current preview is intentionally lightweight: it highlights headings, lists, block quotes, inline code, fenced code blocks, and Mermaid source blocks, but it is not yet a full CommonMark renderer.
 
 - Move: `j`/`k` or `Up`/`Down`
 - Page: `PageUp` / `PageDown`
@@ -138,6 +175,8 @@ Glide mode is available with `Ctrl+G`. A leading number repeats a motion or line
 
 ## Configuration
 
+The repository ships `config.example.toml` as a template. Copy it to `config.toml` if you want a local override in the project root.
+
 Configuration is loaded from the first path found:
 
 1. `./config.toml`
@@ -153,6 +192,14 @@ show_line_numbers = true
 status_duration = 3
 line_number_bg = "darkgray"
 line_number_fg = "white"
+
+# Footer and status bar colors accept color names or #RRGGBB true color values.
+footer_bg = "#222226"
+footer_key_fg = "cyan"
+footer_fg = "gray"
+status_bar_bg = "darkgray"
+status_bar_fg = "white"
+
 cursor_blink = true
 
 # Which mode you rest in: "edit" (default, type like nano) or "glide"

@@ -1,6 +1,7 @@
 mod state;
 mod browse;
 mod glide;
+mod commands;
 mod shortcuts;
 mod action;
 mod reducer;

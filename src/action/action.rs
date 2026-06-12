@@ -50,6 +50,14 @@ pub enum Action {
     ToggleWrap,
     ToggleMarkdownPreview,
 
+    // Command palette
+    CommandInput(char),
+    CommandBackspace,
+    CommandMoveUp,
+    CommandMoveDown,
+    CommandComplete,
+    CommandExecute,
+
     // Glide mode movement: a motion resolved by the glide engine
     GlideMove(Motion),
     // Paste the unnamed register: true = after cursor/line (p), false = before (P)

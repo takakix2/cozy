@@ -123,7 +123,7 @@ dependencies = [
 
 [[package]]
 name = "cozy"
-version = "0.1.17"
+version = "0.1.26"
 dependencies = [
  "arboard",
  "crossterm 0.27.0",

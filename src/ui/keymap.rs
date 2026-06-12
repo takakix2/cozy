@@ -57,8 +57,6 @@ impl Keymap {
                     }
                     return Some(Action::EnterMode(EditorMode::Replace));
                 }
-                EditorAction::SearchNext => return Some(Action::SearchNext),
-                EditorAction::SearchPrevious => return Some(Action::SearchPrevious),
                 EditorAction::ReplaceAll => return Some(Action::ReplaceAll),
                 EditorAction::EnterHelp => return Some(Action::EnterMode(EditorMode::Help)),
                 EditorAction::ReloadConfig => return Some(Action::ReloadConfig),
@@ -71,8 +69,20 @@ impl Keymap {
                 EditorAction::End => return Some(Action::End),
                 EditorAction::Undo => return Some(Action::Undo),
                 EditorAction::Redo => return Some(Action::Redo),
-                EditorAction::MoveUp => return Some(Action::MoveUp),
-                EditorAction::MoveDown => return Some(Action::MoveDown),
+                EditorAction::MoveUp => {
+                    return Some(if editor.mode == EditorMode::Command {
+                        Action::CommandMoveUp
+                    } else {
+                        Action::MoveUp
+                    });
+                }
+                EditorAction::MoveDown => {
+                    return Some(if editor.mode == EditorMode::Command {
+                        Action::CommandMoveDown
+                    } else {
+                        Action::MoveDown
+                    });
+                }
                 EditorAction::MoveLeft => return Some(Action::MoveLeft),
                 EditorAction::MoveRight => return Some(Action::MoveRight),
                 EditorAction::Cancel => return Some(Action::Cancel),
@@ -92,6 +102,7 @@ impl Keymap {
                             let n = editor.goto_line_buffer.parse::<usize>().unwrap_or(1);
                             Some(Action::GotoLine(n))
                         }
+                        EditorMode::Command => Some(Action::CommandExecute),
                         // Enter expands a dir / opens a file; while filtering it
                         // confirms the filter (handled by the reducer).
                         EditorMode::Browse => Some(Action::BrowseExpandOrOpen),
@@ -102,6 +113,11 @@ impl Keymap {
                 EditorAction::Paste => return Some(Action::PasteFromClipboard),
                 EditorAction::EnterGlide => return Some(Action::EnterMode(EditorMode::Glide)),
                 EditorAction::ToggleMarkdownPreview => return Some(Action::ToggleMarkdownPreview),
+                EditorAction::EnterCommand => {
+                    if editor.mode != EditorMode::Search && editor.mode != EditorMode::Replace {
+                        return Some(Action::EnterMode(EditorMode::Command));
+                    }
+                }
             }
         }
 
@@ -198,7 +214,7 @@ impl Keymap {
                     KeyCode::Down => Some(Action::MoveDown),
                     KeyCode::Backspace => Some(Action::Backspace),
                     KeyCode::Delete => Some(Action::Delete),
-                    KeyCode::Char(c) => Some(Action::InsertChar(c)),
+                    KeyCode::Char(c) if is_printable(modifiers) => Some(Action::InsertChar(c)),
                     _ => None,
                 }
             }
@@ -216,6 +232,8 @@ impl Keymap {
             }
             EditorMode::Search => {
                 match code {
+                    KeyCode::Char('n') if modifiers.contains(KeyModifiers::CONTROL) => Some(Action::SearchNext),
+                    KeyCode::Char('p') if modifiers.contains(KeyModifiers::CONTROL) => Some(Action::SearchPrevious),
                     KeyCode::Left     => Some(Action::MoveLeft),
                     KeyCode::Right    => Some(Action::MoveRight),
                     KeyCode::Home     => Some(Action::Home),
@@ -228,6 +246,8 @@ impl Keymap {
             }
             EditorMode::Replace => {
                 match code {
+                    KeyCode::Char('n') if modifiers.contains(KeyModifiers::CONTROL) => Some(Action::SearchNext),
+                    KeyCode::Char('p') if modifiers.contains(KeyModifiers::CONTROL) => Some(Action::SearchPrevious),
                     KeyCode::Tab      => Some(Action::SwitchFocus),
                     KeyCode::Left     => Some(Action::MoveLeft),
                     KeyCode::Right    => Some(Action::MoveRight),
@@ -270,6 +290,18 @@ impl Keymap {
                 match code {
                     KeyCode::Backspace => Some(Action::Backspace),
                     KeyCode::Char(c) if c.is_ascii_digit() => Some(Action::InsertChar(c)),
+                    _ => None,
+                }
+            }
+            EditorMode::Command => {
+                match code {
+                    KeyCode::Up => Some(Action::CommandMoveUp),
+                    KeyCode::Down => Some(Action::CommandMoveDown),
+                    KeyCode::Tab => Some(Action::CommandComplete),
+                    KeyCode::Backspace => Some(Action::CommandBackspace),
+                    KeyCode::Char('k') => Some(Action::CommandMoveUp),
+                    KeyCode::Char('j') => Some(Action::CommandMoveDown),
+                    KeyCode::Char(c) if is_printable(modifiers) => Some(Action::CommandInput(c)),
                     _ => None,
                 }
             }

@@ -18,7 +18,7 @@ fn clamp_cursor(f: &Frame, x: u16, y: u16) -> (u16, u16) {
 
 pub fn render_shortcuts(editor: &EditorState, f: &mut Frame, area: Rect) {
     if area.height == 0 { return; }
-    f.render_widget(Paragraph::new("").style(shortcut_bar_style()), area);
+    f.render_widget(Paragraph::new("").style(shortcut_bar_style(editor)), area);
     match editor.mode {
         EditorMode::Welcome => {}
         EditorMode::Glide   => render_glide_shortcuts(editor, f, area),
@@ -32,11 +32,15 @@ pub fn render_shortcuts(editor: &EditorState, f: &mut Frame, area: Rect) {
         EditorMode::Goto    => render_goto_shortcuts(editor, f, area),
         EditorMode::Browse  => render_browse_shortcuts(editor, f, area),
         EditorMode::Markdown => render_markdown_shortcuts(editor, f, area),
+        EditorMode::Command => render_command_shortcuts(editor, f, area),
     }
 }
 
-fn shortcut_bar_style() -> Style {
-    Style::default().bg(Color::Rgb(34, 34, 38))
+fn shortcut_bar_style(editor: &EditorState) -> Style {
+    Style::default().bg(config_color(
+        editor.config.footer_bg.as_deref(),
+        Color::Rgb(34, 34, 38),
+    ))
 }
 
 pub fn render_status_bar(editor: &EditorState, f: &mut Frame, area: Rect) {
@@ -71,6 +75,7 @@ pub fn render_status_bar(editor: &EditorState, f: &mut Frame, area: Rect) {
         EditorMode::Open  => (format!(" Open{}", status), String::new()),
         EditorMode::Goto  => (format!(" Goto: {}", editor.goto_line_buffer), String::new()),
         EditorMode::Quit  => (format!(" Exit{}", status), String::new()),
+        EditorMode::Command => (format!(" Command: {}", editor.command_query), String::new()),
         EditorMode::Browse => {
             match editor.browse_tree.as_ref() {
                 Some(tree) => {
@@ -101,9 +106,15 @@ pub fn render_status_bar(editor: &EditorState, f: &mut Frame, area: Rect) {
     };
     let label = compose_status(&left, &right, area.width as usize);
     f.render_widget(
-        Paragraph::new(label).style(Style::default().bg(Color::DarkGray).fg(Color::White)),
+        Paragraph::new(label).style(status_bar_style(editor)),
         area,
     );
+}
+
+fn status_bar_style(editor: &EditorState) -> Style {
+    Style::default()
+        .bg(config_color(editor.config.status_bar_bg.as_deref(), Color::DarkGray))
+        .fg(config_color(editor.config.status_bar_fg.as_deref(), Color::White))
 }
 
 /// Right-zone cursor position, e.g. `L12 C5 ` (1-based line and display
@@ -153,37 +164,83 @@ fn truncate_to_width(s: &str, max: usize) -> String {
 
 /// The shortcut key itself, as a bold accent (no background) so it stands out
 /// from the gutter and status bar instead of sharing their gray fill.
-fn key_span(key: &str) -> Span<'static> {
+fn key_span(editor: &EditorState, key: &str) -> Span<'static> {
     Span::styled(
         key.to_string(),
-        Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+        Style::default()
+            .fg(config_color(editor.config.footer_key_fg.as_deref(), Color::Cyan))
+            .add_modifier(Modifier::BOLD),
     )
 }
 
 /// The dimmed description that follows a key.
-fn desc_span(desc: &str) -> Span<'static> {
-    Span::styled(format!(" {}", desc), Style::default().fg(Color::Gray))
+fn desc_span(editor: &EditorState, desc: &str) -> Span<'static> {
+    Span::styled(
+        format!(" {}", desc),
+        Style::default().fg(config_color(editor.config.footer_fg.as_deref(), Color::Gray)),
+    )
 }
 
-fn shortcut_line(_editor: &EditorState, narrow: bool, pairs: &[(&str, &str)]) -> Line<'static> {
+fn shortcut_line(editor: &EditorState, narrow: bool, pairs: &[(&str, &str)]) -> Line<'static> {
     let mut spans: Vec<Span<'static>> = Vec::new();
     for (i, (key, desc)) in pairs.iter().enumerate() {
         if i > 0 { spans.push(Span::raw("   ")); }
         let key = if narrow { key.replace("Ctrl+", "^") } else { key.to_string() };
-        spans.push(key_span(&key));
-        spans.push(desc_span(desc));
+        spans.push(key_span(editor, &key));
+        spans.push(desc_span(editor, desc));
     }
     Line::from(spans)
 }
 
-fn compact_line(_editor: &EditorState, pairs: &[(&str, &str)]) -> Line<'static> {
+fn compact_line(editor: &EditorState, pairs: &[(&str, &str)]) -> Line<'static> {
     let mut spans: Vec<Span<'static>> = Vec::new();
     for (i, (key, desc)) in pairs.iter().enumerate() {
         if i > 0 { spans.push(Span::raw("  ")); }
-        spans.push(key_span(key));
-        spans.push(desc_span(desc));
+        spans.push(key_span(editor, key));
+        spans.push(desc_span(editor, desc));
     }
     Line::from(spans)
+}
+
+fn config_color(value: Option<&str>, fallback: Color) -> Color {
+    value.and_then(parse_color).unwrap_or(fallback)
+}
+
+fn parse_color(value: &str) -> Option<Color> {
+    let value = value.trim();
+    if let Some(hex) = value.strip_prefix('#') {
+        return parse_hex_color(hex);
+    }
+
+    match value.to_ascii_lowercase().as_str() {
+        "black" => Some(Color::Black),
+        "red" => Some(Color::Red),
+        "green" => Some(Color::Green),
+        "yellow" => Some(Color::Yellow),
+        "blue" => Some(Color::Blue),
+        "magenta" => Some(Color::Magenta),
+        "cyan" => Some(Color::Cyan),
+        "gray" | "grey" => Some(Color::Gray),
+        "darkgray" | "darkgrey" => Some(Color::DarkGray),
+        "white" => Some(Color::White),
+        "lightred" => Some(Color::LightRed),
+        "lightgreen" => Some(Color::LightGreen),
+        "lightyellow" => Some(Color::LightYellow),
+        "lightblue" => Some(Color::LightBlue),
+        "lightmagenta" => Some(Color::LightMagenta),
+        "lightcyan" => Some(Color::LightCyan),
+        _ => None,
+    }
+}
+
+fn parse_hex_color(hex: &str) -> Option<Color> {
+    if hex.len() != 6 {
+        return None;
+    }
+    let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
+    let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
+    let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
+    Some(Color::Rgb(r, g, b))
 }
 
 // ── layout helpers ────────────────────────────────────────────────────────────
@@ -353,6 +410,48 @@ fn render_markdown_shortcuts(editor: &EditorState, f: &mut Frame, area: Rect) {
     }
 }
 
+fn render_command_shortcuts(editor: &EditorState, f: &mut Frame, area: Rect) {
+    fn row(area: Rect, offset: u16) -> Rect {
+        Rect::new(area.x, area.y + offset, area.width, 1)
+    }
+
+    let query_prefix = "Command: ";
+    f.render_widget(
+        Paragraph::new(format!("{}{}", query_prefix, editor.command_query)),
+        row(area, 0),
+    );
+
+    let matches = crate::commands::filtered_commands(&editor.command_query);
+    let rows = area.height.saturating_sub(2).min(8) as usize;
+    if matches.is_empty() {
+        if area.height > 1 {
+            f.render_widget(Paragraph::new("  No commands"), row(area, 1));
+        }
+    } else {
+        let start = editor.command_selected.saturating_sub(rows.saturating_sub(1));
+        for (row_idx, command) in matches.iter().skip(start).take(rows).enumerate() {
+            let index = start + row_idx;
+            let marker = if index == editor.command_selected { "> " } else { "  " };
+            f.render_widget(
+                Paragraph::new(format!("{}{}", marker, command.label)),
+                row(area, row_idx as u16 + 1),
+            );
+        }
+    }
+
+    if area.height >= 2 {
+        f.render_widget(Paragraph::new(compact_line(editor, &[
+            ("↑↓/jk", "Select"), ("Enter", "Run"), ("Tab", "Complete"), ("Esc", "Return"),
+        ])), row(area, area.height - 1));
+    }
+
+    let col = area.x
+        + UnicodeWidthStr::width(query_prefix) as u16
+        + UnicodeWidthStr::width(editor.command_query.as_str()) as u16;
+    let (cx, cy) = clamp_cursor(f, col, area.y);
+    f.set_cursor_position((cx, cy));
+}
+
 fn render_search_shortcuts(editor: &EditorState, f: &mut Frame, area: Rect) {
     let prefix = "Find: [";
     let line_find = format!("{}{}]", prefix, editor.search_buffer);
@@ -418,11 +517,11 @@ fn render_replace_shortcuts(editor: &EditorState, f: &mut Frame, area: Rect) {
         let line_fields = Line::from(vec![
             Span::raw(fields),
             Span::raw("   "),
-            key_span("Tab"),
-            desc_span("Switch"),
+            key_span(editor, "Tab"),
+            desc_span(editor, "Switch"),
             Span::raw("   "),
-            key_span("Ctrl+T"),
-            desc_span("Toggle"),
+            key_span(editor, "Ctrl+T"),
+            desc_span(editor, "Toggle"),
         ]);
         let col = match editor.replace_focus {
             ReplaceFocus::Query => {
@@ -539,5 +638,29 @@ fn render_quit_shortcuts(editor: &EditorState, f: &mut Frame, area: Rect) {
         let col = area.x + prefix.len() as u16 + UnicodeWidthStr::width(before) as u16;
         let (cx, cy) = clamp_cursor(f, col, area.y);
         f.set_cursor_position((cx, cy));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_color_accepts_named_colors() {
+        assert_eq!(parse_color("cyan"), Some(Color::Cyan));
+        assert_eq!(parse_color("darkgrey"), Some(Color::DarkGray));
+        assert_eq!(parse_color("LIGHTYELLOW"), Some(Color::LightYellow));
+    }
+
+    #[test]
+    fn parse_color_accepts_true_color_hex() {
+        assert_eq!(parse_color("#222226"), Some(Color::Rgb(34, 34, 38)));
+    }
+
+    #[test]
+    fn parse_color_rejects_invalid_values() {
+        assert_eq!(parse_color("not-a-color"), None);
+        assert_eq!(parse_color("#22222"), None);
+        assert_eq!(parse_color("#zzzzzz"), None);
     }
 }

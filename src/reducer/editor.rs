@@ -280,7 +280,17 @@ pub fn apply_editor_event(editor: &mut EditorState, action: &Action) -> EventRes
         }
         Action::ReloadConfig => {
             use crate::state::Config;
-            let config = Config::load();
+            let config_path = Config::user_config_path(None);
+            let config = match config_path.as_ref() {
+                Some(path) if path.exists() => match Config::load_from_path(path) {
+                    Ok(config) => config,
+                    Err(e) => {
+                        crate::reducer::status::set_error(editor, &e.to_string());
+                        return EventResult::Continue;
+                    }
+                },
+                _ => Config::load(),
+            };
             editor.page_size = config.page_size;
             editor.shortcut_map = crate::shortcuts::build_shortcut_map(config.keys.as_ref());
             editor.config = config;

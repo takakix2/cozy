@@ -1,4 +1,4 @@
-use crate::state::{EditorState, EditorMode, TextBuffer, YankHighlight};
+use crate::state::{Config, EditorState, EditorMode, TextBuffer, YankHighlight};
 use crate::action::Action;
 use crate::reducer::editor::apply_editor_event;
 use crate::reducer::reduce;
@@ -168,6 +168,275 @@ fn test_markdown_preview_counted_vertical_move() {
     }
     assert_eq!(editor.markdown_cursor_line, 5);
     assert!(editor.glide_count.is_empty());
+}
+
+#[test]
+fn test_ctrl_n_p_are_search_mode_local_shortcuts() {
+    use crate::state::key::{KeyCode, KeyModifiers};
+    use crate::ui::Keymap;
+
+    let mut editor = EditorState::new(None);
+    editor.enter_mode(EditorMode::Edit);
+    assert_eq!(
+        Keymap::map_key_to_action(&editor, KeyCode::Char('p'), KeyModifiers::CONTROL),
+        Some(Action::EnterMode(EditorMode::Command))
+    );
+    assert_eq!(
+        Keymap::map_key_to_action(&editor, KeyCode::Char('n'), KeyModifiers::CONTROL),
+        None
+    );
+
+    editor.enter_mode(EditorMode::Search);
+    assert_eq!(
+        Keymap::map_key_to_action(&editor, KeyCode::Char('p'), KeyModifiers::CONTROL),
+        Some(Action::SearchPrevious)
+    );
+    assert_eq!(
+        Keymap::map_key_to_action(&editor, KeyCode::Char('n'), KeyModifiers::CONTROL),
+        Some(Action::SearchNext)
+    );
+
+    editor.enter_mode(EditorMode::Replace);
+    assert_eq!(
+        Keymap::map_key_to_action(&editor, KeyCode::Char('p'), KeyModifiers::CONTROL),
+        Some(Action::SearchPrevious)
+    );
+    assert_eq!(
+        Keymap::map_key_to_action(&editor, KeyCode::Char('n'), KeyModifiers::CONTROL),
+        Some(Action::SearchNext)
+    );
+}
+
+#[test]
+fn test_command_palette_filters_and_executes_mode_command() {
+    use crate::state::key::{KeyCode, KeyModifiers};
+    use crate::ui::Keymap;
+
+    let mut editor = EditorState::new(None);
+    editor.enter_mode(EditorMode::Edit);
+
+    let open_command = Keymap::map_key_to_action(
+        &editor,
+        KeyCode::Char('p'),
+        KeyModifiers::CONTROL,
+    ).unwrap();
+    reduce(&mut editor, open_command);
+    assert_eq!(editor.mode, EditorMode::Command);
+
+    for c in "mode.help".chars() {
+        let action = Keymap::map_key_to_action(
+            &editor,
+            KeyCode::Char(c),
+            KeyModifiers::NONE,
+        ).unwrap();
+        reduce(&mut editor, action);
+    }
+    assert_eq!(editor.command_query, "mode.help");
+
+    let enter = Keymap::map_key_to_action(&editor, KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    reduce(&mut editor, enter);
+    assert_eq!(editor.mode, EditorMode::Help);
+}
+
+#[test]
+fn test_command_palette_clamps_selection_after_filter_change() {
+    let mut editor = EditorState::new(None);
+    editor.enter_mode(EditorMode::Command);
+    reduce(&mut editor, Action::CommandMoveDown);
+    assert_eq!(editor.command_selected, 1);
+
+    for c in "mode.help".chars() {
+        reduce(&mut editor, Action::CommandInput(c));
+    }
+    assert_eq!(editor.command_selected, 0);
+}
+
+#[test]
+fn test_command_palette_arrow_keys_select_candidates() {
+    use crate::state::key::{KeyCode, KeyModifiers};
+    use crate::ui::Keymap;
+
+    let mut editor = EditorState::new(None);
+    editor.enter_mode(EditorMode::Command);
+
+    let down = Keymap::map_key_to_action(&editor, KeyCode::Down, KeyModifiers::NONE).unwrap();
+    assert_eq!(down, Action::CommandMoveDown);
+    reduce(&mut editor, down);
+    assert_eq!(editor.command_selected, 1);
+
+    let up = Keymap::map_key_to_action(&editor, KeyCode::Up, KeyModifiers::NONE).unwrap();
+    assert_eq!(up, Action::CommandMoveUp);
+    reduce(&mut editor, up);
+    assert_eq!(editor.command_selected, 0);
+}
+
+#[test]
+fn test_command_palette_tab_completes_single_label_prefix() {
+    let mut editor = EditorState::new(None);
+    editor.enter_mode(EditorMode::Command);
+    for c in "mode.h".chars() {
+        reduce(&mut editor, Action::CommandInput(c));
+    }
+    reduce(&mut editor, Action::CommandComplete);
+    assert_eq!(editor.command_query, "Mode.Help");
+}
+
+#[test]
+fn test_command_palette_tab_completes_common_label_prefix() {
+    let mut editor = EditorState::new(None);
+    editor.enter_mode(EditorMode::Command);
+    for c in "mode".chars() {
+        reduce(&mut editor, Action::CommandInput(c));
+    }
+    reduce(&mut editor, Action::CommandComplete);
+    assert_eq!(editor.command_query, "Mode.");
+}
+
+#[test]
+fn test_command_palette_executes_mode_commands() {
+    let mut editor = EditorState::new(None);
+    editor.enter_mode(EditorMode::Command);
+    for c in "mode.glide".chars() {
+        reduce(&mut editor, Action::CommandInput(c));
+    }
+
+    reduce(&mut editor, Action::CommandExecute);
+    assert_eq!(editor.mode, EditorMode::Glide);
+}
+
+#[test]
+fn test_command_palette_executes_config_reload() {
+    let mut editor = EditorState::new(None);
+    editor.enter_mode(EditorMode::Command);
+    for c in "config.reload".chars() {
+        reduce(&mut editor, Action::CommandInput(c));
+    }
+
+    reduce(&mut editor, Action::CommandExecute);
+    assert_eq!(editor.status_message.as_deref(), Some("Config reloaded"));
+}
+
+#[test]
+fn test_command_palette_empty_query_groups_commands_by_namespace() {
+    let labels: Vec<&str> = crate::commands::filtered_commands("")
+        .into_iter()
+        .map(|command| command.label)
+        .collect();
+
+    assert_eq!(
+        labels,
+        vec![
+            "Mode.Edit",
+            "Mode.Glide",
+            "Mode.Help",
+            "Search.Find",
+            "Search.Replace",
+            "File.SaveAs",
+            "File.Open",
+            "Browse.Files",
+            "Navigate.GotoLine",
+            "View.Markdown",
+            "View.ToggleLineNumbers",
+            "View.ToggleWrap",
+            "Config.Open",
+            "Config.Reload",
+            "App.Quit",
+            "App.QuitWithoutSaving",
+        ]
+    );
+}
+
+#[test]
+fn test_command_palette_one_letter_query_does_not_spill_into_unrelated_commands() {
+    let matches = crate::commands::filtered_commands("c");
+    assert!(matches.iter().any(|command| command.label == "Config.Open"));
+    assert!(matches.iter().any(|command| command.label == "Config.Reload"));
+    assert!(!matches.iter().any(|command| command.label == "Browse.Files"));
+    assert!(!matches.iter().any(|command| command.label == "App.QuitWithoutSaving"));
+}
+
+#[test]
+fn test_command_palette_one_letter_query_matches_label_segments() {
+    let labels: Vec<&str> = crate::commands::filtered_commands("g")
+        .into_iter()
+        .map(|command| command.label)
+        .collect();
+
+    assert_eq!(labels, vec!["Mode.Glide", "Navigate.GotoLine"]);
+}
+
+#[test]
+fn test_command_palette_tab_completes_segment_match_common_prefix() {
+    let mut editor = EditorState::new(None);
+    editor.enter_mode(EditorMode::Command);
+    reduce(&mut editor, Action::CommandInput('g'));
+    reduce(&mut editor, Action::CommandComplete);
+    assert_eq!(editor.command_query, "g");
+}
+
+#[test]
+fn test_command_palette_executes_view_toggles() {
+    let mut editor = EditorState::new(None);
+    editor.enter_mode(EditorMode::Command);
+
+    for c in "view.togglelinenumbers".chars() {
+        reduce(&mut editor, Action::CommandInput(c));
+    }
+    reduce(&mut editor, Action::CommandExecute);
+    assert_eq!(editor.show_line_numbers_runtime, Some(false));
+
+    editor.enter_mode(EditorMode::Command);
+    for c in "view.togglewrap".chars() {
+        reduce(&mut editor, Action::CommandInput(c));
+    }
+    reduce(&mut editor, Action::CommandExecute);
+    assert!(!editor.soft_wrap);
+
+    editor.enter_mode(EditorMode::Command);
+    for c in "view.markdown".chars() {
+        reduce(&mut editor, Action::CommandInput(c));
+    }
+    reduce(&mut editor, Action::CommandExecute);
+    assert_eq!(editor.mode, EditorMode::Markdown);
+}
+
+#[test]
+fn test_command_palette_quit_without_saving_exits() {
+    let mut editor = EditorState::new(None);
+    editor.enter_mode(EditorMode::Command);
+    for c in "app.quitwithoutsaving".chars() {
+        reduce(&mut editor, Action::CommandInput(c));
+    }
+
+    assert!(matches!(reduce(&mut editor, Action::CommandExecute), crate::reducer::EventResult::Exit));
+}
+
+#[test]
+fn test_ensure_default_config_file_creates_config_toml() {
+    let base = config_scratch("ensure_default_file");
+
+    let path = Config::ensure_default_config_file(Some(&base)).unwrap();
+
+    assert_eq!(path, base.join("config.toml"));
+    let content = std::fs::read_to_string(path).unwrap();
+    assert!(content.contains("default_mode = \"edit\""));
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+#[test]
+fn test_load_from_path_reads_runtime_flags() {
+    let base = config_scratch("load_from_path");
+    let path = base.join("config.toml");
+    std::fs::write(
+        &path,
+        "page_size = 40\nshow_line_numbers = false\nstatus_duration = 7\n",
+    ).unwrap();
+
+    let config = Config::load_from_path(&path).unwrap();
+    assert_eq!(config.page_size, 40);
+    assert_eq!(config.show_line_numbers, Some(false));
+    assert_eq!(config.status_duration, Some(7));
+    let _ = std::fs::remove_dir_all(&base);
 }
 
 #[test]
@@ -414,6 +683,17 @@ fn test_browse_open_file_enters_edit() {
 }
 
 #[test]
+fn test_browse_missing_file_falls_back_to_existing_ancestor() {
+    let base = browse_scratch("missing_file_root");
+    let missing = base.join("missing/subdir/note.txt");
+    let mut editor = EditorState::new(Some(missing.to_string_lossy().to_string()));
+    editor.enter_mode(EditorMode::Browse);
+    let tree = editor.browse_tree.as_ref().unwrap();
+    assert_eq!(tree.root, base, "browse root should be the nearest existing ancestor");
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+#[test]
 fn test_browse_filter_round_trip() {
     let base = browse_scratch("filter");
     let mut editor = EditorState::new(Some(base.to_string_lossy().to_string()));
@@ -599,5 +879,40 @@ fn test_glide_home_startup_from_file_arg() {
     );
     assert_eq!(editor.mode, EditorMode::Glide, "file arg rests in Glide when it is home");
     assert!(editor.filename.is_some());
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+fn config_scratch(name: &str) -> std::path::PathBuf {
+    let base = std::env::temp_dir().join(format!("cozy_config_test_{}_{}", std::process::id(), name));
+    let _ = std::fs::remove_dir_all(&base);
+    std::fs::create_dir_all(&base).unwrap();
+    base
+}
+
+#[test]
+fn test_missing_config_dir_gets_default_config_toml() {
+    let base = config_scratch("create_default");
+
+    let config = Config::load_from(Some(&base));
+
+    let generated = base.join("config.toml");
+    assert!(generated.exists(), "missing config should create {}", generated.display());
+    let content = std::fs::read_to_string(&generated).unwrap();
+    assert!(content.contains("default_mode = \"edit\""));
+    assert_eq!(config.page_size, 20);
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+#[test]
+fn test_existing_config_is_not_overwritten_when_default_is_generated() {
+    let base = config_scratch("keep_existing");
+    let existing = "page_size = 42\ndefault_mode = \"glide\"\n";
+    std::fs::write(base.join("cozy.toml"), existing).unwrap();
+
+    let config = Config::load_from(Some(&base));
+
+    assert_eq!(config.page_size, 42);
+    assert!(base.join("config.toml").exists(), "missing default config.toml should be created");
+    assert_eq!(std::fs::read_to_string(base.join("cozy.toml")).unwrap(), existing);
     let _ = std::fs::remove_dir_all(&base);
 }

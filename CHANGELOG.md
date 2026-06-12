@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Highlights
+
+- Added configurable footer and status bar colors via `config.toml`.
+- Color settings accept named terminal colors and `#RRGGBB` true color values.
+
 ## v0.1.15
 
 ### Highlights

@@ -24,6 +24,7 @@ impl Renderer {
         let shortcut_h: u16 = match (is_narrow, editor.mode) {
             (_, EditorMode::Welcome) => 0,
             (_, EditorMode::Help)    => 1,
+            (_, EditorMode::Command) => 10,
             (true, _)                => 4,
             (false, _)               => 2,
         };

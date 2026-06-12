@@ -43,11 +43,21 @@ cozy <フォルダ名>
 - 通常検索、大文字小文字区別、単語境界、正規表現検索と置換
 - Undo/Redo、行カット、クリップボード貼り付け、行番号、行折り返し、行番号ジャンプ
 - Rust / Python / JavaScript / JSON / TOML のシンタックスハイライト
-- 高速に読める Markdown プレビューモード
-- Markdown プレビューでの Mermaid fenced block 検出
+- 高速に読める軽量 Markdown プレビューモード
+- Markdown プレビューでの fenced code block と Mermaid block 検出
 - Glide モードによる vim 風の移動、operator、yank、change、delete、join、paste
 - TOML 設定とアクション単位のキーバインド上書き
 - reducer ベースの構成と、カーソル、motion、編集、置換、clipboard、browse mode のテスト
+
+## スクリーンショット
+
+Edit mode は標準の編集画面です。ファイルを開いたらそのまま入力でき、行番号と現在のモードに合わせたショートカット footer が表示されます。
+
+![cozy edit mode](https://raw.githubusercontent.com/takakix2/cozy/main/docs/assets/edit-mode.png)
+
+Glide mode では Vim 風の移動と編集コマンドを使えます。footer もそのモードで必要な操作に切り替わります。
+
+![cozy glide mode](https://raw.githubusercontent.com/takakix2/cozy/main/docs/assets/glide-mode.png)
 
 ## エディタモード
 
@@ -59,7 +69,8 @@ cozy <フォルダ名>
 - **Save**: 保存ダイアログ (`Ctrl+S`)。
 - **Open**: ファイルを開くダイアログ (`Ctrl+O`)。
 - **Browse**: フルスクリーンのファイルツリー (`Ctrl+B`)。
-- **Markdown**: Markdown を整形表示して読むモード (`F2`)。
+- **Command**: コマンドパレット (`Ctrl+P`)。
+- **Markdown**: Markdown を軽く整形して読むモード (`F2`)。
 - **Help**: ヘルプ画面 (`Ctrl+H` または `F1`)。
 
 ## キーバインド
@@ -97,7 +108,7 @@ cozy <フォルダ名>
 
 - `Ctrl+F`: 検索
 - `Ctrl+N`: 次の一致
-- `Ctrl+P`: 前の一致
+- `Ctrl+P`（検索/置換モード内）: 前の一致
 - `Ctrl+T`: 検索オプション切替
 - `Ctrl+R`: 置換モード。もう一度押すと全置換
 - `Tab` in replace mode: 検索欄と置換欄の切替
@@ -111,9 +122,35 @@ cozy <フォルダ名>
 - `F2`: Markdown プレビュー切替
 - `Esc` / `Ctrl+[`: 現在の操作をキャンセル、または現在のモードを抜ける
 
+### コマンドパレット
+
+- `Ctrl+P`: コマンドモードを開く
+- 入力でコマンドを絞り込む
+- `↑` / `↓` または `j` / `k`: コマンドを選択する
+- `Tab`: ラベルの共通 prefix を補完する
+- `Enter`: 選択したコマンドを実行する
+- `Esc`: home モードへ戻る
+
+いま使える built-in コマンドは次のまとまりです。
+
+- `Mode.*`: 継続して使う編集・移動モード
+- `Search.Find`
+- `Search.Replace`
+- `File.SaveAs`
+- `File.Open`
+- `Browse.Files`
+- `Navigate.GotoLine`
+- `View.Markdown`
+- `View.ToggleLineNumbers`
+- `View.ToggleWrap`
+- `Config.Open`
+- `Config.Reload`
+- `App.Quit`
+- `App.QuitWithoutSaving`
+
 ## Markdown プレビュー
 
-`F2` で Markdown プレビューに入ります。README、実装計画、メモなどの Markdown を素早く読むための読み取り専用ビューです。
+`F2` で Markdown プレビューに入ります。README、実装計画、メモなどの Markdown を素早く読むための読み取り専用ビューです。現在の preview は軽量実装で、見出し、リスト、引用、inline code、fenced code block、Mermaid source block を強調しますが、まだ完全な CommonMark renderer ではありません。
 
 - 移動: `j`/`k` または `Up`/`Down`
 - ページ移動: `PageUp` / `PageDown`
@@ -138,6 +175,8 @@ cozy <フォルダ名>
 
 ## 設定
 
+リポジトリにはテンプレートとして `config.example.toml` を置いています。プロジェクト直下で上書きしたい場合は `config.toml` にコピーしてください。
+
 設定は最初に見つかったパスから読み込まれます。
 
 1. `./config.toml`
@@ -153,6 +192,14 @@ show_line_numbers = true
 status_duration = 3
 line_number_bg = "darkgray"
 line_number_fg = "white"
+
+# フッターとステータスバーの色は、色名または #RRGGBB の true color で指定できます。
+footer_bg = "#222226"
+footer_key_fg = "cyan"
+footer_fg = "gray"
+status_bar_bg = "darkgray"
+status_bar_fg = "white"
+
 cursor_blink = true
 
 # 定常モード（戻り先の「家」）: "edit"（既定・nano のように打つ）か

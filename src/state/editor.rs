@@ -6,6 +6,34 @@ use crate::state::Cursor;
 use crate::state::TextBuffer;
 use serde::Deserialize;
 
+const DEFAULT_CONFIG_TOML: &str = r##"# cozy config
+
+page_size = 20
+theme = "dark"
+show_line_numbers = true
+status_duration = 3
+
+line_number_bg = "darkgray"
+line_number_fg = "white"
+
+footer_bg = "#222226"
+footer_key_fg = "cyan"
+footer_fg = "gray"
+
+status_bar_bg = "darkgray"
+status_bar_fg = "white"
+
+cursor_blink = true
+
+# Resting mode after actions: "edit" or "glide".
+default_mode = "edit"
+
+# Override only the shortcuts you want to change.
+# [keys]
+# enter_exit = "ctrl+x"
+# toggle_markdown = "f2"
+"##;
+
 #[derive(Debug, Deserialize, Clone)]
 pub struct Config {
     pub page_size: usize,
@@ -15,6 +43,11 @@ pub struct Config {
     pub keys: Option<std::collections::HashMap<String, String>>,
     pub line_number_bg: Option<String>,
     pub line_number_fg: Option<String>,
+    pub footer_bg: Option<String>,
+    pub footer_key_fg: Option<String>,
+    pub footer_fg: Option<String>,
+    pub status_bar_bg: Option<String>,
+    pub status_bar_fg: Option<String>,
     pub cursor_blink: Option<bool>,
     /// Which mode you rest in. "edit" (default) = type like nano. "glide" =
     /// navigate like vim. Affects every action's return target, not just startup.
@@ -32,11 +65,19 @@ impl Config {
             vec![dir.join("cozy.toml"), dir.join("config.toml")]
         } else {
             vec![
-                PathBuf::from("config.toml"),
                 dirs::config_dir().map(|p| p.join("cozy/config.toml")).unwrap_or_default(),
+                PathBuf::from("config.toml"),
                 dirs::home_dir().map(|p| p.join(".cozy/config.toml")).unwrap_or_default(),
             ]
         };
+
+        if let Some(path) = Self::default_config_path(config_dir) {
+            if !path.exists() {
+                if let Err(e) = Self::write_default_config(&path) {
+                    eprintln!("warning: Failed to create default config '{}': {}", path.display(), e);
+                }
+            }
+        }
 
         for path in &paths {
             if path.exists() {
@@ -53,6 +94,48 @@ impl Config {
             }
         }
 
+        Self::default_values()
+    }
+
+    pub fn user_config_path(config_dir: Option<&PathBuf>) -> Option<PathBuf> {
+        if let Some(dir) = config_dir {
+            return Some(dir.join("config.toml"));
+        }
+        dirs::config_dir()
+            .map(|p| p.join("cozy/config.toml"))
+            .or_else(|| dirs::home_dir().map(|p| p.join(".cozy/config.toml")))
+    }
+
+    pub fn load_from_path(path: &std::path::Path) -> io::Result<Self> {
+        let content = std::fs::read_to_string(path)?;
+        toml::from_str::<Config>(&content)
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))
+    }
+
+    fn default_config_path(config_dir: Option<&PathBuf>) -> Option<PathBuf> {
+        Self::user_config_path(config_dir)
+    }
+
+    pub fn ensure_default_config_file(config_dir: Option<&PathBuf>) -> io::Result<PathBuf> {
+        let path = Self::default_config_path(config_dir).ok_or_else(|| {
+            io::Error::new(io::ErrorKind::NotFound, "Could not resolve config directory")
+        })?;
+        if !path.exists() {
+            Self::write_default_config(&path)?;
+        }
+        Ok(path)
+    }
+
+    fn write_default_config(path: &std::path::Path) -> io::Result<()> {
+        if let Some(parent) = path.parent() {
+            if !parent.as_os_str().is_empty() {
+                std::fs::create_dir_all(parent)?;
+            }
+        }
+        std::fs::write(path, DEFAULT_CONFIG_TOML)
+    }
+
+    fn default_values() -> Self {
         Self {
             page_size: 20,
             theme: Some("dark".to_string()),
@@ -60,6 +143,11 @@ impl Config {
             status_duration: Some(3),
             line_number_bg: Some("darkgray".to_string()),
             line_number_fg: Some("white".to_string()),
+            footer_bg: Some("#222226".to_string()),
+            footer_key_fg: Some("cyan".to_string()),
+            footer_fg: Some("gray".to_string()),
+            status_bar_bg: Some("darkgray".to_string()),
+            status_bar_fg: Some("white".to_string()),
             cursor_blink: Some(true),
             keys: None,
             default_mode: None,
@@ -82,6 +170,7 @@ pub enum EditorMode {
     Goto,
     Browse,
     Markdown,
+    Command,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -166,6 +255,10 @@ pub struct EditorState {
     pub last_find: Option<(crate::glide::FindKind, char)>,
     /// The folder tree shown in Browse mode (built on entry, `None` otherwise).
     pub browse_tree: Option<crate::browse::BrowseTree>,
+    /// Command palette filter text.
+    pub command_query: String,
+    /// Selected row within the filtered command palette results.
+    pub command_selected: usize,
 }
 
 /// The unnamed register: holds cut/yanked text. `linewise` means the content is
@@ -296,6 +389,8 @@ impl EditorState {
             yank_highlight: None,
             last_find: None,
             browse_tree,
+            command_query: String::new(),
+            command_selected: 0,
         }
     }
 
@@ -345,6 +440,29 @@ impl EditorState {
     /// default that keeps zero hidden state for newcomers).
     pub fn home_mode(&self) -> EditorMode {
         Self::resolve_home(&self.config)
+    }
+
+    /// Pick a Browse root that actually exists.
+    ///
+    /// A missing file path can still be the current filename after startup or
+    /// from the Open dialog. Browse should not try to root itself at a missing
+    /// directory; instead, walk up to the nearest existing ancestor and fall
+    /// back to the working directory if nothing in the chain exists.
+    fn browse_root(&self) -> PathBuf {
+        let mut current = self
+            .filename
+            .as_ref()
+            .and_then(|path| path.parent())
+            .map(PathBuf::from)
+            .unwrap_or_else(|| self._working_dir.clone());
+
+        while !current.exists() {
+            if !current.pop() || current.as_os_str().is_empty() {
+                return self._working_dir.clone();
+            }
+        }
+
+        current
     }
 
     /// Same resolution as [`home_mode`], usable before `EditorState` exists
@@ -408,10 +526,7 @@ impl EditorState {
             EditorMode::Browse => {
                 // Root the tree at the current file's parent so Ctrl+O shows "around
                 // here"; fall back to the working dir when no file is open.
-                let root = self.filename.as_ref()
-                    .and_then(|p| p.parent())
-                    .map(|p| p.to_path_buf())
-                    .unwrap_or_else(|| self._working_dir.clone());
+                let root = self.browse_root();
                 let mut tree = crate::browse::BrowseTree::build(&root);
                 if let Some(file) = &self.filename {
                     tree.select_path(file);
@@ -425,6 +540,11 @@ impl EditorState {
                 self.markdown_view_height = 0;
                 self.glide_prefix = None;
                 self.glide_count.clear();
+                self.status_message = None;
+            }
+            EditorMode::Command => {
+                self.command_query.clear();
+                self.command_selected = 0;
                 self.status_message = None;
             }
             _ => {
