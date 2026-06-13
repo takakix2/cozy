@@ -94,7 +94,11 @@ pub fn filter_backspace(editor: &mut EditorState) -> EventResult {
 
 /// Esc: 絞り込み中なら絞り込みを解除して Browse に留まる、そうでなければ Browse を抜けて resting mode へ。
 pub fn cancel(editor: &mut EditorState) -> EventResult {
-    let filtering = editor.browse_tree.as_ref().map(|t| t.filtering).unwrap_or(false);
+    let filtering = editor
+        .browse_tree
+        .as_ref()
+        .map(|t| t.filtering)
+        .unwrap_or(false);
     if filtering {
         if let Some(tree) = &mut editor.browse_tree {
             tree.filtering = false;

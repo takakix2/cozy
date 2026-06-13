@@ -217,7 +217,10 @@ fn walk_parallel(root: &Path) -> Vec<(PathBuf, bool)> {
             Box::new(|result| {
                 if let Ok(entry) = result {
                     let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
-                    collected.lock().unwrap().push((entry.path().to_path_buf(), is_dir));
+                    collected
+                        .lock()
+                        .unwrap()
+                        .push((entry.path().to_path_buf(), is_dir));
                 }
                 ignore::WalkState::Continue
             })
@@ -252,7 +255,14 @@ fn build_arena(root: &Path, mut entries: Vec<(PathBuf, bool)>) -> Vec<BrowseNode
                 }
             });
         index_of.insert(path.clone(), idx);
-        nodes.push(BrowseNode { path, name, is_dir, depth, parent, children: Vec::new() });
+        nodes.push(BrowseNode {
+            path,
+            name,
+            is_dir,
+            depth,
+            parent,
+            children: Vec::new(),
+        });
     }
 
     // 親子リンク。
@@ -282,7 +292,8 @@ mod tests {
     /// 一時ディレクトリツリーを作る簡易ヘルパ（tempfile 非依存）。`name` はテストごとに一意に
     /// （テストは並列実行されるため共有名だと互いの cleanup でディレクトリを消し合う）。
     fn scratch_tree(name: &str) -> PathBuf {
-        let base = std::env::temp_dir().join(format!("cozy_browse_test_{}_{}", std::process::id(), name));
+        let base =
+            std::env::temp_dir().join(format!("cozy_browse_test_{}_{}", std::process::id(), name));
         let _ = fs::remove_dir_all(&base);
         fs::create_dir_all(base.join("src")).unwrap();
         fs::create_dir_all(base.join("target/debug")).unwrap();
@@ -312,7 +323,12 @@ mod tests {
         let tree = BrowseTree::build(&base);
         // .git は hidden 除外、target は（.gitignore 無しでも）少なくとも .git は確実に消える。
         assert!(!tree.nodes.iter().any(|n| n.name == ".git"));
-        assert!(!tree.nodes.iter().any(|n| n.path.components().any(|c| c.as_os_str() == ".git")));
+        assert!(
+            !tree
+                .nodes
+                .iter()
+                .any(|n| n.path.components().any(|c| c.as_os_str() == ".git"))
+        );
         let _ = fs::remove_dir_all(&base);
     }
 

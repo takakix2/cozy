@@ -1,7 +1,7 @@
-use crate::state::{Config, EditorState, EditorMode, TextBuffer, YankHighlight};
 use crate::action::Action;
 use crate::reducer::editor::apply_editor_event;
 use crate::reducer::reduce;
+use crate::state::{Config, EditorMode, EditorState, TextBuffer, YankHighlight};
 
 #[test]
 fn test_edit_mode_navigation_unaffected() {
@@ -9,7 +9,7 @@ fn test_edit_mode_navigation_unaffected() {
     // Default resting mode is Edit (new(None) starts at Welcome; force Edit + content)
     editor.enter_mode(EditorMode::Edit);
     editor.buffer = TextBuffer::from_lines(vec!["main 1".to_string(), "main 2".to_string()]);
-    
+
     apply_editor_event(&mut editor, &Action::MoveDown);
     assert_eq!(editor.cursor.y, 1);
 }
@@ -86,11 +86,13 @@ fn test_markdown_preview_screen_motions_move_highlight() {
     editor.markdown_scroll_offset = 20;
     editor.buffer = TextBuffer::from_lines((1..=50).map(|n| n.to_string()).collect());
 
-    let middle = Keymap::map_key_to_action(&editor, KeyCode::Char('M'), KeyModifiers::NONE).unwrap();
+    let middle =
+        Keymap::map_key_to_action(&editor, KeyCode::Char('M'), KeyModifiers::NONE).unwrap();
     reduce(&mut editor, middle);
     assert_eq!(editor.markdown_cursor_line, 23);
 
-    let bottom = Keymap::map_key_to_action(&editor, KeyCode::Char('L'), KeyModifiers::NONE).unwrap();
+    let bottom =
+        Keymap::map_key_to_action(&editor, KeyCode::Char('L'), KeyModifiers::NONE).unwrap();
     reduce(&mut editor, bottom);
     assert_eq!(editor.markdown_cursor_line, 26);
 
@@ -98,7 +100,8 @@ fn test_markdown_preview_screen_motions_move_highlight() {
     reduce(&mut editor, top);
     assert_eq!(editor.markdown_cursor_line, 20);
 
-    let lower_middle = Keymap::map_key_to_action(&editor, KeyCode::Char('m'), KeyModifiers::NONE).unwrap();
+    let lower_middle =
+        Keymap::map_key_to_action(&editor, KeyCode::Char('m'), KeyModifiers::NONE).unwrap();
     reduce(&mut editor, lower_middle);
     assert_eq!(editor.markdown_cursor_line, 23);
 }
@@ -114,7 +117,8 @@ fn test_markdown_preview_page_keys_use_visible_height() {
     editor.markdown_view_height = 7;
     editor.buffer = TextBuffer::from_lines((1..=50).map(|n| n.to_string()).collect());
 
-    let page_down = Keymap::map_key_to_action(&editor, KeyCode::PageDown, KeyModifiers::NONE).unwrap();
+    let page_down =
+        Keymap::map_key_to_action(&editor, KeyCode::PageDown, KeyModifiers::NONE).unwrap();
     reduce(&mut editor, page_down);
     assert_eq!(editor.markdown_cursor_line, 7);
 
@@ -139,7 +143,8 @@ fn test_markdown_preview_counted_line_jumps() {
     assert_eq!(editor.glide_count, "5");
     assert_eq!(editor.glide_prefix, Some('g'));
 
-    let second_g = Keymap::map_key_to_action(&editor, KeyCode::Char('g'), KeyModifiers::NONE).unwrap();
+    let second_g =
+        Keymap::map_key_to_action(&editor, KeyCode::Char('g'), KeyModifiers::NONE).unwrap();
     reduce(&mut editor, second_g);
     assert_eq!(editor.markdown_cursor_line, 4);
     assert!(editor.glide_count.is_empty());
@@ -168,6 +173,17 @@ fn test_markdown_preview_counted_vertical_move() {
     }
     assert_eq!(editor.markdown_cursor_line, 5);
     assert!(editor.glide_count.is_empty());
+}
+
+#[test]
+fn test_markdown_preview_handles_long_documents() {
+    let mut editor = EditorState::new(None);
+    editor.enter_mode(EditorMode::Markdown);
+    editor.buffer = TextBuffer::from_lines((1..=70_000).map(|n| n.to_string()).collect());
+
+    reduce(&mut editor, Action::End);
+
+    assert_eq!(editor.markdown_cursor_line, 69_999);
 }
 
 #[test]
@@ -215,20 +231,14 @@ fn test_command_palette_filters_and_executes_mode_command() {
     let mut editor = EditorState::new(None);
     editor.enter_mode(EditorMode::Edit);
 
-    let open_command = Keymap::map_key_to_action(
-        &editor,
-        KeyCode::Char('p'),
-        KeyModifiers::CONTROL,
-    ).unwrap();
+    let open_command =
+        Keymap::map_key_to_action(&editor, KeyCode::Char('p'), KeyModifiers::CONTROL).unwrap();
     reduce(&mut editor, open_command);
     assert_eq!(editor.mode, EditorMode::Command);
 
     for c in "mode.help".chars() {
-        let action = Keymap::map_key_to_action(
-            &editor,
-            KeyCode::Char(c),
-            KeyModifiers::NONE,
-        ).unwrap();
+        let action =
+            Keymap::map_key_to_action(&editor, KeyCode::Char(c), KeyModifiers::NONE).unwrap();
         reduce(&mut editor, action);
     }
     assert_eq!(editor.command_query, "mode.help");
@@ -350,9 +360,21 @@ fn test_command_palette_empty_query_groups_commands_by_namespace() {
 fn test_command_palette_one_letter_query_does_not_spill_into_unrelated_commands() {
     let matches = crate::commands::filtered_commands("c");
     assert!(matches.iter().any(|command| command.label == "Config.Open"));
-    assert!(matches.iter().any(|command| command.label == "Config.Reload"));
-    assert!(!matches.iter().any(|command| command.label == "Browse.Files"));
-    assert!(!matches.iter().any(|command| command.label == "App.QuitWithoutSaving"));
+    assert!(
+        matches
+            .iter()
+            .any(|command| command.label == "Config.Reload")
+    );
+    assert!(
+        !matches
+            .iter()
+            .any(|command| command.label == "Browse.Files")
+    );
+    assert!(
+        !matches
+            .iter()
+            .any(|command| command.label == "App.QuitWithoutSaving")
+    );
 }
 
 #[test]
@@ -408,7 +430,10 @@ fn test_command_palette_quit_without_saving_exits() {
         reduce(&mut editor, Action::CommandInput(c));
     }
 
-    assert!(matches!(reduce(&mut editor, Action::CommandExecute), crate::reducer::EventResult::Exit));
+    assert!(matches!(
+        reduce(&mut editor, Action::CommandExecute),
+        crate::reducer::EventResult::Exit
+    ));
 }
 
 #[test]
@@ -430,7 +455,8 @@ fn test_load_from_path_reads_runtime_flags() {
     std::fs::write(
         &path,
         "page_size = 40\nshow_line_numbers = false\nstatus_duration = 7\n",
-    ).unwrap();
+    )
+    .unwrap();
 
     let config = Config::load_from_path(&path).unwrap();
     assert_eq!(config.page_size, 40);
@@ -449,7 +475,8 @@ fn test_glide_page_keys_move_by_page_size() {
     editor.page_size = 5;
     editor.buffer = TextBuffer::from_lines((1..=20).map(|n| n.to_string()).collect());
 
-    let page_down = Keymap::map_key_to_action(&editor, KeyCode::PageDown, KeyModifiers::NONE).unwrap();
+    let page_down =
+        Keymap::map_key_to_action(&editor, KeyCode::PageDown, KeyModifiers::NONE).unwrap();
     reduce(&mut editor, page_down);
     assert_eq!(editor.cursor.y, 5);
 
@@ -486,14 +513,17 @@ fn test_glide_counted_gg_jumps_to_line_from_key_sequence() {
 
 #[test]
 fn test_dot_comma_repeat_last_find() {
-    use crate::ui::Keymap;
     use crate::state::key::{KeyCode, KeyModifiers};
+    use crate::ui::Keymap;
     let mut editor = EditorState::new(None);
     editor.enter_mode(EditorMode::Glide);
     editor.buffer = TextBuffer::from_lines(vec!["axbxcx".to_string()]); // x at 1,3,5
     editor.cursor.x = 0;
     // `>x`: jump onto the first 'x' (index 1), recording last_find.
-    reduce(&mut editor, Action::GlideMove(crate::glide::Motion::FindChar('x')));
+    reduce(
+        &mut editor,
+        Action::GlideMove(crate::glide::Motion::FindChar('x')),
+    );
     assert_eq!(editor.cursor.x, 1);
     // `.` repeats forward -> next 'x' at index 3.
     let dot = Keymap::map_key_to_action(&editor, KeyCode::Char('.'), KeyModifiers::NONE).unwrap();
@@ -512,7 +542,10 @@ fn test_bare_till_jump_moves_cursor() {
     editor.enter_mode(EditorMode::Glide);
     editor.buffer = TextBuffer::from_lines(vec!["hello)world".to_string()]);
     editor.cursor.x = 0;
-    reduce(&mut editor, Action::GlideMove(crate::glide::Motion::TillChar(')')));
+    reduce(
+        &mut editor,
+        Action::GlideMove(crate::glide::Motion::TillChar(')')),
+    );
     assert_eq!(editor.cursor.x, 4); // one char before ')'
 }
 
@@ -550,10 +583,16 @@ fn test_save_bare_filename_uses_current_dir() {
     // Restore CWD before asserting so a failure can't leave the test process in temp.
     std::env::set_current_dir(&prev).unwrap();
 
-    assert!(result.is_ok(), "bare filename save must succeed, got: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "bare filename save must succeed, got: {:?}",
+        result.err()
+    );
     let mut contents = String::new();
-    std::fs::File::open(dir.join("bare.txt")).unwrap()
-        .read_to_string(&mut contents).unwrap();
+    std::fs::File::open(dir.join("bare.txt"))
+        .unwrap()
+        .read_to_string(&mut contents)
+        .unwrap();
     assert_eq!(contents, "hello\n");
 
     let _ = std::fs::remove_dir_all(&dir);
@@ -574,12 +613,20 @@ fn test_save_success_status_survives_into_edit_mode() {
     editor.buffer = TextBuffer::from_lines(vec!["x".to_string()]);
     editor.filename = Some(path.clone());
 
-    reduce(&mut editor, Action::Save(path.to_string_lossy().to_string()));
+    reduce(
+        &mut editor,
+        Action::Save(path.to_string_lossy().to_string()),
+    );
 
     assert_eq!(editor.mode, EditorMode::Edit);
     assert!(
-        editor.status_message.as_deref().unwrap_or("").contains("Saved"),
-        "expected a 'Saved' status after save, got: {:?}", editor.status_message
+        editor
+            .status_message
+            .as_deref()
+            .unwrap_or("")
+            .contains("Saved"),
+        "expected a 'Saved' status after save, got: {:?}",
+        editor.status_message
     );
 
     let _ = std::fs::remove_dir_all(&dir);
@@ -599,11 +646,20 @@ fn test_save_and_exit_saves_then_exits() {
     editor.buffer = TextBuffer::from_lines(vec!["data".to_string()]);
     editor.filename = Some(path.clone());
 
-    let result = reduce(&mut editor, Action::SaveAndExit(path.to_string_lossy().to_string()));
+    let result = reduce(
+        &mut editor,
+        Action::SaveAndExit(path.to_string_lossy().to_string()),
+    );
 
-    assert!(matches!(result, crate::reducer::EventResult::Exit), "must exit on successful save");
+    assert!(
+        matches!(result, crate::reducer::EventResult::Exit),
+        "must exit on successful save"
+    );
     let mut contents = String::new();
-    std::fs::File::open(&path).unwrap().read_to_string(&mut contents).unwrap();
+    std::fs::File::open(&path)
+        .unwrap()
+        .read_to_string(&mut contents)
+        .unwrap();
     assert_eq!(contents, "data\n");
 
     let _ = std::fs::remove_dir_all(&dir);
@@ -620,7 +676,10 @@ fn test_save_and_exit_stays_on_failure() {
 
     let result = reduce(&mut editor, Action::SaveAndExit(String::new()));
 
-    assert!(matches!(result, crate::reducer::EventResult::Continue), "must not exit when save fails");
+    assert!(
+        matches!(result, crate::reducer::EventResult::Continue),
+        "must not exit when save fails"
+    );
 }
 
 #[test]
@@ -629,7 +688,11 @@ fn test_yank_highlight_cleared_on_next_keypress() {
     editor.enter_mode(EditorMode::Glide);
     editor.buffer = TextBuffer::from_lines(vec!["abc".to_string()]);
     // Simulate a yank having armed the flash.
-    editor.yank_highlight = Some(YankHighlight { start: (0, 0), end: (0, 3), linewise: false });
+    editor.yank_highlight = Some(YankHighlight {
+        start: (0, 0),
+        end: (0, 3),
+        linewise: false,
+    });
     // Any subsequent action goes through reduce(), which clears the flash.
     reduce(&mut editor, Action::MoveRight);
     assert!(editor.yank_highlight.is_none());
@@ -641,7 +704,11 @@ fn test_yank_highlight_cleared_on_next_keypress() {
 /// test — tests run in parallel and would otherwise wipe each other's scratch dir.
 fn browse_scratch(name: &str) -> std::path::PathBuf {
     use std::fs;
-    let base = std::env::temp_dir().join(format!("cozy_browse_reducer_{}_{}", std::process::id(), name));
+    let base = std::env::temp_dir().join(format!(
+        "cozy_browse_reducer_{}_{}",
+        std::process::id(),
+        name
+    ));
     let _ = fs::remove_dir_all(&base);
     fs::create_dir_all(base.join("src")).unwrap();
     fs::write(base.join("README.md"), "readme").unwrap();
@@ -653,8 +720,15 @@ fn browse_scratch(name: &str) -> std::path::PathBuf {
 fn test_cozy_dir_arg_opens_browse_not_edit() {
     let base = browse_scratch("dir_arg");
     let editor = EditorState::new(Some(base.to_string_lossy().to_string()));
-    assert_eq!(editor.mode, EditorMode::Browse, "a directory arg must open Browse");
-    assert!(editor.filename.is_none(), "directory must not become the edit filename");
+    assert_eq!(
+        editor.mode,
+        EditorMode::Browse,
+        "a directory arg must open Browse"
+    );
+    assert!(
+        editor.filename.is_none(),
+        "directory must not become the edit filename"
+    );
     assert!(editor.browse_tree.is_some(), "tree must be built on launch");
     let _ = std::fs::remove_dir_all(&base);
 }
@@ -689,7 +763,10 @@ fn test_browse_missing_file_falls_back_to_existing_ancestor() {
     let mut editor = EditorState::new(Some(missing.to_string_lossy().to_string()));
     editor.enter_mode(EditorMode::Browse);
     let tree = editor.browse_tree.as_ref().unwrap();
-    assert_eq!(tree.root, base, "browse root should be the nearest existing ancestor");
+    assert_eq!(
+        tree.root, base,
+        "browse root should be the nearest existing ancestor"
+    );
     let _ = std::fs::remove_dir_all(&base);
 }
 
@@ -704,7 +781,11 @@ fn test_browse_filter_round_trip() {
     assert!(tree.filtering);
     assert_eq!(tree.filter, "ma");
     // main.rs matches; README.md does not.
-    let names: Vec<&str> = tree.visible_nodes().iter().map(|&i| tree.nodes[i].name.as_str()).collect();
+    let names: Vec<&str> = tree
+        .visible_nodes()
+        .iter()
+        .map(|&i| tree.nodes[i].name.as_str())
+        .collect();
     assert!(names.contains(&"main.rs"));
     assert!(!names.contains(&"README.md"));
     // Esc clears the filter but stays in Browse.
@@ -761,7 +842,10 @@ fn test_save_resolves_relative_name_against_working_dir() {
     editor.filename = Some(std::path::PathBuf::from("memo.txt"));
 
     assert!(editor.save().is_ok());
-    assert!(dir.join("memo.txt").exists(), "relative name must land in _working_dir");
+    assert!(
+        dir.join("memo.txt").exists(),
+        "relative name must land in _working_dir"
+    );
 
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -781,9 +865,17 @@ fn test_home_mode_resolves_from_config() {
     editor.config.default_mode = Some("glide".to_string());
     assert_eq!(editor.home_mode(), EditorMode::Glide);
     editor.config.default_mode = Some("nonsense".to_string());
-    assert_eq!(editor.home_mode(), EditorMode::Edit, "unknown value falls back to Edit");
+    assert_eq!(
+        editor.home_mode(),
+        EditorMode::Edit,
+        "unknown value falls back to Edit"
+    );
     editor.config.default_mode = None;
-    assert_eq!(editor.home_mode(), EditorMode::Edit, "missing value defaults to Edit");
+    assert_eq!(
+        editor.home_mode(),
+        EditorMode::Edit,
+        "missing value defaults to Edit"
+    );
 }
 
 #[test]
@@ -805,7 +897,11 @@ fn test_glide_home_cancel_returns_to_glide() {
     set_glide_home(&mut editor);
     editor.enter_mode(EditorMode::Search);
     reduce(&mut editor, Action::Cancel);
-    assert_eq!(editor.mode, EditorMode::Glide, "Esc lands in Glide when it is home");
+    assert_eq!(
+        editor.mode,
+        EditorMode::Glide,
+        "Esc lands in Glide when it is home"
+    );
 }
 
 #[test]
@@ -826,7 +922,11 @@ fn test_glide_home_browse_open_enters_glide() {
     let main_path = base.join("src/main.rs");
     editor.browse_tree.as_mut().unwrap().select_path(&main_path);
     reduce(&mut editor, Action::BrowseExpandOrOpen);
-    assert_eq!(editor.mode, EditorMode::Glide, "opening a file rests in Glide when it is home");
+    assert_eq!(
+        editor.mode,
+        EditorMode::Glide,
+        "opening a file rests in Glide when it is home"
+    );
     assert_eq!(editor.filename.as_ref().unwrap(), &main_path);
     let _ = std::fs::remove_dir_all(&base);
 }
@@ -839,19 +939,32 @@ fn test_glide_insert_verbs_stay_edit_under_glide_home() {
     editor.enter_mode(EditorMode::Glide);
     editor.buffer = TextBuffer::from_lines(vec!["hello".to_string()]);
     reduce(&mut editor, Action::GlideInsert);
-    assert_eq!(editor.mode, EditorMode::Edit, "i must enter Edit even with Glide home");
+    assert_eq!(
+        editor.mode,
+        EditorMode::Edit,
+        "i must enter Edit even with Glide home"
+    );
 }
 
 #[test]
 fn test_change_stays_edit_under_glide_home() {
     // `cc` deletes the line then drops into insert — always Edit, even Glide-home.
-    use crate::glide::{Operator, Motion};
+    use crate::glide::{Motion, Operator};
     let mut editor = EditorState::new(None);
     set_glide_home(&mut editor);
     editor.enter_mode(EditorMode::Glide);
     editor.buffer = TextBuffer::from_lines(vec!["hello".to_string()]);
-    crate::reducer::operator::apply_operator(&mut editor, Operator::Change, Motion::CurrentLine, None);
-    assert_eq!(editor.mode, EditorMode::Edit, "change must enter Edit even with Glide home");
+    crate::reducer::operator::apply_operator(
+        &mut editor,
+        Operator::Change,
+        Motion::CurrentLine,
+        None,
+    );
+    assert_eq!(
+        editor.mode,
+        EditorMode::Edit,
+        "change must enter Edit even with Glide home"
+    );
 }
 
 #[test]
@@ -871,19 +984,26 @@ fn test_glide_home_esc_round_trip() {
 fn test_glide_home_startup_from_file_arg() {
     // `cozy <file>` with default_mode="glide" in the config dir starts in Glide.
     let base = browse_scratch("glide_startup");
-    std::fs::write(base.join("config.toml"), "page_size = 20\ndefault_mode = \"glide\"\n").unwrap();
+    std::fs::write(
+        base.join("config.toml"),
+        "page_size = 20\ndefault_mode = \"glide\"\n",
+    )
+    .unwrap();
     let file = base.join("README.md");
-    let editor = EditorState::new_with_config_dir(
-        Some(file.to_string_lossy().to_string()),
-        Some(&base),
+    let editor =
+        EditorState::new_with_config_dir(Some(file.to_string_lossy().to_string()), Some(&base));
+    assert_eq!(
+        editor.mode,
+        EditorMode::Glide,
+        "file arg rests in Glide when it is home"
     );
-    assert_eq!(editor.mode, EditorMode::Glide, "file arg rests in Glide when it is home");
     assert!(editor.filename.is_some());
     let _ = std::fs::remove_dir_all(&base);
 }
 
 fn config_scratch(name: &str) -> std::path::PathBuf {
-    let base = std::env::temp_dir().join(format!("cozy_config_test_{}_{}", std::process::id(), name));
+    let base =
+        std::env::temp_dir().join(format!("cozy_config_test_{}_{}", std::process::id(), name));
     let _ = std::fs::remove_dir_all(&base);
     std::fs::create_dir_all(&base).unwrap();
     base
@@ -896,7 +1016,11 @@ fn test_missing_config_dir_gets_default_config_toml() {
     let config = Config::load_from(Some(&base));
 
     let generated = base.join("config.toml");
-    assert!(generated.exists(), "missing config should create {}", generated.display());
+    assert!(
+        generated.exists(),
+        "missing config should create {}",
+        generated.display()
+    );
     let content = std::fs::read_to_string(&generated).unwrap();
     assert!(content.contains("default_mode = \"edit\""));
     assert_eq!(config.page_size, 20);
@@ -912,7 +1036,13 @@ fn test_existing_config_is_not_overwritten_when_default_is_generated() {
     let config = Config::load_from(Some(&base));
 
     assert_eq!(config.page_size, 42);
-    assert!(base.join("config.toml").exists(), "missing default config.toml should be created");
-    assert_eq!(std::fs::read_to_string(base.join("cozy.toml")).unwrap(), existing);
+    assert!(
+        base.join("config.toml").exists(),
+        "missing default config.toml should be created"
+    );
+    assert_eq!(
+        std::fs::read_to_string(base.join("cozy.toml")).unwrap(),
+        existing
+    );
     let _ = std::fs::remove_dir_all(&base);
 }

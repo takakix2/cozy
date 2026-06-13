@@ -43,8 +43,8 @@ cozy <フォルダ名>
 - 通常検索、大文字小文字区別、単語境界、正規表現検索と置換
 - Undo/Redo、行カット、クリップボード貼り付け、行番号、行折り返し、行番号ジャンプ
 - Rust / Python / JavaScript / JSON / TOML のシンタックスハイライト
-- 高速に読める軽量 Markdown プレビューモード
-- Markdown プレビューでの fenced code block と Mermaid block 検出
+- Mermaid 図ブロックも表示できる `ratatui-markdown` ベースの Markdown プレビューモード
+- Markdown プレビューでの高速な読書用操作
 - Glide モードによる vim 風の移動、operator、yank、change、delete、join、paste
 - TOML 設定とアクション単位のキーバインド上書き
 - reducer ベースの構成と、カーソル、motion、編集、置換、clipboard、browse mode のテスト
@@ -59,6 +59,10 @@ Glide mode では Vim 風の移動と編集コマンドを使えます。footer 
 
 ![cozy glide mode](https://raw.githubusercontent.com/takakix2/cozy/main/docs/assets/glide-mode.png)
 
+Markdown プレビューは現在の文書を折り返し、コードブロック整形、Mermaid 図ブロックつきで表示します。
+
+![cozy markdown preview with Mermaid diagrams](https://raw.githubusercontent.com/takakix2/cozy/main/docs/assets/markdown-preview-current.png)
+
 ## エディタモード
 
 - **Edit**: 既定モード。`nano` のようにそのまま入力。
@@ -70,7 +74,7 @@ Glide mode では Vim 風の移動と編集コマンドを使えます。footer 
 - **Open**: ファイルを開くダイアログ (`Ctrl+O`)。
 - **Browse**: フルスクリーンのファイルツリー (`Ctrl+B`)。
 - **Command**: コマンドパレット (`Ctrl+P`)。
-- **Markdown**: Markdown を軽く整形して読むモード (`F2`)。
+- **Markdown**: `ratatui-markdown` を使った Markdown 読書モード (`F2`)。
 - **Help**: ヘルプ画面 (`Ctrl+H` または `F1`)。
 
 ## キーバインド
@@ -150,14 +154,13 @@ Glide mode では Vim 風の移動と編集コマンドを使えます。footer 
 
 ## Markdown プレビュー
 
-`F2` で Markdown プレビューに入ります。README、実装計画、メモなどの Markdown を素早く読むための読み取り専用ビューです。現在の preview は軽量実装で、見出し、リスト、引用、inline code、fenced code block、Mermaid source block を強調しますが、まだ完全な CommonMark renderer ではありません。
+`F2` で Markdown プレビューに入ります。README、実装計画、メモなどの Markdown を素早く読むための読み取り専用ビューです。cozy は現在 `ratatui-markdown` を使ってレンダリングしているので、見出し、リスト、引用、inline code、折り返し段落、fenced code block、Mermaid 図ブロックは手書きの整形ではなく renderer の出力に従います。
 
 - 移動: `j`/`k` または `Up`/`Down`
 - ページ移動: `PageUp` / `PageDown`
 - ジャンプ: `gg`/`G`, `Ngg`/`NG`
 - 画面内移動: `H`/`M`/`L` で表示範囲の上/中央/下へ
 - 数字付き移動: `5j`, `5k`, `5gg`, `5G`
-- Mermaid: ` ```mermaid ` ブロックを図のソースとしてラベル表示・強調
 - `Esc`: 設定されたホームモードへ戻る
 
 ## Glide モード

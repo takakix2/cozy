@@ -1,8 +1,8 @@
-use crate::state::key::{KeyCode, KeyModifiers};
-use crate::state::{EditorState, EditorMode};
 use crate::action::Action;
-use crate::glide::{Motion, Operator, FindKind};
+use crate::glide::{FindKind, Motion, Operator};
 use crate::shortcuts::EditorAction;
+use crate::state::key::{KeyCode, KeyModifiers};
+use crate::state::{EditorMode, EditorState};
 
 /// Map a Glide key to a bare motion. Shared by plain movement and operator
 /// operands (`w` alone moves; `dw` deletes over the same motion).
@@ -40,7 +40,11 @@ fn is_printable(modifiers: KeyModifiers) -> bool {
 pub struct Keymap;
 
 impl Keymap {
-    pub fn map_key_to_action(editor: &EditorState, code: KeyCode, modifiers: KeyModifiers) -> Option<Action> {
+    pub fn map_key_to_action(
+        editor: &EditorState,
+        code: KeyCode,
+        modifiers: KeyModifiers,
+    ) -> Option<Action> {
         // 1. Check shortcuts (Global) - handles most cases
         if let Some(editor_action) = editor.shortcut_map.get(&(code, modifiers)) {
             match editor_action {
@@ -97,7 +101,9 @@ impl Keymap {
                         EditorMode::Replace => Some(Action::ReplaceCurrent),
                         EditorMode::Save => Some(Action::Save(editor.save_filename_buffer.clone())),
                         EditorMode::Open => Some(Action::Open(editor.open_filename_buffer.clone())),
-                        EditorMode::Quit => Some(Action::SaveAndExit(editor.save_filename_buffer.clone())),
+                        EditorMode::Quit => {
+                            Some(Action::SaveAndExit(editor.save_filename_buffer.clone()))
+                        }
                         EditorMode::Goto => {
                             let n = editor.goto_line_buffer.parse::<usize>().unwrap_or(1);
                             Some(Action::GotoLine(n))
@@ -151,7 +157,9 @@ impl Keymap {
                 if let Some(op) = editor.pending_operator {
                     return match code {
                         // Doubled operator key -> linewise current line(s): dd/yy/cc.
-                        KeyCode::Char(c) if c == op.key() => Some(Action::GlideMove(Motion::CurrentLine)),
+                        KeyCode::Char(c) if c == op.key() => {
+                            Some(Action::GlideMove(Motion::CurrentLine))
+                        }
                         KeyCode::Char('g') => Some(Action::SetGlidePrefix(Some('g'))), // dgg
                         // To-char operands. `>`/`<` find (onto the char): d>) d<( .
                         // `t`/`T` till (up to, before the char): dt) dT( .
@@ -195,8 +203,12 @@ impl Keymap {
                     KeyCode::Char('T') => Some(Action::SetFindPending(FindKind::TillBack)),
                     // Repeat the last to-char jump: `.` forward, `,` backward
                     // (same char & find/till family; no-op until one has been used).
-                    KeyCode::Char('.') => editor.last_find.map(|(k, c)| Action::GlideMove(k.forward().motion(c))),
-                    KeyCode::Char(',') => editor.last_find.map(|(k, c)| Action::GlideMove(k.backward().motion(c))),
+                    KeyCode::Char('.') => editor
+                        .last_find
+                        .map(|(k, c)| Action::GlideMove(k.forward().motion(c))),
+                    KeyCode::Char(',') => editor
+                        .last_find
+                        .map(|(k, c)| Action::GlideMove(k.backward().motion(c))),
                     KeyCode::Char('i') => Some(Action::GlideInsert),
                     KeyCode::Char('I') => Some(Action::GlideInsertLineStart),
                     KeyCode::Char('a') => Some(Action::GlideAppend),
@@ -206,59 +218,59 @@ impl Keymap {
                     _ => None,
                 }
             }
-            EditorMode::Edit => {
-                match code {
-                    KeyCode::Left => Some(Action::MoveLeft),
-                    KeyCode::Right => Some(Action::MoveRight),
-                    KeyCode::Up => Some(Action::MoveUp),
-                    KeyCode::Down => Some(Action::MoveDown),
-                    KeyCode::Backspace => Some(Action::Backspace),
-                    KeyCode::Delete => Some(Action::Delete),
-                    KeyCode::Char(c) if is_printable(modifiers) => Some(Action::InsertChar(c)),
-                    _ => None,
+            EditorMode::Edit => match code {
+                KeyCode::Left => Some(Action::MoveLeft),
+                KeyCode::Right => Some(Action::MoveRight),
+                KeyCode::Up => Some(Action::MoveUp),
+                KeyCode::Down => Some(Action::MoveDown),
+                KeyCode::Backspace => Some(Action::Backspace),
+                KeyCode::Delete => Some(Action::Delete),
+                KeyCode::Char(c) if is_printable(modifiers) => Some(Action::InsertChar(c)),
+                _ => None,
+            },
+            EditorMode::Save | EditorMode::Open | EditorMode::Quit => match code {
+                KeyCode::Left => Some(Action::MoveLeft),
+                KeyCode::Right => Some(Action::MoveRight),
+                KeyCode::Home => Some(Action::Home),
+                KeyCode::End => Some(Action::End),
+                KeyCode::Delete => Some(Action::Delete),
+                KeyCode::Backspace => Some(Action::Backspace),
+                KeyCode::Char(c) if is_printable(modifiers) => Some(Action::InsertChar(c)),
+                _ => None,
+            },
+            EditorMode::Search => match code {
+                KeyCode::Char('n') if modifiers.contains(KeyModifiers::CONTROL) => {
+                    Some(Action::SearchNext)
                 }
-            }
-            EditorMode::Save | EditorMode::Open | EditorMode::Quit => {
-                match code {
-                    KeyCode::Left  => Some(Action::MoveLeft),
-                    KeyCode::Right => Some(Action::MoveRight),
-                    KeyCode::Home  => Some(Action::Home),
-                    KeyCode::End   => Some(Action::End),
-                    KeyCode::Delete    => Some(Action::Delete),
-                    KeyCode::Backspace => Some(Action::Backspace),
-                    KeyCode::Char(c) if is_printable(modifiers) => Some(Action::InsertChar(c)),
-                    _ => None,
+                KeyCode::Char('p') if modifiers.contains(KeyModifiers::CONTROL) => {
+                    Some(Action::SearchPrevious)
                 }
-            }
-            EditorMode::Search => {
-                match code {
-                    KeyCode::Char('n') if modifiers.contains(KeyModifiers::CONTROL) => Some(Action::SearchNext),
-                    KeyCode::Char('p') if modifiers.contains(KeyModifiers::CONTROL) => Some(Action::SearchPrevious),
-                    KeyCode::Left     => Some(Action::MoveLeft),
-                    KeyCode::Right    => Some(Action::MoveRight),
-                    KeyCode::Home     => Some(Action::Home),
-                    KeyCode::End      => Some(Action::End),
-                    KeyCode::Delete   => Some(Action::Delete),
-                    KeyCode::Backspace => Some(Action::Backspace),
-                    KeyCode::Char(c) if is_printable(modifiers) => Some(Action::InsertChar(c)),
-                    _ => None,
+                KeyCode::Left => Some(Action::MoveLeft),
+                KeyCode::Right => Some(Action::MoveRight),
+                KeyCode::Home => Some(Action::Home),
+                KeyCode::End => Some(Action::End),
+                KeyCode::Delete => Some(Action::Delete),
+                KeyCode::Backspace => Some(Action::Backspace),
+                KeyCode::Char(c) if is_printable(modifiers) => Some(Action::InsertChar(c)),
+                _ => None,
+            },
+            EditorMode::Replace => match code {
+                KeyCode::Char('n') if modifiers.contains(KeyModifiers::CONTROL) => {
+                    Some(Action::SearchNext)
                 }
-            }
-            EditorMode::Replace => {
-                match code {
-                    KeyCode::Char('n') if modifiers.contains(KeyModifiers::CONTROL) => Some(Action::SearchNext),
-                    KeyCode::Char('p') if modifiers.contains(KeyModifiers::CONTROL) => Some(Action::SearchPrevious),
-                    KeyCode::Tab      => Some(Action::SwitchFocus),
-                    KeyCode::Left     => Some(Action::MoveLeft),
-                    KeyCode::Right    => Some(Action::MoveRight),
-                    KeyCode::Home     => Some(Action::Home),
-                    KeyCode::End      => Some(Action::End),
-                    KeyCode::Delete   => Some(Action::Delete),
-                    KeyCode::Backspace => Some(Action::Backspace),
-                    KeyCode::Char(c) if is_printable(modifiers) => Some(Action::InsertChar(c)),
-                    _ => None,
+                KeyCode::Char('p') if modifiers.contains(KeyModifiers::CONTROL) => {
+                    Some(Action::SearchPrevious)
                 }
-            }
+                KeyCode::Tab => Some(Action::SwitchFocus),
+                KeyCode::Left => Some(Action::MoveLeft),
+                KeyCode::Right => Some(Action::MoveRight),
+                KeyCode::Home => Some(Action::Home),
+                KeyCode::End => Some(Action::End),
+                KeyCode::Delete => Some(Action::Delete),
+                KeyCode::Backspace => Some(Action::Backspace),
+                KeyCode::Char(c) if is_printable(modifiers) => Some(Action::InsertChar(c)),
+                _ => None,
+            },
             EditorMode::Help => {
                 // All Help mode shortcuts handled by shortcut_map
                 None
@@ -280,53 +292,66 @@ impl Keymap {
                     KeyCode::Char('k') => Some(Action::MoveUp),
                     KeyCode::Char('g') => Some(Action::SetGlidePrefix(Some('g'))),
                     KeyCode::Char('G') => Some(Action::GlideMove(Motion::FileBottom)),
-                    KeyCode::Char('H') | KeyCode::Char('h') => Some(Action::GlideMove(Motion::ScreenTop)),
-                    KeyCode::Char('M') | KeyCode::Char('m') => Some(Action::GlideMove(Motion::ScreenMiddle)),
-                    KeyCode::Char('L') | KeyCode::Char('l') => Some(Action::GlideMove(Motion::ScreenBottom)),
-                    _ => None,
-                }
-            }
-            EditorMode::Goto => {
-                match code {
-                    KeyCode::Backspace => Some(Action::Backspace),
-                    KeyCode::Char(c) if c.is_ascii_digit() => Some(Action::InsertChar(c)),
-                    _ => None,
-                }
-            }
-            EditorMode::Command => {
-                match code {
-                    KeyCode::Up => Some(Action::CommandMoveUp),
-                    KeyCode::Down => Some(Action::CommandMoveDown),
-                    KeyCode::Tab => Some(Action::CommandComplete),
-                    KeyCode::Backspace => Some(Action::CommandBackspace),
-                    KeyCode::Char('k') => Some(Action::CommandMoveUp),
-                    KeyCode::Char('j') => Some(Action::CommandMoveDown),
-                    KeyCode::Char(c) if is_printable(modifiers) => Some(Action::CommandInput(c)),
-                    _ => None,
-                }
-            }
-            EditorMode::Welcome => {
-                match code {
-                    KeyCode::Enter | KeyCode::Esc
-                    | KeyCode::Up | KeyCode::Down | KeyCode::Left | KeyCode::Right
-                    | KeyCode::Backspace | KeyCode::Delete
-                    | KeyCode::Char(' ') => Some(Action::EnterMode(editor.home_mode())),
-                    KeyCode::Char(_) if modifiers.contains(KeyModifiers::CONTROL)
-                                     || modifiers.contains(KeyModifiers::ALT) => {
-                        Some(Action::EnterMode(editor.home_mode()))
+                    KeyCode::Char('H') | KeyCode::Char('h') => {
+                        Some(Action::GlideMove(Motion::ScreenTop))
+                    }
+                    KeyCode::Char('M') | KeyCode::Char('m') => {
+                        Some(Action::GlideMove(Motion::ScreenMiddle))
+                    }
+                    KeyCode::Char('L') | KeyCode::Char('l') => {
+                        Some(Action::GlideMove(Motion::ScreenBottom))
                     }
                     _ => None,
                 }
             }
+            EditorMode::Goto => match code {
+                KeyCode::Backspace => Some(Action::Backspace),
+                KeyCode::Char(c) if c.is_ascii_digit() => Some(Action::InsertChar(c)),
+                _ => None,
+            },
+            EditorMode::Command => match code {
+                KeyCode::Up => Some(Action::CommandMoveUp),
+                KeyCode::Down => Some(Action::CommandMoveDown),
+                KeyCode::Tab => Some(Action::CommandComplete),
+                KeyCode::Backspace => Some(Action::CommandBackspace),
+                KeyCode::Char('k') => Some(Action::CommandMoveUp),
+                KeyCode::Char('j') => Some(Action::CommandMoveDown),
+                KeyCode::Char(c) if is_printable(modifiers) => Some(Action::CommandInput(c)),
+                _ => None,
+            },
+            EditorMode::Welcome => match code {
+                KeyCode::Enter
+                | KeyCode::Esc
+                | KeyCode::Up
+                | KeyCode::Down
+                | KeyCode::Left
+                | KeyCode::Right
+                | KeyCode::Backspace
+                | KeyCode::Delete
+                | KeyCode::Char(' ') => Some(Action::EnterMode(editor.home_mode())),
+                KeyCode::Char(_)
+                    if modifiers.contains(KeyModifiers::CONTROL)
+                        || modifiers.contains(KeyModifiers::ALT) =>
+                {
+                    Some(Action::EnterMode(editor.home_mode()))
+                }
+                _ => None,
+            },
             EditorMode::Browse => {
                 // Arrow keys + Enter come through the global shortcut map (MoveUp/
                 // MoveDown/MoveLeft/MoveRight/Enter) and are interpreted per-mode in
                 // the reducer; here we add the Glide-style hjkl keys and `/` filter.
-                let filtering = editor.browse_tree.as_ref().map(|t| t.filtering).unwrap_or(false);
+                let filtering = editor
+                    .browse_tree
+                    .as_ref()
+                    .map(|t| t.filtering)
+                    .unwrap_or(false);
                 if filtering {
                     match code {
                         KeyCode::Backspace => Some(Action::BrowseFilterBackspace),
-                        KeyCode::Char(c) if is_printable(modifiers) => Some(Action::BrowseFilterChar(c)),
+                        KeyCode::Char(c) if is_printable(modifiers) => {
+                            Some(Action::BrowseFilterChar(c))
+                        }
                         _ => None,
                     }
                 } else {

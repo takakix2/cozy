@@ -1,5 +1,5 @@
-use crate::state::Cursor;
 use crate::reducer::EventResult;
+use crate::state::Cursor;
 
 pub fn page_up(cursor: &mut Cursor, lines: &[String], page_size: usize) -> EventResult {
     cursor.page_up(lines, page_size);

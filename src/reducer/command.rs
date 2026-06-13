@@ -60,15 +60,13 @@ pub fn execute(editor: &mut EditorState) -> EventResult {
     let action = match command.action.clone() {
         CommandAction::Dispatch(action) => action,
         CommandAction::EnterMode(mode) => Action::EnterMode(mode),
-        CommandAction::OpenConfig => {
-            match crate::state::Config::ensure_default_config_file(None) {
-                Ok(path) => Action::Open(path.to_string_lossy().to_string()),
-                Err(e) => {
-                    crate::reducer::status::set_error(editor, &e.to_string());
-                    return EventResult::Continue;
-                }
+        CommandAction::OpenConfig => match crate::state::Config::ensure_default_config_file(None) {
+            Ok(path) => Action::Open(path.to_string_lossy().to_string()),
+            Err(e) => {
+                crate::reducer::status::set_error(editor, &e.to_string());
+                return EventResult::Continue;
             }
-        }
+        },
     };
 
     crate::reducer::editor::apply_editor_event(editor, &action)

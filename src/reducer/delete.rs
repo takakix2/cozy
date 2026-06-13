@@ -1,6 +1,6 @@
-use crate::state::{EditorState, EditorMode};
 use crate::reducer::EventResult;
 use crate::reducer::helper::mark_modified;
+use crate::state::{EditorMode, EditorState};
 
 // Helper function for Backspace action
 pub fn handle_backspace(editor: &mut EditorState) -> EventResult {
@@ -8,7 +8,11 @@ pub fn handle_backspace(editor: &mut EditorState) -> EventResult {
         EditorMode::Edit | EditorMode::Glide => {
             if editor.mode == EditorMode::Glide {
                 let (y, x) = (editor.cursor.y, editor.cursor.x);
-                let ch = editor.buffer.lines.get(y).and_then(|l| l[..x.min(l.len())].chars().next_back());
+                let ch = editor
+                    .buffer
+                    .lines
+                    .get(y)
+                    .and_then(|l| l[..x.min(l.len())].chars().next_back());
                 if let Some(ch) = ch {
                     crate::reducer::clipboard::set_register_charwise(editor, ch.to_string());
                 }
@@ -35,7 +39,11 @@ pub fn handle_delete(editor: &mut EditorState) -> EventResult {
     if editor.mode == EditorMode::Edit || editor.mode == EditorMode::Glide {
         if editor.mode == EditorMode::Glide {
             let (y, x) = (editor.cursor.y, editor.cursor.x);
-            let ch = editor.buffer.lines.get(y).and_then(|l| l.get(x.min(l.len())..).and_then(|s| s.chars().next()));
+            let ch = editor
+                .buffer
+                .lines
+                .get(y)
+                .and_then(|l| l.get(x.min(l.len())..).and_then(|s| s.chars().next()));
             if let Some(ch) = ch {
                 crate::reducer::clipboard::set_register_charwise(editor, ch.to_string());
             }

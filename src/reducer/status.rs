@@ -16,4 +16,3 @@ pub fn set_error(editor: &mut EditorState, msg: &str) {
 pub fn set_info(editor: &mut EditorState, msg: &str) {
     editor.set_status_message(msg.to_string(), StatusKind::Info, true);
 }
-

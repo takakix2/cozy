@@ -1,25 +1,21 @@
-mod state;
-mod browse;
-mod glide;
-mod commands;
-mod shortcuts;
 mod action;
-mod reducer;
+mod browse;
+mod commands;
 mod event_loop;
+mod glide;
+mod host;
+mod reducer;
+mod shortcuts;
+mod state;
 mod ui;
 mod utils;
 
-pub use event_loop::{EventSource, CrosstermEventSource};
-
+pub use event_loop::{CrosstermEventSource, EventSource};
+pub use host::run_cli;
+use ratatui::{Terminal, backend::CrosstermBackend};
+use state::EditorState;
 use std::io::{self, Write};
 use std::path::PathBuf;
-use crossterm::{
-    terminal::{enable_raw_mode, disable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
-    cursor::SetCursorStyle,
-    execute,
-};
-use ratatui::{backend::CrosstermBackend, Terminal};
-use state::EditorState;
 
 /// Configuration for embedding cozy in a host application.
 pub struct CozyConfig {
@@ -61,9 +57,12 @@ pub fn run<W: Write>(
     let backend = CrosstermBackend::new(writer);
     let mut terminal = if let Some((cols, rows)) = config.terminal_size {
         use ratatui::layout::Rect;
-        Terminal::with_options(backend, ratatui::TerminalOptions {
-            viewport: ratatui::Viewport::Fixed(Rect::new(0, 0, cols, rows)),
-        })?
+        Terminal::with_options(
+            backend,
+            ratatui::TerminalOptions {
+                viewport: ratatui::Viewport::Fixed(Rect::new(0, 0, cols, rows)),
+            },
+        )?
     } else {
         Terminal::new(backend)?
     };
@@ -76,25 +75,4 @@ pub fn run<W: Write>(
     event_loop::run(&mut terminal, &mut editor, event_src)?;
 
     Ok(())
-}
-
-/// Convenience: run with full terminal setup (CLI binary entry point).
-pub fn run_cli(filename: Option<String>) -> io::Result<()> {
-    enable_raw_mode()?;
-    let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen, SetCursorStyle::SteadyBar)?;
-    utils::terminal::enable_bracketed_paste()?;
-
-    let config = CozyConfig {
-        filename,
-        ..Default::default()
-    };
-    let mut event_src = CrosstermEventSource;
-    let result = run(io::stdout(), config, &mut event_src);
-
-    utils::terminal::disable_bracketed_paste()?;
-    disable_raw_mode()?;
-    execute!(io::stdout(), LeaveAlternateScreen)?;
-
-    result
 }

@@ -1,5 +1,5 @@
-use crate::state::{EditorState, EditorMode};
 use crate::reducer::EventResult;
+use crate::state::{EditorMode, EditorState};
 
 fn active_buffer(editor: &EditorState) -> &String {
     match editor.mode {
@@ -27,9 +27,15 @@ pub fn update_filename_buffer(editor: &mut EditorState, c: char) -> EventResult 
 
 pub fn delete_from_filename_buffer(editor: &mut EditorState) -> EventResult {
     let pos = editor.filename_cursor;
-    if pos == 0 { return EventResult::Continue; }
+    if pos == 0 {
+        return EventResult::Continue;
+    }
     let buf = active_buffer_mut(editor);
-    let prev = buf[..pos].char_indices().last().map(|(i, _)| i).unwrap_or(0);
+    let prev = buf[..pos]
+        .char_indices()
+        .last()
+        .map(|(i, _)| i)
+        .unwrap_or(0);
     buf.remove(prev);
     editor.filename_cursor = prev;
     EventResult::Continue
@@ -46,9 +52,14 @@ pub fn delete_char_at_cursor(editor: &mut EditorState) -> EventResult {
 
 pub fn move_filename_cursor_left(editor: &mut EditorState) -> EventResult {
     let pos = editor.filename_cursor;
-    if pos == 0 { return EventResult::Continue; }
+    if pos == 0 {
+        return EventResult::Continue;
+    }
     let prev = active_buffer(editor)[..pos]
-        .char_indices().last().map(|(i, _)| i).unwrap_or(0);
+        .char_indices()
+        .last()
+        .map(|(i, _)| i)
+        .unwrap_or(0);
     editor.filename_cursor = prev;
     EventResult::Continue
 }
@@ -56,9 +67,14 @@ pub fn move_filename_cursor_left(editor: &mut EditorState) -> EventResult {
 pub fn move_filename_cursor_right(editor: &mut EditorState) -> EventResult {
     let pos = editor.filename_cursor;
     let len = active_buffer(editor).len();
-    if pos >= len { return EventResult::Continue; }
+    if pos >= len {
+        return EventResult::Continue;
+    }
     let next = active_buffer(editor)[pos..]
-        .chars().next().map(|c| pos + c.len_utf8()).unwrap_or(pos);
+        .chars()
+        .next()
+        .map(|c| pos + c.len_utf8())
+        .unwrap_or(pos);
     editor.filename_cursor = next;
     EventResult::Continue
 }

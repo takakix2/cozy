@@ -5,16 +5,16 @@ pub mod markdown;
 pub mod screen;
 
 use ratatui::{
-    layout::{Layout, Constraint, Direction, Rect},
     Frame,
+    layout::{Constraint, Direction, Layout, Rect},
 };
 use std::rc::Rc;
 
-use crate::state::{EditorState, EditorMode};
+use crate::state::{EditorMode, EditorState};
 
 // Re-export public functions
 pub use body::render_text_buffer;
-pub use screen::{render_welcome, render_help};
+pub use screen::{render_help, render_welcome};
 
 pub struct Renderer;
 
@@ -23,10 +23,10 @@ impl Renderer {
         let is_narrow = area.width < 50;
         let shortcut_h: u16 = match (is_narrow, editor.mode) {
             (_, EditorMode::Welcome) => 0,
-            (_, EditorMode::Help)    => 1,
+            (_, EditorMode::Help) => 1,
             (_, EditorMode::Command) => 10,
-            (true, _)                => 4,
-            (false, _)               => 2,
+            (true, _) => 4,
+            (false, _) => 2,
         };
         let status_bar_h: u16 = match editor.mode {
             EditorMode::Welcome | EditorMode::Help => 0,
@@ -42,11 +42,14 @@ impl Renderer {
         };
         Layout::default()
             .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Min(1),
-                Constraint::Length(actual_shortcut_h),
-                Constraint::Length(status_bar_h),
-            ].as_ref())
+            .constraints(
+                [
+                    Constraint::Min(1),
+                    Constraint::Length(actual_shortcut_h),
+                    Constraint::Length(status_bar_h),
+                ]
+                .as_ref(),
+            )
             .split(area)
     }
 

@@ -43,8 +43,8 @@ cozy <folder>
 - Search and replace with literal, case-sensitive, word-boundary, and regex modes
 - Undo/redo, line cut, clipboard paste, line numbers, line wrap, and goto-line
 - Syntax highlighting for Rust, Python, JavaScript, JSON, and TOML
-- Lightweight Markdown preview mode with fast reading controls
-- Fenced code block and Mermaid block detection in Markdown preview
+- Markdown preview powered by `ratatui-markdown`, including Mermaid diagram blocks
+- Fast reading controls in Markdown preview
 - Glide mode for vim-like movement, operators, yanking, changing, deleting, joining, and paste
 - TOML configuration and per-action key overrides
 - Reducer-based architecture with focused tests for cursor behavior, motions, editing, replace, clipboard, and browse mode
@@ -59,6 +59,10 @@ Glide mode adds vim-like movement and editing commands while keeping the visible
 
 ![cozy glide mode](https://raw.githubusercontent.com/takakix2/cozy/main/docs/assets/glide-mode.png)
 
+Markdown preview renders the current document with readable wrapping, code block formatting, and Mermaid diagram blocks.
+
+![cozy markdown preview with Mermaid diagrams](https://raw.githubusercontent.com/takakix2/cozy/main/docs/assets/markdown-preview-current.png)
+
 ## Editor Modes
 
 - **Edit**: Default mode. Type directly, like `nano`.
@@ -70,7 +74,7 @@ Glide mode adds vim-like movement and editing commands while keeping the visible
 - **Open**: Open-file dialog (`Ctrl+O`).
 - **Browse**: Full-screen file tree (`Ctrl+B`).
 - **Command**: Command palette (`Ctrl+P`).
-- **Markdown**: Lightweight Markdown reading mode (`F2`).
+- **Markdown**: Markdown reading mode powered by `ratatui-markdown` (`F2`).
 - **Help**: Help screen (`Ctrl+H` or `F1`).
 
 ## Key Bindings
@@ -150,14 +154,13 @@ Built-in commands are currently grouped as:
 
 ## Markdown Preview
 
-Markdown preview is available with `F2`. It is a read-only view for quickly reading README files, plans, notes, and other Markdown documents. The current preview is intentionally lightweight: it highlights headings, lists, block quotes, inline code, fenced code blocks, and Mermaid source blocks, but it is not yet a full CommonMark renderer.
+Markdown preview is available with `F2`. It is a read-only view for quickly reading README files, plans, notes, and other Markdown documents. cozy now uses `ratatui-markdown` for the rendered preview, so headings, lists, block quotes, inline code, wrapped paragraphs, fenced code blocks, and Mermaid diagram blocks follow the renderer's output instead of the old hand-written formatter.
 
 - Move: `j`/`k` or `Up`/`Down`
 - Page: `PageUp` / `PageDown`
 - Jump: `gg`/`G`, `Ngg`/`NG`
 - Screen: `H`/`M`/`L` for top/middle/bottom of the visible area
 - Counted move: `5j`, `5k`, `5gg`, `5G`
-- Mermaid: ` ```mermaid ` blocks are labeled and highlighted as diagram source
 - `Esc`: Return to your configured home mode
 
 ## Glide Mode

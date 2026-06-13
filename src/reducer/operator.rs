@@ -5,12 +5,12 @@
 //! every motion automatically works with every operator (`dw`, `d$`, `dj`,
 //! `cw`, `yw`, `d3w`, `dd`/`yy`/`cc` via `Motion::CurrentLine`).
 
-use crate::state::{EditorState, EditorMode};
-use crate::glide::{resolve, Motion, MotionKind, Operator};
+use crate::glide::{Motion, MotionKind, Operator, resolve};
 use crate::reducer::EventResult;
 use crate::reducer::clipboard::{set_register_charwise, set_register_linewise};
 use crate::reducer::helper::mark_modified;
 use crate::state::cursor::first_non_whitespace_byte;
+use crate::state::{EditorMode, EditorState};
 
 /// Read text over the half-open span `[start, end)` (start <= end).
 fn read_span(lines: &[String], start: (usize, usize), end: (usize, usize)) -> String {
@@ -51,7 +51,12 @@ fn delete_span(lines: &mut Vec<String>, start: (usize, usize), end: (usize, usiz
 }
 
 /// Apply `op` over the span from the cursor to the resolved `motion` target.
-pub fn apply_operator(editor: &mut EditorState, op: Operator, motion: Motion, count: Option<usize>) -> EventResult {
+pub fn apply_operator(
+    editor: &mut EditorState,
+    op: Operator,
+    motion: Motion,
+    count: Option<usize>,
+) -> EventResult {
     let r = resolve(motion, count, editor);
     let cur = (editor.cursor.y, editor.cursor.x);
     match r.kind {
@@ -126,7 +131,12 @@ fn operate_linewise(editor: &mut EditorState, op: Operator, ya: usize, yb: usize
     EventResult::Continue
 }
 
-fn operate_charwise(editor: &mut EditorState, op: Operator, cur: (usize, usize), tgt: (usize, usize)) -> EventResult {
+fn operate_charwise(
+    editor: &mut EditorState,
+    op: Operator,
+    cur: (usize, usize),
+    tgt: (usize, usize),
+) -> EventResult {
     let (start, end) = if cur <= tgt { (cur, tgt) } else { (tgt, cur) };
     if start == end {
         return EventResult::Continue; // empty span (e.g. motion did not move)
@@ -137,7 +147,11 @@ fn operate_charwise(editor: &mut EditorState, op: Operator, cur: (usize, usize),
             set_register_charwise(editor, removed);
             editor.cursor.y = start.0;
             editor.cursor.x = start.1;
-            editor.yank_highlight = Some(crate::state::YankHighlight { start, end, linewise: false });
+            editor.yank_highlight = Some(crate::state::YankHighlight {
+                start,
+                end,
+                linewise: false,
+            });
         }
         Operator::Delete => {
             mark_modified(editor);
@@ -239,7 +253,9 @@ mod tests {
         let mut e = editor_with(&["one", "two", "three"]);
         e.cursor.y = 0;
         apply_operator(&mut e, Operator::Yank, Motion::CurrentLine, Some(2));
-        let hl = e.yank_highlight.expect("linewise yank should arm the flash");
+        let hl = e
+            .yank_highlight
+            .expect("linewise yank should arm the flash");
         assert!(hl.linewise);
         assert!(hl.contains(0, 0) && hl.contains(1, 2));
         assert!(!hl.contains(2, 0)); // the third line is outside a 2-line yank

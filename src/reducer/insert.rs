@@ -1,6 +1,6 @@
-use crate::state::{EditorState, EditorMode};
 use crate::reducer::EventResult;
 use crate::reducer::helper::mark_modified;
+use crate::state::{EditorMode, EditorState};
 
 // Helper function for InsertChar action
 pub fn handle_insert_char(editor: &mut EditorState, c: char) -> EventResult {
@@ -19,6 +19,6 @@ pub fn handle_enter(editor: &mut EditorState) -> EventResult {
             editor.buffer.enter(&mut editor.cursor);
             EventResult::Continue
         }
-        _ => EventResult::Continue // Handled by editor reducer for other modes
+        _ => EventResult::Continue, // Handled by editor reducer for other modes
     }
 }

@@ -1,6 +1,6 @@
-use crate::state::{EditorState, EditorMode, StatusKind};
 use crate::action::Action;
 use crate::reducer::EventResult;
+use crate::state::{EditorMode, EditorState, StatusKind};
 
 /// Consume the accumulated Glide count (default 1) and clear the buffer.
 fn take_count(editor: &mut EditorState) -> usize {
@@ -27,14 +27,20 @@ fn apply_glide_move(editor: &mut EditorState, motion: crate::glide::Motion) -> E
     // Soft-wrap: bare j/k follow visual rows. Operators keep logical lines because
     // they go through apply_operator/resolve, which this branch does not touch.
     let tw = editor.text_display_width;
-    if editor.soft_wrap && tw > 0
-        && matches!(motion, crate::glide::Motion::Up | crate::glide::Motion::Down)
+    if editor.soft_wrap
+        && tw > 0
+        && matches!(
+            motion,
+            crate::glide::Motion::Up | crate::glide::Motion::Down
+        )
     {
         let n = count.unwrap_or(1);
         for _ in 0..n {
             match motion {
-                crate::glide::Motion::Down => editor.cursor.move_down_visual(&editor.buffer.lines, tw),
-                crate::glide::Motion::Up   => editor.cursor.move_up_visual(&editor.buffer.lines, tw),
+                crate::glide::Motion::Down => {
+                    editor.cursor.move_down_visual(&editor.buffer.lines, tw)
+                }
+                crate::glide::Motion::Up => editor.cursor.move_up_visual(&editor.buffer.lines, tw),
                 _ => unreachable!(),
             }
         }
@@ -50,7 +56,11 @@ fn apply_glide_move(editor: &mut EditorState, motion: crate::glide::Motion) -> E
 /// save to the current file (or Save As when there is no current file yet).
 fn save_dispatch(editor: &mut EditorState, fname: &str) -> std::io::Result<()> {
     if !fname.is_empty()
-        && editor.filename.as_ref().map(|p| p.to_string_lossy().to_string()) != Some(fname.to_string())
+        && editor
+            .filename
+            .as_ref()
+            .map(|p| p.to_string_lossy().to_string())
+            != Some(fname.to_string())
     {
         editor.save_as(fname)
     } else if editor.filename.is_some() {
@@ -74,13 +84,19 @@ pub fn apply_editor_event(editor: &mut EditorState, action: &Action) -> EventRes
                 let tw = editor.text_display_width;
                 let visual = editor.soft_wrap && tw > 0;
                 for _ in 0..n {
-                    if visual { editor.cursor.move_up_visual(&editor.buffer.lines, tw); }
-                    else { editor.cursor.move_up(&editor.buffer.lines); }
+                    if visual {
+                        editor.cursor.move_up_visual(&editor.buffer.lines, tw);
+                    } else {
+                        editor.cursor.move_up(&editor.buffer.lines);
+                    }
                 }
             } else {
                 let tw = editor.text_display_width;
-                if editor.soft_wrap && tw > 0 { editor.cursor.move_up_visual(&editor.buffer.lines, tw); }
-                else { editor.cursor.move_up(&editor.buffer.lines); }
+                if editor.soft_wrap && tw > 0 {
+                    editor.cursor.move_up_visual(&editor.buffer.lines, tw);
+                } else {
+                    editor.cursor.move_up(&editor.buffer.lines);
+                }
             }
             EventResult::Continue
         }
@@ -93,13 +109,19 @@ pub fn apply_editor_event(editor: &mut EditorState, action: &Action) -> EventRes
                 let tw = editor.text_display_width;
                 let visual = editor.soft_wrap && tw > 0;
                 for _ in 0..n {
-                    if visual { editor.cursor.move_down_visual(&editor.buffer.lines, tw); }
-                    else { editor.cursor.move_down(&editor.buffer.lines); }
+                    if visual {
+                        editor.cursor.move_down_visual(&editor.buffer.lines, tw);
+                    } else {
+                        editor.cursor.move_down(&editor.buffer.lines);
+                    }
                 }
             } else {
                 let tw = editor.text_display_width;
-                if editor.soft_wrap && tw > 0 { editor.cursor.move_down_visual(&editor.buffer.lines, tw); }
-                else { editor.cursor.move_down(&editor.buffer.lines); }
+                if editor.soft_wrap && tw > 0 {
+                    editor.cursor.move_down_visual(&editor.buffer.lines, tw);
+                } else {
+                    editor.cursor.move_down(&editor.buffer.lines);
+                }
             }
             EventResult::Continue
         }
@@ -107,7 +129,9 @@ pub fn apply_editor_event(editor: &mut EditorState, action: &Action) -> EventRes
             if editor.mode == EditorMode::Glide {
                 editor.pending_operator = None;
                 let n = take_count(editor);
-                for _ in 0..n { editor.cursor.move_left(&editor.buffer.lines); }
+                for _ in 0..n {
+                    editor.cursor.move_left(&editor.buffer.lines);
+                }
             } else {
                 editor.cursor.move_left(&editor.buffer.lines);
             }
@@ -117,25 +141,33 @@ pub fn apply_editor_event(editor: &mut EditorState, action: &Action) -> EventRes
             if editor.mode == EditorMode::Glide {
                 editor.pending_operator = None;
                 let n = take_count(editor);
-                for _ in 0..n { editor.cursor.move_right(&editor.buffer.lines); }
+                for _ in 0..n {
+                    editor.cursor.move_right(&editor.buffer.lines);
+                }
             } else {
                 editor.cursor.move_right(&editor.buffer.lines);
             }
             EventResult::Continue
         }
-        Action::PageUp => {
-            crate::reducer::cursor::page_up(&mut editor.cursor, &editor.buffer.lines, editor.page_size)
-        }
-        Action::PageDown => {
-            crate::reducer::cursor::page_down(&mut editor.cursor, &editor.buffer.lines, editor.page_size)
-        }
+        Action::PageUp => crate::reducer::cursor::page_up(
+            &mut editor.cursor,
+            &editor.buffer.lines,
+            editor.page_size,
+        ),
+        Action::PageDown => crate::reducer::cursor::page_down(
+            &mut editor.cursor,
+            &editor.buffer.lines,
+            editor.page_size,
+        ),
         // Glide motion engine: a motion resolves to a target. With a pending
         // operator it defines the span to act on; otherwise it moves the cursor.
         Action::GlideMove(m) => {
             editor.glide_prefix = None;
             editor.glide_find_pending = None;
             // Remember a to-char motion so `.`/`,` can replay it.
-            if let Some(f) = m.as_find() { editor.last_find = Some(f); }
+            if let Some(f) = m.as_find() {
+                editor.last_find = Some(f);
+            }
             let count = take_count_opt(editor);
             if let Some(op) = editor.pending_operator.take() {
                 crate::reducer::operator::apply_operator(editor, op, *m, count)
@@ -165,7 +197,9 @@ pub fn apply_editor_event(editor: &mut EditorState, action: &Action) -> EventRes
             for _ in 0..n {
                 let x = editor.cursor.x;
                 let line = &editor.buffer.lines[y];
-                if x >= line.len() { break; }
+                if x >= line.len() {
+                    break;
+                }
                 let ch = line[x..].chars().next().unwrap();
                 let toggled: String = if ch.is_lowercase() {
                     ch.to_uppercase().collect()
@@ -188,11 +222,21 @@ pub fn apply_editor_event(editor: &mut EditorState, action: &Action) -> EventRes
         }
         Action::ChangeToLineEnd => {
             let count = take_count_opt(editor);
-            crate::reducer::operator::apply_operator(editor, crate::glide::Operator::Change, crate::glide::Motion::LineEnd, count)
+            crate::reducer::operator::apply_operator(
+                editor,
+                crate::glide::Operator::Change,
+                crate::glide::Motion::LineEnd,
+                count,
+            )
         }
         Action::YankLine => {
             let count = take_count_opt(editor);
-            crate::reducer::operator::apply_operator(editor, crate::glide::Operator::Yank, crate::glide::Motion::CurrentLine, count)
+            crate::reducer::operator::apply_operator(
+                editor,
+                crate::glide::Operator::Yank,
+                crate::glide::Motion::CurrentLine,
+                count,
+            )
         }
         // PageTop/PageBottom remain as config-bindable ([keys]) aliases.
         Action::PageTop => apply_glide_move(editor, crate::glide::Motion::ScreenTop),
@@ -226,7 +270,9 @@ pub fn apply_editor_event(editor: &mut EditorState, action: &Action) -> EventRes
         Action::Save(fname) => {
             match save_dispatch(editor, fname) {
                 Ok(_) => {
-                    let display_name = editor.filename.as_ref()
+                    let display_name = editor
+                        .filename
+                        .as_ref()
                         .map(|p| p.to_string_lossy().to_string())
                         .unwrap_or_else(|| fname.to_string());
                     // enter_mode() clears status_message, so switch to Edit FIRST,
@@ -243,15 +289,13 @@ pub fn apply_editor_event(editor: &mut EditorState, action: &Action) -> EventRes
         // Ctrl+X → Enter ("Save and Exit"): save first, exit only on success.
         // On failure (e.g. empty/invalid filename) stay in Quit mode and show the
         // error — the user can fix the name inline, or Ctrl+Q to discard / Esc to cancel.
-        Action::SaveAndExit(fname) => {
-            match save_dispatch(editor, fname) {
-                Ok(_) => EventResult::Exit,
-                Err(e) => {
-                    crate::reducer::status::set_error(editor, &e.to_string());
-                    EventResult::Continue
-                }
+        Action::SaveAndExit(fname) => match save_dispatch(editor, fname) {
+            Ok(_) => EventResult::Exit,
+            Err(e) => {
+                crate::reducer::status::set_error(editor, &e.to_string());
+                EventResult::Continue
             }
-        }
+        },
         Action::Open(fname) => {
             let result = editor.open_file(fname);
             // enter_mode() clears status_message, so switch to the resting mode
@@ -298,7 +342,8 @@ pub fn apply_editor_event(editor: &mut EditorState, action: &Action) -> EventRes
             EventResult::Continue
         }
         Action::ToggleLineNumbers => {
-            let current = editor.show_line_numbers_runtime
+            let current = editor
+                .show_line_numbers_runtime
                 .unwrap_or(editor.config.show_line_numbers.unwrap_or(true));
             editor.show_line_numbers_runtime = Some(!current);
             let status = if !current { "on" } else { "off" };
@@ -337,7 +382,11 @@ pub fn apply_editor_event(editor: &mut EditorState, action: &Action) -> EventRes
                     editor.cursor.y = editor.buffer.lines.len() - 1;
                 }
                 editor.cursor.x = 0;
-                editor.set_status_message(format!("{} lines deleted", n), StatusKind::Success, false);
+                editor.set_status_message(
+                    format!("{} lines deleted", n),
+                    StatusKind::Success,
+                    false,
+                );
                 EventResult::Continue
             } else {
                 editor.glide_prefix = None;
@@ -345,11 +394,9 @@ pub fn apply_editor_event(editor: &mut EditorState, action: &Action) -> EventRes
                 crate::reducer::clipboard::cut_line(editor)
             }
         }
-        
+
         // Enter (fallthrough — Edit mode newline; other modes handled in keymap/mod.rs)
         Action::Enter => EventResult::Continue,
-
-
 
         Action::GotoLine(n) => {
             let last = editor.buffer.lines.len().saturating_sub(1);
@@ -368,7 +415,9 @@ pub fn apply_editor_event(editor: &mut EditorState, action: &Action) -> EventRes
                 crate::reducer::helper::mark_modified(editor);
                 for _ in 0..n {
                     let y = editor.cursor.y;
-                    if y + 1 >= editor.buffer.lines.len() { break; }
+                    if y + 1 >= editor.buffer.lines.len() {
+                        break;
+                    }
                     let join_x = editor.buffer.lines[y].len();
                     let next = editor.buffer.lines.remove(y + 1);
                     let trimmed = next.trim_start();
@@ -384,13 +433,20 @@ pub fn apply_editor_event(editor: &mut EditorState, action: &Action) -> EventRes
         // D = d$ : delete from the cursor to end of line, via the operator engine.
         Action::DeleteToLineEnd => {
             let count = take_count_opt(editor);
-            crate::reducer::operator::apply_operator(editor, crate::glide::Operator::Delete, crate::glide::Motion::LineEnd, count)
+            crate::reducer::operator::apply_operator(
+                editor,
+                crate::glide::Operator::Delete,
+                crate::glide::Motion::LineEnd,
+                count,
+            )
         }
         Action::PasteRegister(after) => crate::reducer::clipboard::paste_register(editor, *after),
 
         Action::SetGlidePrefix(c) => {
             editor.glide_prefix = *c;
-            if c.is_none() { editor.glide_count.clear(); }
+            if c.is_none() {
+                editor.glide_count.clear();
+            }
             EventResult::Continue
         }
         Action::GlideDigit(c) => {
@@ -403,7 +459,9 @@ pub fn apply_editor_event(editor: &mut EditorState, action: &Action) -> EventRes
         }
         Action::GlideInsertLineStart => {
             editor.cursor.move_line_start();
-            editor.cursor.x = crate::state::cursor::first_non_whitespace_byte(&editor.buffer.lines[editor.cursor.y]);
+            editor.cursor.x = crate::state::cursor::first_non_whitespace_byte(
+                &editor.buffer.lines[editor.cursor.y],
+            );
             editor.enter_mode(EditorMode::Edit);
             EventResult::Continue
         }

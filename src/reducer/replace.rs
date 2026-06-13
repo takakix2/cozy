@@ -1,6 +1,6 @@
-use crate::state::{EditorState, EditorMode, ReplaceFocus, SearchMode};
 use crate::reducer::EventResult;
 use crate::reducer::helper::mark_modified;
+use crate::state::{EditorMode, EditorState, ReplaceFocus, SearchMode};
 use regex::Regex;
 
 /// Expand the replacement text for a single match. In Regex mode the `$1` /
@@ -36,11 +36,17 @@ pub fn update_replace_buffer(editor: &mut EditorState, c: char) {
 
 pub fn delete_from_replace_buffer(editor: &mut EditorState) {
     let pos = editor.search_cursor;
-    if pos == 0 { return; }
+    if pos == 0 {
+        return;
+    }
     match editor.replace_focus {
         ReplaceFocus::Query => {
             let buf = &mut editor.search_buffer;
-            let prev = buf[..pos].char_indices().last().map(|(i, _)| i).unwrap_or(0);
+            let prev = buf[..pos]
+                .char_indices()
+                .last()
+                .map(|(i, _)| i)
+                .unwrap_or(0);
             buf.remove(prev);
             editor.search_cursor = prev;
             crate::reducer::search::recompute_matches(editor);
@@ -48,7 +54,11 @@ pub fn delete_from_replace_buffer(editor: &mut EditorState) {
         }
         ReplaceFocus::Replace => {
             let buf = &mut editor.replace_buffer;
-            let prev = buf[..pos].char_indices().last().map(|(i, _)| i).unwrap_or(0);
+            let prev = buf[..pos]
+                .char_indices()
+                .last()
+                .map(|(i, _)| i)
+                .unwrap_or(0);
             buf.remove(prev);
             editor.search_cursor = prev;
         }
@@ -60,25 +70,35 @@ pub fn delete_replace_char_at_cursor(editor: &mut EditorState) {
     match editor.replace_focus {
         ReplaceFocus::Query => {
             let buf = &mut editor.search_buffer;
-            if pos < buf.len() && buf.is_char_boundary(pos) { buf.remove(pos); }
+            if pos < buf.len() && buf.is_char_boundary(pos) {
+                buf.remove(pos);
+            }
             crate::reducer::search::recompute_matches(editor);
             crate::reducer::search::focus_nearest_match(editor);
         }
         ReplaceFocus::Replace => {
             let buf = &mut editor.replace_buffer;
-            if pos < buf.len() && buf.is_char_boundary(pos) { buf.remove(pos); }
+            if pos < buf.len() && buf.is_char_boundary(pos) {
+                buf.remove(pos);
+            }
         }
     }
 }
 
 pub fn move_replace_cursor_left(editor: &mut EditorState) {
     let pos = editor.search_cursor;
-    if pos == 0 { return; }
+    if pos == 0 {
+        return;
+    }
     let buf = match editor.replace_focus {
         ReplaceFocus::Query => &editor.search_buffer,
         ReplaceFocus::Replace => &editor.replace_buffer,
     };
-    editor.search_cursor = buf[..pos].char_indices().last().map(|(i, _)| i).unwrap_or(0);
+    editor.search_cursor = buf[..pos]
+        .char_indices()
+        .last()
+        .map(|(i, _)| i)
+        .unwrap_or(0);
 }
 
 pub fn move_replace_cursor_right(editor: &mut EditorState) {
@@ -87,8 +107,14 @@ pub fn move_replace_cursor_right(editor: &mut EditorState) {
         ReplaceFocus::Query => &editor.search_buffer,
         ReplaceFocus::Replace => &editor.replace_buffer,
     };
-    if pos >= buf.len() { return; }
-    editor.search_cursor = buf[pos..].chars().next().map(|c| pos + c.len_utf8()).unwrap_or(pos);
+    if pos >= buf.len() {
+        return;
+    }
+    editor.search_cursor = buf[pos..]
+        .chars()
+        .next()
+        .map(|c| pos + c.len_utf8())
+        .unwrap_or(pos);
 }
 
 pub fn move_replace_cursor_home(editor: &mut EditorState) {
@@ -119,7 +145,7 @@ pub fn apply_switch_focus(editor: &mut EditorState) -> EventResult {
 
 /// Replace the current match and move to the next one
 pub fn apply_replace_current(editor: &mut EditorState) -> EventResult {
-    let query       = editor.search_buffer.clone();
+    let query = editor.search_buffer.clone();
     let replacement = editor.replace_buffer.clone();
 
     if query.is_empty() {
@@ -167,7 +193,7 @@ pub fn apply_replace_current(editor: &mut EditorState) -> EventResult {
 // Helper function for ReplaceAll action
 /// Replace all matches
 pub fn apply_replace_all(editor: &mut EditorState) -> EventResult {
-    let query       = editor.search_buffer.clone();
+    let query = editor.search_buffer.clone();
     let replacement = editor.replace_buffer.clone();
 
     if query.is_empty() {
@@ -189,7 +215,10 @@ pub fn apply_replace_all(editor: &mut EditorState) -> EventResult {
     matches_rev.reverse();
 
     for (y, s, e) in matches_rev {
-        if y < editor.buffer.lines.len() && s <= editor.buffer.lines[y].len() && e <= editor.buffer.lines[y].len() {
+        if y < editor.buffer.lines.len()
+            && s <= editor.buffer.lines[y].len()
+            && e <= editor.buffer.lines[y].len()
+        {
             let matched = editor.buffer.lines[y][s..e].to_string();
             let expanded = expand_replacement(&matched, &query, &replacement, &editor.search_mode);
             editor.buffer.lines[y].replace_range(s..e, &expanded);
@@ -207,7 +236,7 @@ pub fn apply_replace_all(editor: &mut EditorState) -> EventResult {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state::{EditorState, TextBuffer, Cursor, StatusKind};
+    use crate::state::{Cursor, EditorState, StatusKind, TextBuffer};
 
     fn create_editor_state(content: &str) -> EditorState {
         let lines: Vec<String> = content.lines().map(|s| s.to_string()).collect();
@@ -223,9 +252,9 @@ mod tests {
         editor.search_buffer = "hello".to_string();
         editor.replace_buffer = "hi".to_string();
         // Cursor at (0, 0) matches "hello"
-        
+
         apply_replace_current(&mut editor);
-        
+
         assert_eq!(editor.buffer.lines[0], "hi world");
         // Cursor should move after replacement: len("hi") = 2
         assert_eq!(editor.cursor.x, 2);
@@ -239,7 +268,7 @@ mod tests {
         editor.search_buffer = "hello".to_string();
         editor.replace_buffer = "hi".to_string();
         editor.cursor.x = 1; // "e" - no match starting here
-        
+
         apply_replace_current(&mut editor);
 
         // The current match (search_current) is replaced regardless of cursor column
@@ -255,9 +284,9 @@ mod tests {
         let mut editor = create_editor_state("foo bar foo");
         editor.search_buffer = "foo".to_string();
         editor.replace_buffer = "baz".to_string();
-        
+
         apply_replace_all(&mut editor);
-        
+
         assert_eq!(editor.buffer.lines[0], "baz bar baz");
         assert_eq!(editor.status_kind, StatusKind::Success);
     }
@@ -299,9 +328,9 @@ mod tests {
         let mut editor = create_editor_state("foo bar");
         editor.search_buffer = "baz".to_string();
         editor.replace_buffer = "qux".to_string();
-        
+
         apply_replace_all(&mut editor);
-        
+
         assert_eq!(editor.buffer.lines[0], "foo bar");
         assert_eq!(editor.status_kind, StatusKind::Info);
     }

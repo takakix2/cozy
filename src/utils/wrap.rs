@@ -36,7 +36,13 @@ pub fn visual_row_count(line: &str, width: usize) -> usize {
 ///     past the final char like a normal end-of-line position.
 ///   - otherwise: returns the start byte of the last char in the chunk, keeping
 ///     the cursor on this sub-row instead of spilling onto the next one.
-pub fn byte_at_visual_col(line: &str, cs: usize, ce: usize, target_vcol: usize, is_last_chunk: bool) -> usize {
+pub fn byte_at_visual_col(
+    line: &str,
+    cs: usize,
+    ce: usize,
+    target_vcol: usize,
+    is_last_chunk: bool,
+) -> usize {
     let chunk = &line[cs..ce];
     if chunk.is_empty() {
         return cs;
@@ -70,7 +76,11 @@ pub fn cursor_visual_pos(line: &str, cx: usize, width: usize) -> (usize, usize) 
     let chunks = wrap_chunks(line, width);
     let last = chunks.len().saturating_sub(1);
     for (idx, &(s, e)) in chunks.iter().enumerate() {
-        let in_chunk = if idx == last { cx >= s } else { cx >= s && cx < e };
+        let in_chunk = if idx == last {
+            cx >= s
+        } else {
+            cx >= s && cx < e
+        };
         if in_chunk {
             let end = cx.min(line.len());
             let before = if s <= end { &line[s..end] } else { "" };

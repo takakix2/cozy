@@ -1,5 +1,5 @@
-use crate::state::{EditorState, SearchMode};
 use crate::reducer::EventResult;
+use crate::state::{EditorState, SearchMode};
 use regex::Regex;
 
 // ── buffer editing ────────────────────────────────────────────────────────────
@@ -17,9 +17,15 @@ pub fn update_search_buffer(editor: &mut EditorState, c: char) {
 
 pub fn delete_from_search_buffer(editor: &mut EditorState) {
     let pos = editor.search_cursor;
-    if pos == 0 { return; }
+    if pos == 0 {
+        return;
+    }
     let buf = &mut editor.search_buffer;
-    let prev = buf[..pos].char_indices().last().map(|(i, _)| i).unwrap_or(0);
+    let prev = buf[..pos]
+        .char_indices()
+        .last()
+        .map(|(i, _)| i)
+        .unwrap_or(0);
     buf.remove(prev);
     editor.search_cursor = prev;
     recompute_matches(editor);
@@ -38,17 +44,27 @@ pub fn delete_search_char_at_cursor(editor: &mut EditorState) {
 
 pub fn move_search_cursor_left(editor: &mut EditorState) {
     let pos = editor.search_cursor;
-    if pos == 0 { return; }
+    if pos == 0 {
+        return;
+    }
     editor.search_cursor = editor.search_buffer[..pos]
-        .char_indices().last().map(|(i, _)| i).unwrap_or(0);
+        .char_indices()
+        .last()
+        .map(|(i, _)| i)
+        .unwrap_or(0);
 }
 
 pub fn move_search_cursor_right(editor: &mut EditorState) {
     let pos = editor.search_cursor;
     let len = editor.search_buffer.len();
-    if pos >= len { return; }
+    if pos >= len {
+        return;
+    }
     editor.search_cursor = editor.search_buffer[pos..]
-        .chars().next().map(|c| pos + c.len_utf8()).unwrap_or(pos);
+        .chars()
+        .next()
+        .map(|c| pos + c.len_utf8())
+        .unwrap_or(pos);
 }
 
 pub fn move_search_cursor_home(editor: &mut EditorState) {
@@ -107,7 +123,8 @@ pub fn focus_nearest_match(editor: &mut EditorState) {
     }
     let cy = editor.cursor.y;
     let cx = editor.cursor.x;
-    editor.search_current = editor.search_matches
+    editor.search_current = editor
+        .search_matches
         .iter()
         .position(|&(y, s, _)| y > cy || (y == cy && s >= cx))
         .unwrap_or(0);

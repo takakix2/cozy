@@ -7,7 +7,9 @@ pub struct TextBuffer {
 
 impl TextBuffer {
     pub fn new() -> Self {
-        Self { lines: vec![String::new()] }
+        Self {
+            lines: vec![String::new()],
+        }
     }
 
     pub fn from_lines(lines: Vec<String>) -> Self {

@@ -1,15 +1,15 @@
 use ratatui::{
-    layout::Rect,
-    style::{Style, Modifier, Color},
-    text::{Span, Line},
-    widgets::Paragraph,
     Frame,
+    layout::Rect,
+    style::{Color, Modifier, Style},
+    text::{Line, Span},
+    widgets::Paragraph,
 };
 use unicode_width::UnicodeWidthStr;
 
-use crate::state::{EditorState, EditorMode};
+use crate::state::{EditorMode, EditorState};
 use crate::utils::unicode::display_width_up_to;
-use crate::utils::wrap::{wrap_chunks, visual_row_count};
+use crate::utils::wrap::{visual_row_count, wrap_chunks};
 
 /// Clamp cursor position to stay within the terminal buffer bounds.
 fn clamp_cursor(frame_area: Rect, x: u16, y: u16) -> (u16, u16) {
@@ -21,7 +21,8 @@ fn clamp_cursor(frame_area: Rect, x: u16, y: u16) -> (u16, u16) {
 pub fn render_text_buffer(editor: &mut EditorState, f: &mut Frame, area: Rect) {
     let viewport_height = area.height as usize;
 
-    let show_line_numbers = editor.show_line_numbers_runtime
+    let show_line_numbers = editor
+        .show_line_numbers_runtime
         .unwrap_or(editor.config.show_line_numbers.unwrap_or(true));
 
     let (line_number_width, line_number_digits) = if show_line_numbers {
@@ -34,7 +35,11 @@ pub fn render_text_buffer(editor: &mut EditorState, f: &mut Frame, area: Rect) {
         (0u16, 0usize)
     };
 
-    let text_x_offset = if show_line_numbers { line_number_width + 1 } else { 0 };
+    let text_x_offset = if show_line_numbers {
+        line_number_width + 1
+    } else {
+        0
+    };
     let text_width = area.width.saturating_sub(text_x_offset) as usize;
 
     // Store text_display_width before adjust_scroll (which needs it for soft wrap)
@@ -43,13 +48,13 @@ pub fn render_text_buffer(editor: &mut EditorState, f: &mut Frame, area: Rect) {
 
     let (bg_color, fg_color) = {
         let bg = match editor.config.line_number_bg.as_deref() {
-            Some("blue")  => Color::Blue,
+            Some("blue") => Color::Blue,
             Some("black") => Color::Black,
-            _             => Color::DarkGray,
+            _ => Color::DarkGray,
         };
         let fg = match editor.config.line_number_fg.as_deref() {
             Some("yellow") => Color::Yellow,
-            _              => Color::White,
+            _ => Color::White,
         };
         (bg, fg)
     };
@@ -69,21 +74,35 @@ pub fn render_text_buffer(editor: &mut EditorState, f: &mut Frame, area: Rect) {
             let chunks = wrap_chunks(&line, text_width);
 
             for (chunk_idx, &(cs, ce)) in chunks.iter().enumerate() {
-                if visual_row >= viewport_height { break; }
+                if visual_row >= viewport_height {
+                    break;
+                }
                 let row_y = area.y + visual_row as u16;
 
                 if show_line_numbers {
-                    let num_area = Rect { x: area.x, y: row_y, width: line_number_width, height: 1 };
-                    let ta_x    = area.x + line_number_width + 1;
-                    let ta_w    = area.width.saturating_sub(line_number_width + 1);
-                    let ta      = Rect { x: ta_x, y: row_y, width: ta_w, height: 1 };
+                    let num_area = Rect {
+                        x: area.x,
+                        y: row_y,
+                        width: line_number_width,
+                        height: 1,
+                    };
+                    let ta_x = area.x + line_number_width + 1;
+                    let ta_w = area.width.saturating_sub(line_number_width + 1);
+                    let ta = Rect {
+                        x: ta_x,
+                        y: row_y,
+                        width: ta_w,
+                        height: 1,
+                    };
 
                     if chunk_idx == 0 {
                         let num_str = right_align(buf_y + 1, line_number_digits);
                         let is_current = buf_y == editor.cursor.y;
                         let line_fg = if is_current { fg_color } else { Color::Gray };
                         let mut style = Style::default().bg(bg_color).fg(line_fg);
-                        if is_current { style = style.add_modifier(Modifier::BOLD); }
+                        if is_current {
+                            style = style.add_modifier(Modifier::BOLD);
+                        }
                         f.render_widget(Paragraph::new(num_str).style(style), num_area);
                     } else {
                         f.render_widget(
@@ -93,7 +112,12 @@ pub fn render_text_buffer(editor: &mut EditorState, f: &mut Frame, area: Rect) {
                     }
                     f.render_widget(render_line_range(editor, buf_y, cs, ce), ta);
                 } else {
-                    let la = Rect { x: area.x, y: row_y, width: area.width, height: 1 };
+                    let la = Rect {
+                        x: area.x,
+                        y: row_y,
+                        width: area.width,
+                        height: 1,
+                    };
                     f.render_widget(render_line_range(editor, buf_y, cs, ce), la);
                 }
 
@@ -103,17 +127,29 @@ pub fn render_text_buffer(editor: &mut EditorState, f: &mut Frame, area: Rect) {
             let row_y = area.y + visual_row as u16;
 
             if show_line_numbers {
-                let num_area = Rect { x: area.x, y: row_y, width: line_number_width, height: 1 };
-                let ta_x     = area.x + line_number_width + 1;
-                let ta_w     = area.width.saturating_sub(line_number_width + 1);
-                let ta       = Rect { x: ta_x, y: row_y, width: ta_w, height: 1 };
+                let num_area = Rect {
+                    x: area.x,
+                    y: row_y,
+                    width: line_number_width,
+                    height: 1,
+                };
+                let ta_x = area.x + line_number_width + 1;
+                let ta_w = area.width.saturating_sub(line_number_width + 1);
+                let ta = Rect {
+                    x: ta_x,
+                    y: row_y,
+                    width: ta_w,
+                    height: 1,
+                };
 
                 // Always show line number for every viewport row (including beyond buffer)
                 let num_str = right_align(buf_y + 1, line_number_digits);
                 let is_current = buf_y == editor.cursor.y;
                 let line_fg = if is_current { fg_color } else { Color::Gray };
                 let mut style = Style::default().bg(bg_color).fg(line_fg);
-                if is_current { style = style.add_modifier(Modifier::BOLD); }
+                if is_current {
+                    style = style.add_modifier(Modifier::BOLD);
+                }
                 f.render_widget(Paragraph::new(num_str).style(style), num_area);
 
                 if has_content {
@@ -122,10 +158,20 @@ pub fn render_text_buffer(editor: &mut EditorState, f: &mut Frame, area: Rect) {
                     f.render_widget(Paragraph::new(""), ta);
                 }
             } else if has_content {
-                let la = Rect { x: area.x, y: row_y, width: area.width, height: 1 };
+                let la = Rect {
+                    x: area.x,
+                    y: row_y,
+                    width: area.width,
+                    height: 1,
+                };
                 f.render_widget(render_line(editor, buf_y), la);
             } else {
-                let la = Rect { x: area.x, y: row_y, width: area.width, height: 1 };
+                let la = Rect {
+                    x: area.x,
+                    y: row_y,
+                    width: area.width,
+                    height: 1,
+                };
                 f.render_widget(Paragraph::new(""), la);
             }
 
@@ -144,7 +190,9 @@ pub fn render_text_buffer(editor: &mut EditorState, f: &mut Frame, area: Rect) {
         let mut by = editor.scroll_offset;
 
         'find: while vrow < viewport_height {
-            if by >= editor.buffer.lines.len() { break; }
+            if by >= editor.buffer.lines.len() {
+                break;
+            }
             let line = &editor.buffer.lines[by];
 
             if by == cursor_y {
@@ -152,13 +200,23 @@ pub fn render_text_buffer(editor: &mut EditorState, f: &mut Frame, area: Rect) {
                     let chunks = wrap_chunks(line, text_width);
                     let n = chunks.len();
                     for (cidx, &(cs, _)) in chunks.iter().enumerate() {
-                        if vrow >= viewport_height { break; }
-                        let next_start = if cidx + 1 < n { chunks[cidx + 1].0 } else { line.len() + 1 };
+                        if vrow >= viewport_height {
+                            break;
+                        }
+                        let next_start = if cidx + 1 < n {
+                            chunks[cidx + 1].0
+                        } else {
+                            line.len() + 1
+                        };
                         if cursor_x >= cs && cursor_x < next_start {
                             let end = cursor_x.min(line.len());
                             let before = &line[cs..end];
                             let dcol = UnicodeWidthStr::width(before) as u16;
-                            let (cx, cy) = clamp_cursor(f.area(), area.x + text_x_offset + dcol, area.y + vrow as u16);
+                            let (cx, cy) = clamp_cursor(
+                                f.area(),
+                                area.x + text_x_offset + dcol,
+                                area.y + vrow as u16,
+                            );
                             f.set_cursor_position((cx, cy));
                             break 'find;
                         }
@@ -166,12 +224,20 @@ pub fn render_text_buffer(editor: &mut EditorState, f: &mut Frame, area: Rect) {
                     }
                 } else {
                     let dcol = display_width_up_to(line, cursor_x) as u16;
-                    let (cx, cy) = clamp_cursor(f.area(), area.x + text_x_offset + dcol, area.y + vrow as u16);
+                    let (cx, cy) = clamp_cursor(
+                        f.area(),
+                        area.x + text_x_offset + dcol,
+                        area.y + vrow as u16,
+                    );
                     f.set_cursor_position((cx, cy));
                 }
                 break;
             } else {
-                vrow += if soft_wrap { visual_row_count(line, text_width) } else { 1 };
+                vrow += if soft_wrap {
+                    visual_row_count(line, text_width)
+                } else {
+                    1
+                };
                 by += 1;
             }
         }
@@ -189,7 +255,12 @@ fn render_line(editor: &EditorState, y: usize) -> Line<'static> {
     render_line_range(editor, y, 0, len)
 }
 
-fn render_line_range(editor: &EditorState, y: usize, byte_start: usize, byte_end: usize) -> Line<'static> {
+fn render_line_range(
+    editor: &EditorState,
+    y: usize,
+    byte_start: usize,
+    byte_end: usize,
+) -> Line<'static> {
     let line_text = &editor.buffer.lines[y];
     let mut spans: Vec<Span<'static>> = Vec::new();
 
@@ -200,18 +271,22 @@ fn render_line_range(editor: &EditorState, y: usize, byte_start: usize, byte_end
         Style::default()
     };
 
-    let language = editor.filename.as_ref()
+    let language = editor
+        .filename
+        .as_ref()
         .and_then(|p| p.extension())
         .and_then(|ext| ext.to_str());
     let highlighter = crate::utils::syntax::SyntaxHighlighter::new(language);
     let highlighted = highlighter.highlight(line_text);
 
-    let line_matches: Vec<(usize, usize)> = editor.search_matches
+    let line_matches: Vec<(usize, usize)> = editor
+        .search_matches
         .iter()
         .filter(|&&(my, _, _)| my == y)
         .map(|&(_, s, e)| (s, e))
         .collect();
-    let current_match = editor.search_matches
+    let current_match = editor
+        .search_matches
         .get(editor.search_current)
         .filter(|&&(my, _, _)| my == y)
         .map(|&(_, s, e)| (s, e));
@@ -237,9 +312,15 @@ fn render_line_range(editor: &EditorState, y: usize, byte_start: usize, byte_end
                         final_style = final_style.bg(Color::Green).fg(Color::Black);
                     }
                 }
-                if let Some(&(ms, me)) = line_matches.iter().find(|&&(s, e)| byte_pos >= s && byte_pos < e) {
+                if let Some(&(ms, me)) = line_matches
+                    .iter()
+                    .find(|&&(s, e)| byte_pos >= s && byte_pos < e)
+                {
                     if current_match == Some((ms, me)) {
-                        final_style = final_style.bg(Color::Yellow).fg(Color::Black).add_modifier(Modifier::BOLD);
+                        final_style = final_style
+                            .bg(Color::Yellow)
+                            .fg(Color::Black)
+                            .add_modifier(Modifier::BOLD);
                     } else {
                         final_style = final_style.bg(Color::Rgb(100, 80, 0)).fg(Color::White);
                     }

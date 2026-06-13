@@ -1,6 +1,6 @@
 [package]
 name = "cozy"
-version = "0.1.26"
+version = "0.2.1"
 edition = "2024"
 rust-version = "1.85"
 description = "A Comfort First terminal text editor: type like nano, navigate like vim"
@@ -32,6 +32,7 @@ regex = "1.12.2"
 unicode-width = "0.1"
 ignore = "0.4"
 arboard = { version = "3.2", optional = true }
+ratatui-markdown = { version = "0.3.6", default-features = false, features = ["markdown", "mermaid"] }
 
 [features]
 default = ["clipboard", "crossterm-events"]

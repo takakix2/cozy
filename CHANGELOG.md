@@ -1,11 +1,18 @@
 # Changelog
 
-## Unreleased
+## v0.2.1
+
+### Highlights
+
+- Enabled Mermaid diagram rendering in Markdown preview.
+
+## v0.2.0
 
 ### Highlights
 
 - Added configurable footer and status bar colors via `config.toml`.
 - Color settings accept named terminal colors and `#RRGGBB` true color values.
+- Markdown preview now uses `ratatui-markdown` for rendered wrapping and code blocks.
 
 ## v0.1.15
 

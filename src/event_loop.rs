@@ -1,12 +1,12 @@
-use std::io::{self, Write};
-use std::time::Duration;
-use crossterm::event::Event;
-use ratatui::{backend::CrosstermBackend, Terminal};
+use crate::action::Action;
+use crate::reducer::{EventResult, reduce};
 use crate::state::EditorState;
 use crate::state::key::{KeyCode, KeyModifiers};
-use crate::ui::{Renderer, Keymap};
-use crate::reducer::{reduce, EventResult};
-use crate::action::Action;
+use crate::ui::{Keymap, Renderer};
+use crossterm::event::Event;
+use ratatui::{Terminal, backend::CrosstermBackend};
+use std::io::{self, Write};
+use std::time::Duration;
 
 /// Abstracts the event source so the loop can run with crossterm or an IPC queue.
 pub trait EventSource {
@@ -29,31 +29,37 @@ impl EventSource for CrosstermEventSource {
 fn ct_code(code: crossterm::event::KeyCode) -> Option<KeyCode> {
     use crossterm::event::KeyCode as CT;
     Some(match code {
-        CT::Char(c)   => KeyCode::Char(c),
-        CT::Enter     => KeyCode::Enter,
-        CT::Esc       => KeyCode::Esc,
+        CT::Char(c) => KeyCode::Char(c),
+        CT::Enter => KeyCode::Enter,
+        CT::Esc => KeyCode::Esc,
         CT::Backspace => KeyCode::Backspace,
-        CT::Delete    => KeyCode::Delete,
-        CT::PageUp    => KeyCode::PageUp,
-        CT::PageDown  => KeyCode::PageDown,
-        CT::Up        => KeyCode::Up,
-        CT::Down      => KeyCode::Down,
-        CT::Left      => KeyCode::Left,
-        CT::Right     => KeyCode::Right,
-        CT::Home      => KeyCode::Home,
-        CT::End       => KeyCode::End,
-        CT::Tab       => KeyCode::Tab,
-        CT::F(n)      => KeyCode::F(n),
-        _             => return None,
+        CT::Delete => KeyCode::Delete,
+        CT::PageUp => KeyCode::PageUp,
+        CT::PageDown => KeyCode::PageDown,
+        CT::Up => KeyCode::Up,
+        CT::Down => KeyCode::Down,
+        CT::Left => KeyCode::Left,
+        CT::Right => KeyCode::Right,
+        CT::Home => KeyCode::Home,
+        CT::End => KeyCode::End,
+        CT::Tab => KeyCode::Tab,
+        CT::F(n) => KeyCode::F(n),
+        _ => return None,
     })
 }
 
 fn ct_mods(mods: crossterm::event::KeyModifiers) -> KeyModifiers {
     use crossterm::event::KeyModifiers as CT;
     let mut result = KeyModifiers::NONE;
-    if mods.contains(CT::CONTROL) { result |= KeyModifiers::CONTROL; }
-    if mods.contains(CT::SHIFT)   { result |= KeyModifiers::SHIFT; }
-    if mods.contains(CT::ALT)     { result |= KeyModifiers::ALT; }
+    if mods.contains(CT::CONTROL) {
+        result |= KeyModifiers::CONTROL;
+    }
+    if mods.contains(CT::SHIFT) {
+        result |= KeyModifiers::SHIFT;
+    }
+    if mods.contains(CT::ALT) {
+        result |= KeyModifiers::ALT;
+    }
     result
 }
 

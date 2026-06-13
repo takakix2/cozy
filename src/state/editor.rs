@@ -1,10 +1,10 @@
+use crate::state::Cursor;
+use crate::state::TextBuffer;
+use serde::Deserialize;
 use std::fs::File;
 use std::io::{self, Write};
 use std::path::PathBuf;
 use std::time::Instant;
-use crate::state::Cursor;
-use crate::state::TextBuffer;
-use serde::Deserialize;
 
 const DEFAULT_CONFIG_TOML: &str = r##"# cozy config
 
@@ -65,16 +65,24 @@ impl Config {
             vec![dir.join("cozy.toml"), dir.join("config.toml")]
         } else {
             vec![
-                dirs::config_dir().map(|p| p.join("cozy/config.toml")).unwrap_or_default(),
+                dirs::config_dir()
+                    .map(|p| p.join("cozy/config.toml"))
+                    .unwrap_or_default(),
                 PathBuf::from("config.toml"),
-                dirs::home_dir().map(|p| p.join(".cozy/config.toml")).unwrap_or_default(),
+                dirs::home_dir()
+                    .map(|p| p.join(".cozy/config.toml"))
+                    .unwrap_or_default(),
             ]
         };
 
         if let Some(path) = Self::default_config_path(config_dir) {
             if !path.exists() {
                 if let Err(e) = Self::write_default_config(&path) {
-                    eprintln!("warning: Failed to create default config '{}': {}", path.display(), e);
+                    eprintln!(
+                        "warning: Failed to create default config '{}': {}",
+                        path.display(),
+                        e
+                    );
                 }
             }
         }
@@ -85,7 +93,11 @@ impl Config {
                     match toml::from_str::<Config>(&content) {
                         Ok(config) => return config,
                         Err(e) => {
-                            eprintln!("warning: Failed to parse config file '{}': {}", path.display(), e);
+                            eprintln!(
+                                "warning: Failed to parse config file '{}': {}",
+                                path.display(),
+                                e
+                            );
                             eprintln!("warning: Using default configuration");
                             // Continue to next path or use defaults
                         }
@@ -118,7 +130,10 @@ impl Config {
 
     pub fn ensure_default_config_file(config_dir: Option<&PathBuf>) -> io::Result<PathBuf> {
         let path = Self::default_config_path(config_dir).ok_or_else(|| {
-            io::Error::new(io::ErrorKind::NotFound, "Could not resolve config directory")
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                "Could not resolve config directory",
+            )
         })?;
         if !path.exists() {
             Self::write_default_config(&path)?;
@@ -196,39 +211,43 @@ pub enum ReplaceFocus {
 pub struct EditorState {
     pub buffer: TextBuffer,
     pub cursor: Cursor,
-    pub filename: Option<PathBuf>,       // PathBufに変更
-    pub _working_dir: PathBuf,            // 新規: カレントディレクトリ
-    pub modified: bool,                  // 新規: 変更フラグ
-    pub mode: EditorMode,                // 新規: モード管理
-    pub save_filename_buffer: String,    // 新規: 保存時の入力バッファ
-    pub open_filename_buffer: String,    // 新規: 読み込み時の入力バッファ
-    pub filename_cursor: usize,          // 新規: ファイル名入力カーソル位置 (byte index)
-    pub status_message: Option<String>,  // Optionに変更
+    pub filename: Option<PathBuf>,         // PathBufに変更
+    pub _working_dir: PathBuf,             // 新規: カレントディレクトリ
+    pub modified: bool,                    // 新規: 変更フラグ
+    pub mode: EditorMode,                  // 新規: モード管理
+    pub save_filename_buffer: String,      // 新規: 保存時の入力バッファ
+    pub open_filename_buffer: String,      // 新規: 読み込み時の入力バッファ
+    pub filename_cursor: usize,            // 新規: ファイル名入力カーソル位置 (byte index)
+    pub status_message: Option<String>,    // Optionに変更
     pub status_timestamp: Option<Instant>, // 名前変更 & Option化
-    pub status_persistent: bool,         // 新規: 常時表示フラグ
-    pub status_kind: StatusKind,         // 新規: ステータス種別
-    pub scroll_offset: usize,            // 新規: スクロール位置
-    pub _startup_args: Vec<String>,       // 新規: 将来用
-    pub _startup_time: Instant,           // 新規: 将来用
-    pub _footer_shortcuts: Vec<String>,   // 新規: 将来用
-    pub shortcut_map: std::collections::HashMap<(crate::state::key::KeyCode, crate::state::key::KeyModifiers), crate::shortcuts::EditorAction>, // 新規: ショートカットマップ
-    pub search_buffer: String,           // 新規: 検索用バッファ
-    pub replace_buffer: String,          // 新規: 置換用バッファ
-    pub search_cursor: usize,            // 検索/置換入力欄のカーソル位置 (byte index)
-    pub replace_focus: ReplaceFocus,     // 新規: 置換モードのフォーカス
-    pub page_size: usize,                // 新規: ページサイズ
-    pub config: Config,                  // 新規: 設定
-    pub cursor_blink: bool,              // 新規: カーソル点滅フラグ
-    pub search_mode: SearchMode,         // 新規: 検索モード
+    pub status_persistent: bool,           // 新規: 常時表示フラグ
+    pub status_kind: StatusKind,           // 新規: ステータス種別
+    pub scroll_offset: usize,              // 新規: スクロール位置
+    pub _startup_args: Vec<String>,        // 新規: 将来用
+    pub _startup_time: Instant,            // 新規: 将来用
+    pub _footer_shortcuts: Vec<String>,    // 新規: 将来用
+    pub shortcut_map: std::collections::HashMap<
+        (crate::state::key::KeyCode, crate::state::key::KeyModifiers),
+        crate::shortcuts::EditorAction,
+    >, // 新規: ショートカットマップ
+    pub search_buffer: String,             // 新規: 検索用バッファ
+    pub replace_buffer: String,            // 新規: 置換用バッファ
+    pub search_cursor: usize,              // 検索/置換入力欄のカーソル位置 (byte index)
+    pub replace_focus: ReplaceFocus,       // 新規: 置換モードのフォーカス
+    pub page_size: usize,                  // 新規: ページサイズ
+    pub config: Config,                    // 新規: 設定
+    pub cursor_blink: bool,                // 新規: カーソル点滅フラグ
+    pub search_mode: SearchMode,           // 新規: 検索モード
     pub undo_stack: Vec<(TextBuffer, Cursor)>, // 新規: Undoスタック
     pub redo_stack: Vec<(TextBuffer, Cursor)>, // 新規: Redoスタック
-    pub last_saved_id: usize,             // 新規: 保存時のスナップショットID（dirty判定用）
-    pub help_scroll_offset: u16,         // 新規: ヘルプ画面のスクロール位置
-    pub markdown_scroll_offset: u16,     // Markdown preview のスクロール位置
-    pub markdown_cursor_line: u16,       // Markdown preview の現在行
-    pub markdown_view_height: u16,       // Markdown preview の表示行数
+    pub last_saved_id: usize,              // 新規: 保存時のスナップショットID（dirty判定用）
+    pub help_scroll_offset: u16,           // 新規: ヘルプ画面のスクロール位置
+    pub markdown_scroll_offset: usize,     // Markdown preview のスクロール位置
+    pub markdown_cursor_line: usize,       // Markdown preview の現在行
+    pub markdown_view_height: usize,       // Markdown preview の表示行数
+    pub markdown_rendered_line_count: usize, // Markdown preview のレンダリング後の行数
     pub show_line_numbers_runtime: Option<bool>, // 新規: ランタイム行番号表示フラグ (Noneならconfigに従う)
-    pub goto_line_buffer: String,         // 行ジャンプ入力バッファ
+    pub goto_line_buffer: String,                // 行ジャンプ入力バッファ
     /// All search match positions: (line_y, byte_start, byte_end)
     pub search_matches: Vec<(usize, usize, usize)>,
     /// Index of the currently focused match in search_matches
@@ -312,7 +331,6 @@ impl EditorState {
         Self::new_with_config_dir(filename, None)
     }
 
-
     pub fn new_with_config_dir(filename: Option<String>, config_dir: Option<&PathBuf>) -> Self {
         let config = Config::load_from(config_dir);
         let mut lines = vec![String::new()];
@@ -375,6 +393,7 @@ impl EditorState {
             markdown_scroll_offset: 0,
             markdown_cursor_line: 0,
             markdown_view_height: 0,
+            markdown_rendered_line_count: 1,
             show_line_numbers_runtime: None,
             goto_line_buffer: String::new(),
             search_matches: Vec::new(),
@@ -395,7 +414,8 @@ impl EditorState {
     }
 
     pub fn save_snapshot(&mut self) {
-        self.undo_stack.push((self.buffer.clone(), self.cursor.clone()));
+        self.undo_stack
+            .push((self.buffer.clone(), self.cursor.clone()));
         self.redo_stack.clear();
     }
 
@@ -482,7 +502,8 @@ impl EditorState {
                 // hit Enter to drop a memo into the current folder. The default
                 // dodges existing files by counting up: untitled (1).txt, etc.
                 let dir = self._working_dir.clone();
-                self.save_filename_buffer = self.filename
+                self.save_filename_buffer = self
+                    .filename
                     .as_ref()
                     .map(|p| p.to_string_lossy().to_string())
                     .unwrap_or_else(|| default_save_name(&dir));
@@ -490,7 +511,8 @@ impl EditorState {
                 self.status_message = None;
             }
             EditorMode::Open => {
-                self.open_filename_buffer = self.filename
+                self.open_filename_buffer = self
+                    .filename
                     .as_ref()
                     .map(|p| p.to_string_lossy().to_string())
                     .unwrap_or_default();
@@ -538,6 +560,7 @@ impl EditorState {
                 self.markdown_scroll_offset = 0;
                 self.markdown_cursor_line = 0;
                 self.markdown_view_height = 0;
+                self.markdown_rendered_line_count = 1;
                 self.glide_prefix = None;
                 self.glide_count.clear();
                 self.status_message = None;
@@ -573,7 +596,7 @@ impl EditorState {
         let Some(path) = self.filename.clone() else {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
-                "No filename set. Use Save As to specify a filename."
+                "No filename set. Use Save As to specify a filename.",
             ));
         };
         let target = self.resolve_in_working_dir(&path);
@@ -583,7 +606,7 @@ impl EditorState {
             if !parent.as_os_str().is_empty() && !parent.exists() {
                 return Err(io::Error::new(
                     io::ErrorKind::NotFound,
-                    format!("Directory not found:{}", parent.display())
+                    format!("Directory not found:{}", parent.display()),
                 ));
             }
         }
@@ -591,16 +614,13 @@ impl EditorState {
         let mut file = File::create(&target).map_err(|e| {
             io::Error::new(
                 e.kind(),
-                format!("Failed to save '{}': {}", target.display(), e)
+                format!("Failed to save '{}': {}", target.display(), e),
             )
         })?;
 
         for line in &self.buffer.lines {
             writeln!(file, "{}", line).map_err(|e| {
-                io::Error::new(
-                    io::ErrorKind::WriteZero,
-                    format!("Write error: {}", e)
-                )
+                io::Error::new(io::ErrorKind::WriteZero, format!("Write error: {}", e))
             })?;
         }
 
@@ -614,10 +634,10 @@ impl EditorState {
         if path.is_empty() {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
-                "Filename is empty"
+                "Filename is empty",
             ));
         }
-        
+
         let path_buf = PathBuf::from(path);
         let target = self.resolve_in_working_dir(&path_buf);
 
@@ -626,7 +646,7 @@ impl EditorState {
             if !parent.as_os_str().is_empty() && !parent.exists() {
                 return Err(io::Error::new(
                     io::ErrorKind::NotFound,
-                    format!("Directory not found:{}", parent.display())
+                    format!("Directory not found:{}", parent.display()),
                 ));
             }
         }
@@ -637,18 +657,12 @@ impl EditorState {
             } else {
                 e.kind()
             };
-            io::Error::new(
-                kind,
-                format!("Failed to save '{}': {}", path, e)
-            )
+            io::Error::new(kind, format!("Failed to save '{}': {}", path, e))
         })?;
 
         for line in &self.buffer.lines {
             writeln!(file, "{}", line).map_err(|e| {
-                io::Error::new(
-                    io::ErrorKind::WriteZero,
-                    format!("Write error: {}", e)
-                )
+                io::Error::new(io::ErrorKind::WriteZero, format!("Write error: {}", e))
             })?;
         }
 
@@ -663,40 +677,37 @@ impl EditorState {
         if path.is_empty() {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
-                "Filename is empty"
+                "Filename is empty",
             ));
         }
-        
+
         let path_buf = PathBuf::from(path);
-        
+
         // ファイルが存在するか確認
         if !path_buf.exists() {
             return Err(io::Error::new(
                 io::ErrorKind::NotFound,
-                format!("File not found: {}", path)
+                format!("File not found: {}", path),
             ));
         }
-        
+
         // ファイルかどうか確認（ディレクトリではない）
         if !path_buf.is_file() {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
-                format!("Not a file: {}", path)
+                format!("Not a file: {}", path),
             ));
         }
-        
+
         let content = std::fs::read_to_string(&path_buf).map_err(|e| {
             let kind = if e.kind() == io::ErrorKind::PermissionDenied {
                 io::ErrorKind::PermissionDenied
             } else {
                 e.kind()
             };
-            io::Error::new(
-                kind,
-                format!("Failed to open '{}': {}", path, e)
-            )
+            io::Error::new(kind, format!("Failed to open '{}': {}", path, e))
         })?;
-        
+
         let lines: Vec<String> = content.lines().map(|s| s.to_string()).collect();
         self.buffer = TextBuffer::from_lines(lines);
         self.filename = Some(path_buf);
@@ -707,7 +718,9 @@ impl EditorState {
     }
 
     pub fn adjust_scroll(&mut self, viewport_height: usize) {
-        if viewport_height == 0 { return; }
+        if viewport_height == 0 {
+            return;
+        }
 
         // Always scroll up if cursor is above viewport
         if self.cursor.y < self.scroll_offset {
@@ -728,7 +741,9 @@ impl EditorState {
         let mut cursor_visible = false;
 
         for by in self.scroll_offset..=self.cursor.y {
-            if by >= self.buffer.lines.len() { break; }
+            if by >= self.buffer.lines.len() {
+                break;
+            }
             let line = &self.buffer.lines[by];
             let lrows = crate::utils::wrap::visual_row_count(line, tw);
             if by == self.cursor.y {
@@ -737,10 +752,14 @@ impl EditorState {
                 break;
             }
             vrows += lrows;
-            if vrows >= viewport_height { break; }
+            if vrows >= viewport_height {
+                break;
+            }
         }
 
-        if cursor_visible { return; }
+        if cursor_visible {
+            return;
+        }
 
         // Cursor is below viewport: find a scroll_offset that shows cursor near bottom
         let tw = self.text_display_width;

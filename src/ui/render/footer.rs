@@ -1,36 +1,41 @@
 use ratatui::{
-    layout::{Layout, Constraint, Direction, Rect},
+    Frame,
+    layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::Paragraph,
-    Frame,
 };
-use unicode_width::{UnicodeWidthStr, UnicodeWidthChar};
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-use crate::state::{EditorState, EditorMode, ReplaceFocus};
+use crate::state::{EditorMode, EditorState, ReplaceFocus};
 
 fn clamp_cursor(f: &Frame, x: u16, y: u16) -> (u16, u16) {
     let a = f.area();
-    (x.min(a.right().saturating_sub(1)), y.min(a.bottom().saturating_sub(1)))
+    (
+        x.min(a.right().saturating_sub(1)),
+        y.min(a.bottom().saturating_sub(1)),
+    )
 }
 
 // ── public entry points ───────────────────────────────────────────────────────
 
 pub fn render_shortcuts(editor: &EditorState, f: &mut Frame, area: Rect) {
-    if area.height == 0 { return; }
+    if area.height == 0 {
+        return;
+    }
     f.render_widget(Paragraph::new("").style(shortcut_bar_style(editor)), area);
     match editor.mode {
         EditorMode::Welcome => {}
-        EditorMode::Glide   => render_glide_shortcuts(editor, f, area),
-        EditorMode::Edit    => render_edit_shortcuts(editor, f, area),
-        EditorMode::Search  => render_search_shortcuts(editor, f, area),
+        EditorMode::Glide => render_glide_shortcuts(editor, f, area),
+        EditorMode::Edit => render_edit_shortcuts(editor, f, area),
+        EditorMode::Search => render_search_shortcuts(editor, f, area),
         EditorMode::Replace => render_replace_shortcuts(editor, f, area),
-        EditorMode::Save    => render_save_shortcuts(editor, f, area),
-        EditorMode::Open    => render_open_shortcuts(editor, f, area),
-        EditorMode::Help    => render_help_shortcuts(editor, f, area),
-        EditorMode::Quit    => render_quit_shortcuts(editor, f, area),
-        EditorMode::Goto    => render_goto_shortcuts(editor, f, area),
-        EditorMode::Browse  => render_browse_shortcuts(editor, f, area),
+        EditorMode::Save => render_save_shortcuts(editor, f, area),
+        EditorMode::Open => render_open_shortcuts(editor, f, area),
+        EditorMode::Help => render_help_shortcuts(editor, f, area),
+        EditorMode::Quit => render_quit_shortcuts(editor, f, area),
+        EditorMode::Goto => render_goto_shortcuts(editor, f, area),
+        EditorMode::Browse => render_browse_shortcuts(editor, f, area),
         EditorMode::Markdown => render_markdown_shortcuts(editor, f, area),
         EditorMode::Command => render_command_shortcuts(editor, f, area),
     }
@@ -45,82 +50,133 @@ fn shortcut_bar_style(editor: &EditorState) -> Style {
 
 pub fn render_status_bar(editor: &EditorState, f: &mut Frame, area: Rect) {
     let status = inline_status(editor);
-    let wide   = area.width >= 80;
-    let row    = editor.cursor.y + 1;
+    let wide = area.width >= 80;
+    let row = editor.cursor.y + 1;
     // Two zones: `left` flush-left (name / mode + transient message),
     // `right` flush-right (cursor position). Modes without a position leave
     // the right zone empty and keep the whole line left-aligned.
     let (left, right) = match editor.mode {
         EditorMode::Welcome => (" cozy".to_string(), String::new()),
-        EditorMode::Help    => (format!(" Help{}", status), String::new()),
-        EditorMode::Edit    => {
-            let name = editor.filename.as_ref()
+        EditorMode::Help => (format!(" Help{}", status), String::new()),
+        EditorMode::Edit => {
+            let name = editor
+                .filename
+                .as_ref()
                 .and_then(|p| p.file_name())
                 .and_then(|n| n.to_str())
                 .unwrap_or("[No Name]")
                 .to_string();
-            (format!(" Edit: {}{}", name, status), position_str(editor, row))
+            (
+                format!(" Edit: {}{}", name, status),
+                position_str(editor, row),
+            )
         }
         EditorMode::Glide => {
             let mut pend = String::new();
             pend.push_str(&editor.glide_count);
-            if let Some(op) = editor.pending_operator { pend.push(op.key()); }
-            if let Some(p)  = editor.glide_prefix    { pend.push(p); }
-            let hint = if pend.is_empty() { String::new() } else { format!(" [{}]", pend) };
-            (format!(" Glide{}{}", hint, status), position_str(editor, row))
-        }
-        EditorMode::Search  => (format!(" Find:{}{}{}",    search_mode_label(editor.search_mode, wide), match_count_str(editor), status), String::new()),
-        EditorMode::Replace => (format!(" Replace:{}{}{}", search_mode_label(editor.search_mode, wide), match_count_str(editor), status), String::new()),
-        EditorMode::Save  => (format!(" Save{}", status), String::new()),
-        EditorMode::Open  => (format!(" Open{}", status), String::new()),
-        EditorMode::Goto  => (format!(" Goto: {}", editor.goto_line_buffer), String::new()),
-        EditorMode::Quit  => (format!(" Exit{}", status), String::new()),
-        EditorMode::Command => (format!(" Command: {}", editor.command_query), String::new()),
-        EditorMode::Browse => {
-            match editor.browse_tree.as_ref() {
-                Some(tree) => {
-                    let left = if tree.filtering || !tree.filter.is_empty() {
-                        format!(" Browse  /{}", tree.filter)
-                    } else {
-                        let name = tree.root.file_name()
-                            .map(|s| s.to_string_lossy().to_string())
-                            .unwrap_or_else(|| tree.root.to_string_lossy().to_string());
-                        format!(" Browse  {}", name)
-                    };
-                    let vis = tree.visible_nodes();
-                    let pos = vis.iter().position(|&i| i == tree.selected).map(|p| p + 1).unwrap_or(0);
-                    (left, format!("{}/{} ", pos, vis.len()))
-                }
-                None => (" Browse".to_string(), String::new()),
+            if let Some(op) = editor.pending_operator {
+                pend.push(op.key());
             }
+            if let Some(p) = editor.glide_prefix {
+                pend.push(p);
+            }
+            let hint = if pend.is_empty() {
+                String::new()
+            } else {
+                format!(" [{}]", pend)
+            };
+            (
+                format!(" Glide{}{}", hint, status),
+                position_str(editor, row),
+            )
         }
+        EditorMode::Search => (
+            format!(
+                " Find:{}{}{}",
+                search_mode_label(editor.search_mode, wide),
+                match_count_str(editor),
+                status
+            ),
+            String::new(),
+        ),
+        EditorMode::Replace => (
+            format!(
+                " Replace:{}{}{}",
+                search_mode_label(editor.search_mode, wide),
+                match_count_str(editor),
+                status
+            ),
+            String::new(),
+        ),
+        EditorMode::Save => (format!(" Save{}", status), String::new()),
+        EditorMode::Open => (format!(" Open{}", status), String::new()),
+        EditorMode::Goto => (format!(" Goto: {}", editor.goto_line_buffer), String::new()),
+        EditorMode::Quit => (format!(" Exit{}", status), String::new()),
+        EditorMode::Command => (format!(" Command: {}", editor.command_query), String::new()),
+        EditorMode::Browse => match editor.browse_tree.as_ref() {
+            Some(tree) => {
+                let left = if tree.filtering || !tree.filter.is_empty() {
+                    format!(" Browse  /{}", tree.filter)
+                } else {
+                    let name = tree
+                        .root
+                        .file_name()
+                        .map(|s| s.to_string_lossy().to_string())
+                        .unwrap_or_else(|| tree.root.to_string_lossy().to_string());
+                    format!(" Browse  {}", name)
+                };
+                let vis = tree.visible_nodes();
+                let pos = vis
+                    .iter()
+                    .position(|&i| i == tree.selected)
+                    .map(|p| p + 1)
+                    .unwrap_or(0);
+                (left, format!("{}/{} ", pos, vis.len()))
+            }
+            None => (" Browse".to_string(), String::new()),
+        },
         EditorMode::Markdown => {
             let mut pend = String::new();
             pend.push_str(&editor.glide_count);
-            if let Some(p) = editor.glide_prefix { pend.push(p); }
-            let hint = if pend.is_empty() { String::new() } else { format!(" [{}]", pend) };
+            if let Some(p) = editor.glide_prefix {
+                pend.push(p);
+            }
+            let hint = if pend.is_empty() {
+                String::new()
+            } else {
+                format!(" [{}]", pend)
+            };
             let total = crate::ui::render::markdown::markdown_line_count(editor);
-            let pos = (editor.markdown_cursor_line as usize + 1).min(total.max(1));
-            (format!(" Markdown{}{}", hint, status), format!("{}/{} ", pos, total.max(1)))
+            let pos = (editor.markdown_cursor_line + 1).min(total.max(1));
+            (
+                format!(" Markdown{}{}", hint, status),
+                format!("{}/{} ", pos, total.max(1)),
+            )
         }
     };
     let label = compose_status(&left, &right, area.width as usize);
-    f.render_widget(
-        Paragraph::new(label).style(status_bar_style(editor)),
-        area,
-    );
+    f.render_widget(Paragraph::new(label).style(status_bar_style(editor)), area);
 }
 
 fn status_bar_style(editor: &EditorState) -> Style {
     Style::default()
-        .bg(config_color(editor.config.status_bar_bg.as_deref(), Color::DarkGray))
-        .fg(config_color(editor.config.status_bar_fg.as_deref(), Color::White))
+        .bg(config_color(
+            editor.config.status_bar_bg.as_deref(),
+            Color::DarkGray,
+        ))
+        .fg(config_color(
+            editor.config.status_bar_fg.as_deref(),
+            Color::White,
+        ))
 }
 
 /// Right-zone cursor position, e.g. `L12 C5 ` (1-based line and display
 /// column, VSCode-style; trailing space keeps it off the edge).
 fn position_str(editor: &EditorState, row: usize) -> String {
-    let col = editor.buffer.lines.get(editor.cursor.y)
+    let col = editor
+        .buffer
+        .lines
+        .get(editor.cursor.y)
         .map(|line| {
             let x = editor.cursor.x.min(line.len());
             UnicodeWidthStr::width(&line[..x]) + 1
@@ -136,11 +192,11 @@ fn compose_status(left: &str, right: &str, width: usize) -> String {
     if right.is_empty() {
         return left.to_string();
     }
-    let rw    = UnicodeWidthStr::width(right);
+    let rw = UnicodeWidthStr::width(right);
     let avail = width.saturating_sub(rw + 1);
-    let left  = truncate_to_width(left, avail);
-    let lw    = UnicodeWidthStr::width(left.as_str());
-    let pad   = width.saturating_sub(lw + rw);
+    let left = truncate_to_width(left, avail);
+    let lw = UnicodeWidthStr::width(left.as_str());
+    let pad = width.saturating_sub(lw + rw);
     format!("{}{}{}", left, " ".repeat(pad), right)
 }
 
@@ -153,7 +209,9 @@ fn truncate_to_width(s: &str, max: usize) -> String {
     let mut w = 0;
     for ch in s.chars() {
         let cw = UnicodeWidthChar::width(ch).unwrap_or(0);
-        if w + cw > max { break; }
+        if w + cw > max {
+            break;
+        }
         out.push(ch);
         w += cw;
     }
@@ -168,7 +226,10 @@ fn key_span(editor: &EditorState, key: &str) -> Span<'static> {
     Span::styled(
         key.to_string(),
         Style::default()
-            .fg(config_color(editor.config.footer_key_fg.as_deref(), Color::Cyan))
+            .fg(config_color(
+                editor.config.footer_key_fg.as_deref(),
+                Color::Cyan,
+            ))
             .add_modifier(Modifier::BOLD),
     )
 }
@@ -177,15 +238,24 @@ fn key_span(editor: &EditorState, key: &str) -> Span<'static> {
 fn desc_span(editor: &EditorState, desc: &str) -> Span<'static> {
     Span::styled(
         format!(" {}", desc),
-        Style::default().fg(config_color(editor.config.footer_fg.as_deref(), Color::Gray)),
+        Style::default().fg(config_color(
+            editor.config.footer_fg.as_deref(),
+            Color::Gray,
+        )),
     )
 }
 
 fn shortcut_line(editor: &EditorState, narrow: bool, pairs: &[(&str, &str)]) -> Line<'static> {
     let mut spans: Vec<Span<'static>> = Vec::new();
     for (i, (key, desc)) in pairs.iter().enumerate() {
-        if i > 0 { spans.push(Span::raw("   ")); }
-        let key = if narrow { key.replace("Ctrl+", "^") } else { key.to_string() };
+        if i > 0 {
+            spans.push(Span::raw("   "));
+        }
+        let key = if narrow {
+            key.replace("Ctrl+", "^")
+        } else {
+            key.to_string()
+        };
         spans.push(key_span(editor, &key));
         spans.push(desc_span(editor, desc));
     }
@@ -195,7 +265,9 @@ fn shortcut_line(editor: &EditorState, narrow: bool, pairs: &[(&str, &str)]) -> 
 fn compact_line(editor: &EditorState, pairs: &[(&str, &str)]) -> Line<'static> {
     let mut spans: Vec<Span<'static>> = Vec::new();
     for (i, (key, desc)) in pairs.iter().enumerate() {
-        if i > 0 { spans.push(Span::raw("  ")); }
+        if i > 0 {
+            spans.push(Span::raw("  "));
+        }
         spans.push(key_span(editor, key));
         spans.push(desc_span(editor, desc));
     }
@@ -270,19 +342,27 @@ fn search_mode_label(mode: crate::state::SearchMode, wide: bool) -> &'static str
     use crate::state::SearchMode::*;
     match (mode, wide) {
         (MatchCase, false) => "MC",
-        (MatchCase, true)  => "Case",
-        (Regex,     false) => "Rx",
-        (Regex,     true)  => "Regex",
-        (ByWord,    false) => "Wrd",
-        (ByWord,    true)  => "Word",
+        (MatchCase, true) => "Case",
+        (Regex, false) => "Rx",
+        (Regex, true) => "Regex",
+        (ByWord, false) => "Wrd",
+        (ByWord, true) => "Word",
     }
 }
 
 fn match_count_str(editor: &EditorState) -> String {
     if editor.search_matches.is_empty() {
-        if editor.search_buffer.is_empty() { String::new() } else { " 0".to_string() }
+        if editor.search_buffer.is_empty() {
+            String::new()
+        } else {
+            " 0".to_string()
+        }
     } else {
-        format!(" {}/{}", editor.search_current + 1, editor.search_matches.len())
+        format!(
+            " {}/{}",
+            editor.search_current + 1,
+            editor.search_matches.len()
+        )
     }
 }
 
@@ -300,91 +380,192 @@ fn inline_status(editor: &EditorState) -> String {
 fn render_glide_shortcuts(editor: &EditorState, f: &mut Frame, area: Rect) {
     if area.width < 50 {
         let layout = narrow_layout(area);
-        f.render_widget(Paragraph::new(compact_line(editor, &[
-            ("hjkl", "Move"), ("w/b", "Wrd"), ("0/$", "Ln"),
-        ])), layout[0]);
-        f.render_widget(Paragraph::new(compact_line(editor, &[
-            ("gg/G", "Fil"), ("H/M/L", "Scr"), ("i/a", "Ins"),
-        ])), layout[1]);
-        f.render_widget(Paragraph::new(compact_line(editor, &[
-            ("Esc", "Ret"), ("x", "Del"), ("dd", "DelLn"),
-        ])), layout[2]);
-        f.render_widget(Paragraph::new(compact_line(editor, &[
-            ("f/r", "Srch"), ("+/-", "Ln↕"), (".", "Rep"),
-        ])), layout[3]);
+        f.render_widget(
+            Paragraph::new(compact_line(
+                editor,
+                &[("hjkl", "Move"), ("w/b", "Wrd"), ("0/$", "Ln")],
+            )),
+            layout[0],
+        );
+        f.render_widget(
+            Paragraph::new(compact_line(
+                editor,
+                &[("gg/G", "Fil"), ("H/M/L", "Scr"), ("i/a", "Ins")],
+            )),
+            layout[1],
+        );
+        f.render_widget(
+            Paragraph::new(compact_line(
+                editor,
+                &[("Esc", "Ret"), ("x", "Del"), ("dd", "DelLn")],
+            )),
+            layout[2],
+        );
+        f.render_widget(
+            Paragraph::new(compact_line(
+                editor,
+                &[("f/r", "Srch"), ("+/-", "Ln↕"), (".", "Rep")],
+            )),
+            layout[3],
+        );
     } else {
         let narrow = area.width < 80;
         let layout = wide_layout(area);
-        f.render_widget(Paragraph::new(shortcut_line(editor, narrow, &[
-            ("hjkl/←↓↑→", "Move"), ("w/b", "Word"), ("0/$", "Line"), ("gg/G", "File Top/Bot"), ("H/M/L", "Screen Top/Mid/Bot"),
-        ])), layout[0]);
-        f.render_widget(Paragraph::new(shortcut_line(editor, narrow, &[
-            ("i/I/a/A", "Edit"), ("x/X", "Del Char"), ("dd/D", "Del Line/End"), ("f/r", "Find/Replace"), ("Esc", "Return"),
-        ])), layout[1]);
+        f.render_widget(
+            Paragraph::new(shortcut_line(
+                editor,
+                narrow,
+                &[
+                    ("hjkl/←↓↑→", "Move"),
+                    ("w/b", "Word"),
+                    ("0/$", "Line"),
+                    ("gg/G", "File Top/Bot"),
+                    ("H/M/L", "Scr Hi/Mid/Low"),
+                ],
+            )),
+            layout[0],
+        );
+        f.render_widget(
+            Paragraph::new(shortcut_line(
+                editor,
+                narrow,
+                &[
+                    ("i/I/a/A", "Edit"),
+                    ("x/X", "Del Char"),
+                    ("dd/D", "Del Line/End"),
+                    ("f/r", "Find/Replace"),
+                    ("Esc", "Return"),
+                ],
+            )),
+            layout[1],
+        );
     }
 }
 
 fn render_edit_shortcuts(editor: &EditorState, f: &mut Frame, area: Rect) {
     if area.width < 50 {
         let layout = narrow_layout(area);
-        f.render_widget(Paragraph::new(compact_line(editor, &[
-            ("^S", "Save"), ("^B", "Browse"), ("^X", "Exit"),
-        ])), layout[0]);
-        f.render_widget(Paragraph::new(compact_line(editor, &[
-            ("^F", "Find"), ("^R", "Repl"), ("^H", "Help"),
-        ])), layout[1]);
-        f.render_widget(Paragraph::new(compact_line(editor, &[
-            ("^K", "Cut"), ("^J", "Jump"), ("^G", "Glide"),
-        ])), layout[2]);
-        f.render_widget(Paragraph::new(compact_line(editor, &[
-            ("^Z", "Undo"), ("^Q", "Quit"),
-        ])), layout[3]);
+        f.render_widget(
+            Paragraph::new(compact_line(
+                editor,
+                &[("^S", "Save"), ("^B", "Browse"), ("^X", "Exit")],
+            )),
+            layout[0],
+        );
+        f.render_widget(
+            Paragraph::new(compact_line(
+                editor,
+                &[("^F", "Find"), ("^R", "Repl"), ("^H", "Help")],
+            )),
+            layout[1],
+        );
+        f.render_widget(
+            Paragraph::new(compact_line(
+                editor,
+                &[("^K", "Cut"), ("^J", "Jump"), ("^G", "Glide")],
+            )),
+            layout[2],
+        );
+        f.render_widget(
+            Paragraph::new(compact_line(editor, &[("^Z", "Undo"), ("^Q", "Quit")])),
+            layout[3],
+        );
     } else {
         let narrow = area.width < 80;
         let layout = wide_layout(area);
-        f.render_widget(Paragraph::new(shortcut_line(editor, narrow, &[
-            ("Ctrl+S", "Save"), ("Ctrl+B", "Browse"), ("Ctrl+X", "Exit"),
-            ("Ctrl+F", "Find"), ("Ctrl+R", "Replace"),
-        ])), layout[0]);
-        f.render_widget(Paragraph::new(shortcut_line(editor, narrow, &[
-            ("Ctrl+H", "Help"), ("Ctrl+K", "Cut Line"),
-            ("Ctrl+J", "Jump"), ("Ctrl+G", "Glide"), ("Ctrl+Z", "Undo"),
-        ])), layout[1]);
+        f.render_widget(
+            Paragraph::new(shortcut_line(
+                editor,
+                narrow,
+                &[
+                    ("Ctrl+S", "Save"),
+                    ("Ctrl+B", "Browse"),
+                    ("Ctrl+X", "Exit"),
+                    ("Ctrl+F", "Find"),
+                    ("Ctrl+R", "Replace"),
+                ],
+            )),
+            layout[0],
+        );
+        f.render_widget(
+            Paragraph::new(shortcut_line(
+                editor,
+                narrow,
+                &[
+                    ("Ctrl+H", "Help"),
+                    ("Ctrl+K", "Cut Line"),
+                    ("Ctrl+J", "Jump"),
+                    ("Ctrl+G", "Glide"),
+                    ("Ctrl+Z", "Undo"),
+                ],
+            )),
+            layout[1],
+        );
     }
 }
 
 fn render_browse_shortcuts(editor: &EditorState, f: &mut Frame, area: Rect) {
-    let filtering = editor.browse_tree.as_ref().map(|t| t.filtering).unwrap_or(false);
+    let filtering = editor
+        .browse_tree
+        .as_ref()
+        .map(|t| t.filtering)
+        .unwrap_or(false);
     if area.width < 50 {
         let layout = narrow_layout(area);
         if filtering {
-            f.render_widget(Paragraph::new(compact_line(editor, &[
-                ("Type", "Filter"), ("Enter", "OK"), ("Esc", "Clear"),
-            ])), layout[0]);
+            f.render_widget(
+                Paragraph::new(compact_line(
+                    editor,
+                    &[("Type", "Filter"), ("Enter", "OK"), ("Esc", "Clear")],
+                )),
+                layout[0],
+            );
         } else {
-            f.render_widget(Paragraph::new(compact_line(editor, &[
-                ("↑↓", "Move"), ("→", "Open"), ("←", "Back"),
-            ])), layout[0]);
-            f.render_widget(Paragraph::new(compact_line(editor, &[
-                ("/", "Filter"), ("Esc", "Exit"),
-            ])), layout[1]);
+            f.render_widget(
+                Paragraph::new(compact_line(
+                    editor,
+                    &[("↑↓", "Move"), ("→", "Open"), ("←", "Back")],
+                )),
+                layout[0],
+            );
+            f.render_widget(
+                Paragraph::new(compact_line(editor, &[("/", "Filter"), ("Esc", "Exit")])),
+                layout[1],
+            );
         }
     } else {
         let narrow = area.width < 80;
         let layout = wide_layout(area);
         if filtering {
-            let line = shortcut_line(editor, narrow, &[
-                ("Type", "Filter"), ("Enter", "Confirm"), ("Esc", "Clear"),
-            ]);
+            let line = shortcut_line(
+                editor,
+                narrow,
+                &[("Type", "Filter"), ("Enter", "Confirm"), ("Esc", "Clear")],
+            );
             f.render_widget(Paragraph::new(line), layout[0]);
         } else {
-            f.render_widget(Paragraph::new(shortcut_line(editor, narrow, &[
-                ("↑↓", "Move"), ("→", "Open"), ("←", "Back"),
-            ])), layout[0]);
-            f.render_widget(Paragraph::new(shortcut_line(editor, narrow, &[
-                ("j/k", "Move"), ("l", "Open"), ("h", "Back"),
-                ("/", "Filter"), ("Esc", "Exit"),
-            ])), layout[1]);
+            f.render_widget(
+                Paragraph::new(shortcut_line(
+                    editor,
+                    narrow,
+                    &[("↑↓", "Move"), ("→", "Open"), ("←", "Back")],
+                )),
+                layout[0],
+            );
+            f.render_widget(
+                Paragraph::new(shortcut_line(
+                    editor,
+                    narrow,
+                    &[
+                        ("j/k", "Move"),
+                        ("l", "Open"),
+                        ("h", "Back"),
+                        ("/", "Filter"),
+                        ("Esc", "Exit"),
+                    ],
+                )),
+                layout[1],
+            );
         }
     }
 }
@@ -392,21 +573,47 @@ fn render_browse_shortcuts(editor: &EditorState, f: &mut Frame, area: Rect) {
 fn render_markdown_shortcuts(editor: &EditorState, f: &mut Frame, area: Rect) {
     if area.width < 50 {
         let layout = narrow_layout(area);
-        f.render_widget(Paragraph::new(compact_line(editor, &[
-            ("jk/↑↓", "Move"), ("gg/G", "Top/Bot"),
-        ])), layout[0]);
-        f.render_widget(Paragraph::new(compact_line(editor, &[
-            ("H/M/L", "Screen"), ("PgUp/PgDn", "Page"), ("Esc", "Return"),
-        ])), layout[1]);
+        f.render_widget(
+            Paragraph::new(compact_line(
+                editor,
+                &[("jk/↑↓", "Move"), ("gg/G", "Top/Bot")],
+            )),
+            layout[0],
+        );
+        f.render_widget(
+            Paragraph::new(compact_line(
+                editor,
+                &[
+                    ("H/M/L", "Screen"),
+                    ("PgUp/PgDn", "Page"),
+                    ("Esc", "Return"),
+                ],
+            )),
+            layout[1],
+        );
     } else {
         let narrow = area.width < 80;
         let layout = wide_layout(area);
-        f.render_widget(Paragraph::new(shortcut_line(editor, narrow, &[
-            ("jk/↑↓", "Move"), ("gg/G", "Top/Bottom"), ("H/M/L", "Screen Top/Mid/Bot"),
-        ])), layout[0]);
-        f.render_widget(Paragraph::new(shortcut_line(editor, narrow, &[
-            ("PgUp/PgDn", "Page"), ("Esc", "Return"),
-        ])), layout[1]);
+        f.render_widget(
+            Paragraph::new(shortcut_line(
+                editor,
+                narrow,
+                &[
+                    ("jk/↑↓", "Move"),
+                    ("gg/G", "Top/Bottom"),
+                    ("H/M/L", "Scr Hi/Mid/Low"),
+                ],
+            )),
+            layout[0],
+        );
+        f.render_widget(
+            Paragraph::new(shortcut_line(
+                editor,
+                narrow,
+                &[("PgUp/PgDn", "Page"), ("Esc", "Return")],
+            )),
+            layout[1],
+        );
     }
 }
 
@@ -428,10 +635,16 @@ fn render_command_shortcuts(editor: &EditorState, f: &mut Frame, area: Rect) {
             f.render_widget(Paragraph::new("  No commands"), row(area, 1));
         }
     } else {
-        let start = editor.command_selected.saturating_sub(rows.saturating_sub(1));
+        let start = editor
+            .command_selected
+            .saturating_sub(rows.saturating_sub(1));
         for (row_idx, command) in matches.iter().skip(start).take(rows).enumerate() {
             let index = start + row_idx;
-            let marker = if index == editor.command_selected { "> " } else { "  " };
+            let marker = if index == editor.command_selected {
+                "> "
+            } else {
+                "  "
+            };
             f.render_widget(
                 Paragraph::new(format!("{}{}", marker, command.label)),
                 row(area, row_idx as u16 + 1),
@@ -440,9 +653,18 @@ fn render_command_shortcuts(editor: &EditorState, f: &mut Frame, area: Rect) {
     }
 
     if area.height >= 2 {
-        f.render_widget(Paragraph::new(compact_line(editor, &[
-            ("↑↓/jk", "Select"), ("Enter", "Run"), ("Tab", "Complete"), ("Esc", "Return"),
-        ])), row(area, area.height - 1));
+        f.render_widget(
+            Paragraph::new(compact_line(
+                editor,
+                &[
+                    ("↑↓/jk", "Select"),
+                    ("Enter", "Run"),
+                    ("Tab", "Complete"),
+                    ("Esc", "Return"),
+                ],
+            )),
+            row(area, area.height - 1),
+        );
     }
 
     let col = area.x
@@ -455,21 +677,36 @@ fn render_command_shortcuts(editor: &EditorState, f: &mut Frame, area: Rect) {
 fn render_search_shortcuts(editor: &EditorState, f: &mut Frame, area: Rect) {
     let prefix = "Find: [";
     let line_find = format!("{}{}]", prefix, editor.search_buffer);
-    let buf    = &editor.search_buffer;
+    let buf = &editor.search_buffer;
     let before = &buf[..editor.search_cursor.min(buf.len())];
-    let col    = area.x + UnicodeWidthStr::width(prefix) as u16 + UnicodeWidthStr::width(before) as u16;
+    let col =
+        area.x + UnicodeWidthStr::width(prefix) as u16 + UnicodeWidthStr::width(before) as u16;
 
     let layout = wide_layout(area);
     f.render_widget(Paragraph::new(line_find), layout[0]);
     if area.width < 50 {
-        f.render_widget(Paragraph::new(compact_line(editor, &[
-            ("^N", "Next"), ("^P", "Prev"), ("^T", "Tog"),
-        ])), layout[1]);
+        f.render_widget(
+            Paragraph::new(compact_line(
+                editor,
+                &[("^N", "Next"), ("^P", "Prev"), ("^T", "Tog")],
+            )),
+            layout[1],
+        );
     } else {
         let narrow = area.width < 80;
-        f.render_widget(Paragraph::new(shortcut_line(editor, narrow, &[
-            ("Ctrl+N", "Next"), ("Ctrl+P", "Prev"), ("Ctrl+T", "Toggle"), ("Esc", "Return"),
-        ])), layout[1]);
+        f.render_widget(
+            Paragraph::new(shortcut_line(
+                editor,
+                narrow,
+                &[
+                    ("Ctrl+N", "Next"),
+                    ("Ctrl+P", "Prev"),
+                    ("Ctrl+T", "Toggle"),
+                    ("Esc", "Return"),
+                ],
+            )),
+            layout[1],
+        );
     }
     let (cx, cy) = clamp_cursor(f, col, area.y);
     f.set_cursor_position((cx, cy));
@@ -479,38 +716,64 @@ fn render_replace_shortcuts(editor: &EditorState, f: &mut Frame, area: Rect) {
     // ASCII marker (width 1) instead of ▶ (U+25B6): ambiguous-width glyph
     // throws off cursor-column math on CJK terminals.
     let (q_mark, r_mark) = match editor.replace_focus {
-        ReplaceFocus::Query   => ("> ", "  "),
+        ReplaceFocus::Query => ("> ", "  "),
         ReplaceFocus::Replace => ("  ", "> "),
     };
     let sc = editor.search_cursor;
 
     if area.width < 50 {
         let layout = narrow_layout(area);
-        f.render_widget(Paragraph::new(format!("{}Find: [{}]",    q_mark, editor.search_buffer)),  layout[0]);
-        f.render_widget(Paragraph::new(format!("{}Replace: [{}]", r_mark, editor.replace_buffer)), layout[1]);
-        f.render_widget(Paragraph::new(compact_line(editor, &[
-            ("Tab", "Sw"), ("^N", "Next"), ("^P", "Prev"),
-        ])), layout[2]);
-        f.render_widget(Paragraph::new(compact_line(editor, &[
-            ("Enter", "Repl"), ("^R", "All"), ("^T", "Tog"),
-        ])), layout[3]);
+        f.render_widget(
+            Paragraph::new(format!("{}Find: [{}]", q_mark, editor.search_buffer)),
+            layout[0],
+        );
+        f.render_widget(
+            Paragraph::new(format!("{}Replace: [{}]", r_mark, editor.replace_buffer)),
+            layout[1],
+        );
+        f.render_widget(
+            Paragraph::new(compact_line(
+                editor,
+                &[("Tab", "Sw"), ("^N", "Next"), ("^P", "Prev")],
+            )),
+            layout[2],
+        );
+        f.render_widget(
+            Paragraph::new(compact_line(
+                editor,
+                &[("Enter", "Repl"), ("^R", "All"), ("^T", "Tog")],
+            )),
+            layout[3],
+        );
         let (col, row) = match editor.replace_focus {
             ReplaceFocus::Query => {
                 let prefix = format!("{}Find: [", q_mark);
                 let before = &editor.search_buffer[..sc.min(editor.search_buffer.len())];
-                (area.x + UnicodeWidthStr::width(prefix.as_str()) as u16 + UnicodeWidthStr::width(before) as u16, area.y)
+                (
+                    area.x
+                        + UnicodeWidthStr::width(prefix.as_str()) as u16
+                        + UnicodeWidthStr::width(before) as u16,
+                    area.y,
+                )
             }
             ReplaceFocus::Replace => {
                 let prefix = format!("{}Replace: [", r_mark);
                 let before = &editor.replace_buffer[..sc.min(editor.replace_buffer.len())];
-                (area.x + UnicodeWidthStr::width(prefix.as_str()) as u16 + UnicodeWidthStr::width(before) as u16, area.y + 1)
+                (
+                    area.x
+                        + UnicodeWidthStr::width(prefix.as_str()) as u16
+                        + UnicodeWidthStr::width(before) as u16,
+                    area.y + 1,
+                )
             }
         };
         let (cx, cy) = clamp_cursor(f, col, row);
         f.set_cursor_position((cx, cy));
     } else {
-        let fields = format!("{}Find: [{}]   {}Replace: [{}]",
-            q_mark, editor.search_buffer, r_mark, editor.replace_buffer);
+        let fields = format!(
+            "{}Find: [{}]   {}Replace: [{}]",
+            q_mark, editor.search_buffer, r_mark, editor.replace_buffer
+        );
         // Tab swaps the two fields above and Ctrl+T toggles search mode, so
         // both hints live on the field row rather than crowding the action
         // row below (which otherwise overflows and clips "Esc Return").
@@ -527,63 +790,92 @@ fn render_replace_shortcuts(editor: &EditorState, f: &mut Frame, area: Rect) {
             ReplaceFocus::Query => {
                 let prefix = format!("{}Find: [", q_mark);
                 let before = &editor.search_buffer[..sc.min(editor.search_buffer.len())];
-                area.x + UnicodeWidthStr::width(prefix.as_str()) as u16 + UnicodeWidthStr::width(before) as u16
+                area.x
+                    + UnicodeWidthStr::width(prefix.as_str()) as u16
+                    + UnicodeWidthStr::width(before) as u16
             }
             ReplaceFocus::Replace => {
-                let prefix = format!("{}Find: [{}]   {}Replace: [", q_mark, editor.search_buffer, r_mark);
+                let prefix = format!(
+                    "{}Find: [{}]   {}Replace: [",
+                    q_mark, editor.search_buffer, r_mark
+                );
                 let before = &editor.replace_buffer[..sc.min(editor.replace_buffer.len())];
-                area.x + UnicodeWidthStr::width(prefix.as_str()) as u16 + UnicodeWidthStr::width(before) as u16
+                area.x
+                    + UnicodeWidthStr::width(prefix.as_str()) as u16
+                    + UnicodeWidthStr::width(before) as u16
             }
         };
         let narrow = area.width < 80;
         let layout = wide_layout(area);
         f.render_widget(Paragraph::new(line_fields), layout[0]);
-        f.render_widget(Paragraph::new(shortcut_line(editor, narrow, &[
-            ("Ctrl+N", "Next"), ("Ctrl+P", "Prev"), ("Enter", "Replace"),
-            ("Ctrl+R", "All"), ("Esc", "Return"),
-        ])), layout[1]);
+        f.render_widget(
+            Paragraph::new(shortcut_line(
+                editor,
+                narrow,
+                &[
+                    ("Ctrl+N", "Next"),
+                    ("Ctrl+P", "Prev"),
+                    ("Enter", "Replace"),
+                    ("Ctrl+R", "All"),
+                    ("Esc", "Return"),
+                ],
+            )),
+            layout[1],
+        );
         let (cx, cy) = clamp_cursor(f, col, area.y);
         f.set_cursor_position((cx, cy));
     }
 }
 
 fn render_save_shortcuts(editor: &EditorState, f: &mut Frame, area: Rect) {
-    let buf    = &editor.save_filename_buffer;
+    let buf = &editor.save_filename_buffer;
     let prefix = "File: [";
     let before = &buf[..editor.filename_cursor.min(buf.len())];
-    let col    = area.x + prefix.len() as u16 + UnicodeWidthStr::width(before) as u16;
+    let col = area.x + prefix.len() as u16 + UnicodeWidthStr::width(before) as u16;
     let layout = wide_layout(area);
     f.render_widget(Paragraph::new(format!("{}{}]", prefix, buf)), layout[0]);
     if area.width < 50 {
-        f.render_widget(Paragraph::new(compact_line(editor, &[
-            ("Enter", "Save"), ("Esc", "Ret"),
-        ])), layout[1]);
+        f.render_widget(
+            Paragraph::new(compact_line(editor, &[("Enter", "Save"), ("Esc", "Ret")])),
+            layout[1],
+        );
     } else {
         let narrow = area.width < 80;
-        f.render_widget(Paragraph::new(shortcut_line(editor, narrow, &[
-            ("Enter", "Save"), ("Esc", "Return"),
-        ])), layout[1]);
+        f.render_widget(
+            Paragraph::new(shortcut_line(
+                editor,
+                narrow,
+                &[("Enter", "Save"), ("Esc", "Return")],
+            )),
+            layout[1],
+        );
     }
     let (cx, cy) = clamp_cursor(f, col, area.y);
     f.set_cursor_position((cx, cy));
 }
 
 fn render_open_shortcuts(editor: &EditorState, f: &mut Frame, area: Rect) {
-    let buf    = &editor.open_filename_buffer;
+    let buf = &editor.open_filename_buffer;
     let prefix = "File: [";
     let before = &buf[..editor.filename_cursor.min(buf.len())];
-    let col    = area.x + prefix.len() as u16 + UnicodeWidthStr::width(before) as u16;
+    let col = area.x + prefix.len() as u16 + UnicodeWidthStr::width(before) as u16;
     let layout = wide_layout(area);
     f.render_widget(Paragraph::new(format!("{}{}]", prefix, buf)), layout[0]);
     if area.width < 50 {
-        f.render_widget(Paragraph::new(compact_line(editor, &[
-            ("Enter", "Open"), ("Esc", "Ret"),
-        ])), layout[1]);
+        f.render_widget(
+            Paragraph::new(compact_line(editor, &[("Enter", "Open"), ("Esc", "Ret")])),
+            layout[1],
+        );
     } else {
         let narrow = area.width < 80;
-        f.render_widget(Paragraph::new(shortcut_line(editor, narrow, &[
-            ("Enter", "Open"), ("Esc", "Return"),
-        ])), layout[1]);
+        f.render_widget(
+            Paragraph::new(shortcut_line(
+                editor,
+                narrow,
+                &[("Enter", "Open"), ("Esc", "Return")],
+            )),
+            layout[1],
+        );
     }
     let (cx, cy) = clamp_cursor(f, col, area.y);
     f.set_cursor_position((cx, cy));
@@ -591,25 +883,36 @@ fn render_open_shortcuts(editor: &EditorState, f: &mut Frame, area: Rect) {
 
 fn render_help_shortcuts(editor: &EditorState, f: &mut Frame, area: Rect) {
     let narrow = area.width < 80;
-    f.render_widget(Paragraph::new(shortcut_line(editor, narrow, &[
-        ("↑↓", "Scroll"), ("Esc", "Return"),
-    ])), Rect::new(area.x, area.y, area.width, 1.min(area.height)));
+    f.render_widget(
+        Paragraph::new(shortcut_line(
+            editor,
+            narrow,
+            &[("↑↓", "Scroll"), ("Esc", "Return")],
+        )),
+        Rect::new(area.x, area.y, area.width, 1.min(area.height)),
+    );
 }
 
 fn render_goto_shortcuts(editor: &EditorState, f: &mut Frame, area: Rect) {
-    let total     = editor.buffer.lines.len();
+    let total = editor.buffer.lines.len();
     let line_goto = format!("Line: [{}]   (1-{})", editor.goto_line_buffer, total);
-    let layout    = wide_layout(area);
+    let layout = wide_layout(area);
     f.render_widget(Paragraph::new(line_goto), layout[0]);
     if area.width < 50 {
-        f.render_widget(Paragraph::new(compact_line(editor, &[
-            ("Enter", "Jump"), ("Esc", "Ret"),
-        ])), layout[1]);
+        f.render_widget(
+            Paragraph::new(compact_line(editor, &[("Enter", "Jump"), ("Esc", "Ret")])),
+            layout[1],
+        );
     } else {
         let narrow = area.width < 80;
-        f.render_widget(Paragraph::new(shortcut_line(editor, narrow, &[
-            ("Enter", "Jump"), ("Esc", "Return"),
-        ])), layout[1]);
+        f.render_widget(
+            Paragraph::new(shortcut_line(
+                editor,
+                narrow,
+                &[("Enter", "Jump"), ("Esc", "Return")],
+            )),
+            layout[1],
+        );
     }
 }
 
@@ -619,9 +922,13 @@ fn render_quit_shortcuts(editor: &EditorState, f: &mut Frame, area: Rect) {
         let prefix = "File: [";
         let layout = wide_layout(area);
         f.render_widget(Paragraph::new(format!("{}{}]", prefix, buf)), layout[0]);
-        f.render_widget(Paragraph::new(compact_line(editor, &[
-            ("Enter", "Save+Exit"), ("^Q", "Quit"), ("Esc", "Ret"),
-        ])), layout[1]);
+        f.render_widget(
+            Paragraph::new(compact_line(
+                editor,
+                &[("Enter", "Save+Exit"), ("^Q", "Quit"), ("Esc", "Ret")],
+            )),
+            layout[1],
+        );
         let before = &buf[..editor.filename_cursor.min(buf.len())];
         let col = area.x + prefix.len() as u16 + UnicodeWidthStr::width(before) as u16;
         let (cx, cy) = clamp_cursor(f, col, area.y);
@@ -631,9 +938,18 @@ fn render_quit_shortcuts(editor: &EditorState, f: &mut Frame, area: Rect) {
         let narrow = area.width < 80;
         let layout = wide_layout(area);
         f.render_widget(Paragraph::new(format!("{}{}]", prefix, buf)), layout[0]);
-        f.render_widget(Paragraph::new(shortcut_line(editor, narrow, &[
-            ("Enter", "Save and Exit"), ("Ctrl+Q", "Quit"), ("Esc", "Return"),
-        ])), layout[1]);
+        f.render_widget(
+            Paragraph::new(shortcut_line(
+                editor,
+                narrow,
+                &[
+                    ("Enter", "Save and Exit"),
+                    ("Ctrl+Q", "Quit"),
+                    ("Esc", "Return"),
+                ],
+            )),
+            layout[1],
+        );
         let before = &buf[..editor.filename_cursor.min(buf.len())];
         let col = area.x + prefix.len() as u16 + UnicodeWidthStr::width(before) as u16;
         let (cx, cy) = clamp_cursor(f, col, area.y);

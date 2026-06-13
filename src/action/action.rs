@@ -1,5 +1,5 @@
+use crate::glide::{FindKind, Motion, Operator};
 use crate::state::EditorMode;
-use crate::glide::{Motion, Operator, FindKind};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Action {
@@ -40,12 +40,12 @@ pub enum Action {
     ToggleSearchMode,
 
     // System
-    Quit,   // Force Quit (Ctrl+Q)
-    Cancel, // Esc
-    ReloadConfig, // F5
+    Quit,              // Force Quit (Ctrl+Q)
+    Cancel,            // Esc
+    ReloadConfig,      // F5
     ToggleLineNumbers, // Ctrl+L
-    DeleteLine, // Ctrl+K
-    GotoLine(usize), // 行ジャンプ (1-indexed)
+    DeleteLine,        // Ctrl+K
+    GotoLine(usize),   // 行ジャンプ (1-indexed)
     PasteFromClipboard,
     ToggleWrap,
     ToggleMarkdownPreview,
@@ -66,9 +66,9 @@ pub enum Action {
     SetOperator(Operator),
     ClearOperator,
     SetFindPending(FindKind), // f/t/F/T while an operator is pending: capture next char
-    ToggleCase,      // ~ : toggle case of the char under the cursor and move right
-    ChangeToLineEnd, // C = c$
-    YankLine,        // Y = yy
+    ToggleCase,               // ~ : toggle case of the char under the cursor and move right
+    ChangeToLineEnd,          // C = c$
+    YankLine,                 // Y = yy
 
     // Glide mode edit-entry
     DeleteToLineEnd,      // D: delete from cursor to end of line
@@ -87,9 +87,9 @@ pub enum Action {
 
     // Browse mode (folder tree). Up/Down reuse MoveUp/MoveDown; gg/G reuse
     // PageTop/PageBottom — only the tree-specific verbs get their own variants.
-    BrowseExpandOrOpen,     // l / Enter / →: expand a dir, or open a file into Edit
+    BrowseExpandOrOpen, // l / Enter / →: expand a dir, or open a file into Edit
     BrowseCollapseOrParent, // h / ←: collapse a dir, or move to the parent
-    BrowseStartFilter,      // /: begin incremental name filtering
+    BrowseStartFilter,  // /: begin incremental name filtering
     BrowseFilterChar(char), // a character typed while filtering
-    BrowseFilterBackspace,  // delete the last filter character
+    BrowseFilterBackspace, // delete the last filter character
 }

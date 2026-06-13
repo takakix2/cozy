@@ -143,8 +143,9 @@ impl Motion {
             // Backward find (F/T): the target is the lower bound of the span, so a
             // half-open [target, cursor) already includes it — exclusive is correct.
             Left | Right | WordForward | WordBackward | WordForwardBig | WordBackwardBig
-            | FindCharBack(_) | TillCharBack(_)
-            | LineStart | LineStartNonBlank | LineEnd => MotionKind::CharExclusive,
+            | FindCharBack(_) | TillCharBack(_) | LineStart | LineStartNonBlank | LineEnd => {
+                MotionKind::CharExclusive
+            }
         }
     }
 }
@@ -160,79 +161,145 @@ pub fn resolve(motion: Motion, count: Option<usize>, editor: &EditorState) -> Mo
     let mut c = editor.cursor; // Cursor is Copy
 
     match motion {
-        Motion::Left => for _ in 0..n { c.move_left(lines); },
-        Motion::Right => for _ in 0..n { c.move_right(lines); },
-        Motion::Up => for _ in 0..n { c.move_up(lines); },
-        Motion::Down => for _ in 0..n { c.move_down(lines); },
-        Motion::WordForward => for _ in 0..n { c.move_word_forward(lines); },
-        Motion::WordBackward => for _ in 0..n { c.move_word_backward(lines); },
-        Motion::WordEnd => for _ in 0..n { c.move_word_end(lines); },
-        Motion::WordForwardBig => for _ in 0..n { c.move_word_forward_big(lines); },
-        Motion::WordBackwardBig => for _ in 0..n { c.move_word_backward_big(lines); },
-        Motion::WordEndBig => for _ in 0..n { c.move_word_end_big(lines); },
+        Motion::Left => {
+            for _ in 0..n {
+                c.move_left(lines);
+            }
+        }
+        Motion::Right => {
+            for _ in 0..n {
+                c.move_right(lines);
+            }
+        }
+        Motion::Up => {
+            for _ in 0..n {
+                c.move_up(lines);
+            }
+        }
+        Motion::Down => {
+            for _ in 0..n {
+                c.move_down(lines);
+            }
+        }
+        Motion::WordForward => {
+            for _ in 0..n {
+                c.move_word_forward(lines);
+            }
+        }
+        Motion::WordBackward => {
+            for _ in 0..n {
+                c.move_word_backward(lines);
+            }
+        }
+        Motion::WordEnd => {
+            for _ in 0..n {
+                c.move_word_end(lines);
+            }
+        }
+        Motion::WordForwardBig => {
+            for _ in 0..n {
+                c.move_word_forward_big(lines);
+            }
+        }
+        Motion::WordBackwardBig => {
+            for _ in 0..n {
+                c.move_word_backward_big(lines);
+            }
+        }
+        Motion::WordEndBig => {
+            for _ in 0..n {
+                c.move_word_end_big(lines);
+            }
+        }
         // Find the n-th occurrence of `target` after the cursor on this line.
         Motion::FindChar(target) => {
             let line = &lines[c.y];
             let mut found = c.x;
             let mut remaining = n;
             for (b, ch) in line.char_indices() {
-                if b <= c.x { continue; }
+                if b <= c.x {
+                    continue;
+                }
                 if ch == target {
                     remaining -= 1;
-                    if remaining == 0 { found = b; break; }
+                    if remaining == 0 {
+                        found = b;
+                        break;
+                    }
                 }
             }
             c.x = found; // unchanged if not found -> operator becomes a no-op
-        },
+        }
         // Like FindChar but stop one char before the target (`t`).
         Motion::TillChar(target) => {
             let line = &lines[c.y];
             let mut found_b = None;
             let mut remaining = n;
             for (b, ch) in line.char_indices() {
-                if b <= c.x { continue; }
+                if b <= c.x {
+                    continue;
+                }
                 if ch == target {
                     remaining -= 1;
-                    if remaining == 0 { found_b = Some(b); break; }
+                    if remaining == 0 {
+                        found_b = Some(b);
+                        break;
+                    }
                 }
             }
             if let Some(b) = found_b {
-                c.x = line[..b].char_indices().next_back().map(|(i, _)| i).unwrap_or(c.x);
+                c.x = line[..b]
+                    .char_indices()
+                    .next_back()
+                    .map(|(i, _)| i)
+                    .unwrap_or(c.x);
             }
-        },
+        }
         // Backward find: n-th occurrence of `target` before the cursor (`F`).
         Motion::FindCharBack(target) => {
             let line = &lines[c.y];
             let mut found = c.x;
             let mut remaining = n;
             for (b, ch) in line.char_indices().rev() {
-                if b >= c.x { continue; }
+                if b >= c.x {
+                    continue;
+                }
                 if ch == target {
                     remaining -= 1;
-                    if remaining == 0 { found = b; break; }
+                    if remaining == 0 {
+                        found = b;
+                        break;
+                    }
                 }
             }
             c.x = found;
-        },
+        }
         // Backward till: one char after the n-th previous occurrence (`T`).
         Motion::TillCharBack(target) => {
             let line = &lines[c.y];
             let mut found_b = None;
             let mut remaining = n;
             for (b, ch) in line.char_indices().rev() {
-                if b >= c.x { continue; }
+                if b >= c.x {
+                    continue;
+                }
                 if ch == target {
                     remaining -= 1;
-                    if remaining == 0 { found_b = Some(b); break; }
+                    if remaining == 0 {
+                        found_b = Some(b);
+                        break;
+                    }
                 }
             }
             if let Some(b) = found_b {
                 let ch = line[b..].chars().next().unwrap();
                 c.x = b + ch.len_utf8();
             }
-        },
+        }
         Motion::LineStart => c.move_line_start(),
-        Motion::LineStartNonBlank => c.x = crate::state::cursor::first_non_whitespace_byte(&lines[c.y]),
+        Motion::LineStartNonBlank => {
+            c.x = crate::state::cursor::first_non_whitespace_byte(&lines[c.y])
+        }
         Motion::LineEnd => c.move_line_end(lines),
         // `Ngg` jumps to line N (1-indexed), mirroring `NG`; bare `gg` -> line 1.
         Motion::FileTop => match count {
@@ -241,7 +308,10 @@ pub fn resolve(motion: Motion, count: Option<usize>, editor: &EditorState) -> Mo
                 c.y = line.saturating_sub(1).min(last);
                 c.x = 0;
             }
-            None => { c.y = 0; c.x = 0; }
+            None => {
+                c.y = 0;
+                c.x = 0;
+            }
         },
         // `NG` jumps to line N (1-indexed); bare `G` goes to the last line.
         Motion::FileBottom => match count {
@@ -255,8 +325,16 @@ pub fn resolve(motion: Motion, count: Option<usize>, editor: &EditorState) -> Mo
         Motion::ScreenTop => c.move_page_top(editor.scroll_offset, lines),
         Motion::ScreenMiddle => c.move_page_middle(editor.scroll_offset, editor.page_size, lines),
         Motion::ScreenBottom => c.move_page_bottom(editor.scroll_offset, editor.page_size, lines),
-        Motion::NextLineNonBlank => for _ in 0..n { c.move_next_line_non_ws(lines); },
-        Motion::PrevLineNonBlank => for _ in 0..n { c.move_prev_line_non_ws(lines); },
+        Motion::NextLineNonBlank => {
+            for _ in 0..n {
+                c.move_next_line_non_ws(lines);
+            }
+        }
+        Motion::PrevLineNonBlank => {
+            for _ in 0..n {
+                c.move_prev_line_non_ws(lines);
+            }
+        }
         // `Ndd`/`Nyy`: the current line plus the next n-1 lines.
         Motion::CurrentLine => {
             let last = lines.len().saturating_sub(1);
@@ -265,7 +343,11 @@ pub fn resolve(motion: Motion, count: Option<usize>, editor: &EditorState) -> Mo
         }
     }
 
-    MotionResult { target: (c.y, c.x), cursor: c, kind: motion.kind() }
+    MotionResult {
+        target: (c.y, c.x),
+        cursor: c,
+        kind: motion.kind(),
+    }
 }
 
 #[cfg(test)]

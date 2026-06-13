@@ -1,4 +1,4 @@
-use ratatui::style::{Style, Color};
+use ratatui::style::{Color, Style};
 use regex::Regex;
 
 /// Simple syntax highlighting using regex patterns
@@ -16,7 +16,7 @@ impl SyntaxHighlighter {
             Some("toml") => toml_patterns(),
             _ => vec![], // No highlighting for unknown languages
         };
-        
+
         Self { patterns }
     }
 
@@ -146,40 +146,62 @@ fn javascript_patterns() -> Vec<(Regex, Style)> {
 fn json_patterns() -> Vec<(Regex, Style)> {
     vec![
         // Keys
-        (Regex::new(r#""([^"]+)":\s*"#).unwrap(),
-         Style::default().fg(Color::Cyan)),
+        (
+            Regex::new(r#""([^"]+)":\s*"#).unwrap(),
+            Style::default().fg(Color::Cyan),
+        ),
         // Strings
-        (Regex::new(r#""([^"\\]|\\.)*""#).unwrap(),
-         Style::default().fg(Color::Green)),
+        (
+            Regex::new(r#""([^"\\]|\\.)*""#).unwrap(),
+            Style::default().fg(Color::Green),
+        ),
         // Numbers
-        (Regex::new(r"\b\d+\.?\d*\b").unwrap(),
-         Style::default().fg(Color::Yellow)),
+        (
+            Regex::new(r"\b\d+\.?\d*\b").unwrap(),
+            Style::default().fg(Color::Yellow),
+        ),
         // Booleans and null
-        (Regex::new(r"\b(true|false|null)\b").unwrap(),
-         Style::default().fg(Color::Magenta)),
+        (
+            Regex::new(r"\b(true|false|null)\b").unwrap(),
+            Style::default().fg(Color::Magenta),
+        ),
     ]
 }
 
 fn toml_patterns() -> Vec<(Regex, Style)> {
     vec![
         // Keys
-        (Regex::new(r"^\[.*\]$").unwrap(),
-         Style::default().fg(Color::Cyan)),
-        (Regex::new(r"^[a-zA-Z_][a-zA-Z0-9_]*\s*=").unwrap(),
-         Style::default().fg(Color::Yellow)),
+        (
+            Regex::new(r"^\[.*\]$").unwrap(),
+            Style::default().fg(Color::Cyan),
+        ),
+        (
+            Regex::new(r"^[a-zA-Z_][a-zA-Z0-9_]*\s*=").unwrap(),
+            Style::default().fg(Color::Yellow),
+        ),
         // Strings
-        (Regex::new(r#""([^"\\]|\\.)*""#).unwrap(),
-         Style::default().fg(Color::Green)),
-        (Regex::new(r"'([^'\\]|\\.)*'").unwrap(),
-         Style::default().fg(Color::Green)),
+        (
+            Regex::new(r#""([^"\\]|\\.)*""#).unwrap(),
+            Style::default().fg(Color::Green),
+        ),
+        (
+            Regex::new(r"'([^'\\]|\\.)*'").unwrap(),
+            Style::default().fg(Color::Green),
+        ),
         // Numbers
-        (Regex::new(r"\b\d+\.?\d*\b").unwrap(),
-         Style::default().fg(Color::Yellow)),
+        (
+            Regex::new(r"\b\d+\.?\d*\b").unwrap(),
+            Style::default().fg(Color::Yellow),
+        ),
         // Booleans
-        (Regex::new(r"\b(true|false)\b").unwrap(),
-         Style::default().fg(Color::Magenta)),
+        (
+            Regex::new(r"\b(true|false)\b").unwrap(),
+            Style::default().fg(Color::Magenta),
+        ),
         // Comments
-        (Regex::new(r"#.*").unwrap(),
-         Style::default().fg(Color::DarkGray)),
+        (
+            Regex::new(r"#.*").unwrap(),
+            Style::default().fg(Color::DarkGray),
+        ),
     ]
 }

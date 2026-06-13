@@ -1,6 +1,6 @@
-use crate::state::{EditorState, EditorMode, Register};
 use crate::reducer::EventResult;
 use crate::reducer::helper::mark_modified;
+use crate::state::{EditorMode, EditorState, Register};
 
 // A clipboard handle that lives for the whole process. On X11/Wayland the
 // clipboard contents are served by the owning connection, so a throwaway
@@ -34,13 +34,19 @@ pub fn set_register_linewise(editor: &mut EditorState, text: String) {
     {
         let _ = with_clipboard(|cb| cb.set_text(&text));
     }
-    editor.register = Register { text, linewise: true };
+    editor.register = Register {
+        text,
+        linewise: true,
+    };
 }
 
 /// Store charwise text in the unnamed register only. Character-level edits stay
 /// internal so a stray `x`/`D` never clobbers the system clipboard.
 pub fn set_register_charwise(editor: &mut EditorState, text: String) {
-    editor.register = Register { text, linewise: false };
+    editor.register = Register {
+        text,
+        linewise: false,
+    };
 }
 
 /// Paste the unnamed register. `after` = `p` (below line / after cursor),
@@ -52,8 +58,18 @@ pub fn paste_register(editor: &mut EditorState, after: bool) -> EventResult {
     mark_modified(editor);
 
     if editor.register.linewise {
-        let new_lines: Vec<String> = editor.register.text.split('\n').map(|s| s.to_string()).collect();
-        let at = (if after { editor.cursor.y + 1 } else { editor.cursor.y }).min(editor.buffer.lines.len());
+        let new_lines: Vec<String> = editor
+            .register
+            .text
+            .split('\n')
+            .map(|s| s.to_string())
+            .collect();
+        let at = (if after {
+            editor.cursor.y + 1
+        } else {
+            editor.cursor.y
+        })
+        .min(editor.buffer.lines.len());
         for (i, line) in new_lines.iter().enumerate() {
             editor.buffer.lines.insert(at + i, line.clone());
         }
@@ -77,7 +93,11 @@ pub fn paste_register(editor: &mut EditorState, after: bool) -> EventResult {
                 editor.buffer.insert_char(c, &mut editor.cursor);
             }
         }
-        editor.set_status_message("Pasted".to_string(), crate::state::StatusKind::Success, false);
+        editor.set_status_message(
+            "Pasted".to_string(),
+            crate::state::StatusKind::Success,
+            false,
+        );
     }
     EventResult::Continue
 }
@@ -146,7 +166,6 @@ pub fn cut_line(editor: &mut EditorState) -> EventResult {
     );
     EventResult::Continue
 }
-
 
 #[cfg(test)]
 mod tests {

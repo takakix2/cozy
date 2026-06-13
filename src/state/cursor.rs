@@ -1,6 +1,4 @@
-
-
-use crate::utils::wrap::{wrap_chunks, cursor_visual_pos, byte_at_visual_col, visual_col};
+use crate::utils::wrap::{byte_at_visual_col, cursor_visual_pos, visual_col, wrap_chunks};
 
 /// Sentinel goal column meaning "end of line" (mirrors vim's `curswant = MAXCOL`).
 /// `byte_at_visual_col` clamps any target column past the row to the row end, so
@@ -94,7 +92,10 @@ impl Cursor {
     /// Steps through the wrapped sub-rows of the current line before descending to
     /// the next logical line. Falls back to logical `move_down` when `tw == 0`.
     pub fn move_down_visual(&mut self, lines: &[String], tw: usize) {
-        if tw == 0 { self.move_down(lines); return; }
+        if tw == 0 {
+            self.move_down(lines);
+            return;
+        }
         let line = &lines[self.y];
         let (sub, vcol) = cursor_visual_pos(line, self.x, tw);
         self.sync_goal(vcol);
@@ -119,7 +120,10 @@ impl Cursor {
 
     /// Soft-wrap up: mirror of `move_down_visual`.
     pub fn move_up_visual(&mut self, lines: &[String], tw: usize) {
-        if tw == 0 { self.move_up(lines); return; }
+        if tw == 0 {
+            self.move_up(lines);
+            return;
+        }
         let line = &lines[self.y];
         let (sub, vcol) = cursor_visual_pos(line, self.x, tw);
         self.sync_goal(vcol);
@@ -206,14 +210,18 @@ impl Cursor {
 
     /// Screen top (vim H): first visible line, on its first non-blank char.
     pub fn move_page_top(&mut self, scroll_offset: usize, lines: &[String]) {
-        if lines.is_empty() { return; }
+        if lines.is_empty() {
+            return;
+        }
         self.y = scroll_offset.min(lines.len() - 1);
         self.x = first_non_whitespace_byte(&lines[self.y]);
     }
 
     /// Screen middle (vim M): midpoint of the visible range, on first non-blank.
     pub fn move_page_middle(&mut self, scroll_offset: usize, page_size: usize, lines: &[String]) {
-        if lines.is_empty() { return; }
+        if lines.is_empty() {
+            return;
+        }
         let last = lines.len() - 1;
         let bottom_visible = (scroll_offset + page_size.saturating_sub(1)).min(last);
         self.y = ((scroll_offset + bottom_visible) / 2).min(last);
@@ -245,14 +253,21 @@ impl Cursor {
     pub fn move_word_forward(&mut self, lines: &[String]) {
         let line = &lines[self.y];
         let chars: Vec<(usize, char)> = line.char_indices().collect();
-        let cur = chars.iter().position(|&(b, _)| b >= self.x).unwrap_or(chars.len());
+        let cur = chars
+            .iter()
+            .position(|&(b, _)| b >= self.x)
+            .unwrap_or(chars.len());
         let mut i = cur;
         if i < chars.len() {
             let cls = char_class(chars[i].1);
             if cls != CharClass::Blank {
-                while i < chars.len() && char_class(chars[i].1) == cls { i += 1; }
+                while i < chars.len() && char_class(chars[i].1) == cls {
+                    i += 1;
+                }
             }
-            while i < chars.len() && char_class(chars[i].1) == CharClass::Blank { i += 1; }
+            while i < chars.len() && char_class(chars[i].1) == CharClass::Blank {
+                i += 1;
+            }
         }
         if i < chars.len() {
             self.x = chars[i].0;
@@ -272,7 +287,10 @@ impl Cursor {
             return;
         }
         // Index of the char at/after the cursor, then step at least one forward.
-        let mut i = chars.iter().position(|&(b, _)| b >= self.x).unwrap_or(chars.len() - 1);
+        let mut i = chars
+            .iter()
+            .position(|&(b, _)| b >= self.x)
+            .unwrap_or(chars.len() - 1);
         i = (i + 1).min(chars.len() - 1);
         while i < chars.len() && char_class(chars[i].1) == CharClass::Blank {
             i += 1;
@@ -299,13 +317,27 @@ impl Cursor {
         }
         let line = &lines[self.y];
         let chars: Vec<(usize, char)> = line.char_indices().collect();
-        let cur = chars.iter().rposition(|&(b, _)| b < self.x).map(|i| i + 1).unwrap_or(0);
-        if cur == 0 { self.x = 0; return; }
+        let cur = chars
+            .iter()
+            .rposition(|&(b, _)| b < self.x)
+            .map(|i| i + 1)
+            .unwrap_or(0);
+        if cur == 0 {
+            self.x = 0;
+            return;
+        }
         let mut i = cur - 1;
-        while i > 0 && char_class(chars[i].1) == CharClass::Blank { i -= 1; }
-        if char_class(chars[i].1) == CharClass::Blank { self.x = 0; return; }
+        while i > 0 && char_class(chars[i].1) == CharClass::Blank {
+            i -= 1;
+        }
+        if char_class(chars[i].1) == CharClass::Blank {
+            self.x = 0;
+            return;
+        }
         let cls = char_class(chars[i].1);
-        while i > 0 && char_class(chars[i - 1].1) == cls { i -= 1; }
+        while i > 0 && char_class(chars[i - 1].1) == cls {
+            i -= 1;
+        }
         self.x = chars[i].0;
     }
 
@@ -313,10 +345,17 @@ impl Cursor {
     pub fn move_word_forward_big(&mut self, lines: &[String]) {
         let line = &lines[self.y];
         let chars: Vec<(usize, char)> = line.char_indices().collect();
-        let cur = chars.iter().position(|&(b, _)| b >= self.x).unwrap_or(chars.len());
+        let cur = chars
+            .iter()
+            .position(|&(b, _)| b >= self.x)
+            .unwrap_or(chars.len());
         let mut i = cur;
-        while i < chars.len() && !chars[i].1.is_whitespace() { i += 1; }
-        while i < chars.len() && chars[i].1.is_whitespace() { i += 1; }
+        while i < chars.len() && !chars[i].1.is_whitespace() {
+            i += 1;
+        }
+        while i < chars.len() && chars[i].1.is_whitespace() {
+            i += 1;
+        }
         if i < chars.len() {
             self.x = chars[i].0;
         } else if self.y + 1 < lines.len() {
@@ -334,7 +373,10 @@ impl Cursor {
         if chars.is_empty() {
             return;
         }
-        let mut i = chars.iter().position(|&(b, _)| b >= self.x).unwrap_or(chars.len() - 1);
+        let mut i = chars
+            .iter()
+            .position(|&(b, _)| b >= self.x)
+            .unwrap_or(chars.len() - 1);
         i = (i + 1).min(chars.len() - 1);
         while i < chars.len() && chars[i].1.is_whitespace() {
             i += 1;
@@ -360,12 +402,26 @@ impl Cursor {
         }
         let line = &lines[self.y];
         let chars: Vec<(usize, char)> = line.char_indices().collect();
-        let cur = chars.iter().rposition(|&(b, _)| b < self.x).map(|i| i + 1).unwrap_or(0);
-        if cur == 0 { self.x = 0; return; }
+        let cur = chars
+            .iter()
+            .rposition(|&(b, _)| b < self.x)
+            .map(|i| i + 1)
+            .unwrap_or(0);
+        if cur == 0 {
+            self.x = 0;
+            return;
+        }
         let mut i = cur - 1;
-        while i > 0 && chars[i].1.is_whitespace() { i -= 1; }
-        if chars[i].1.is_whitespace() { self.x = 0; return; }
-        while i > 0 && !chars[i - 1].1.is_whitespace() { i -= 1; }
+        while i > 0 && chars[i].1.is_whitespace() {
+            i -= 1;
+        }
+        if chars[i].1.is_whitespace() {
+            self.x = 0;
+            return;
+        }
+        while i > 0 && !chars[i - 1].1.is_whitespace() {
+            i -= 1;
+        }
         self.x = chars[i].0;
     }
 
@@ -413,8 +469,16 @@ mod tests {
     #[test]
     fn sticky_column_restores_after_short_line() {
         // (A) goal column survives a pass through a short line.
-        let ls = vec!["abcdefghij".to_string(), "xy".to_string(), "ABCDEFGHIJ".to_string()];
-        let mut c = Cursor { x: 5, y: 0, ..Default::default() }; // col 5 ('f')
+        let ls = vec![
+            "abcdefghij".to_string(),
+            "xy".to_string(),
+            "ABCDEFGHIJ".to_string(),
+        ];
+        let mut c = Cursor {
+            x: 5,
+            y: 0,
+            ..Default::default()
+        }; // col 5 ('f')
         c.move_down(&ls);
         assert_eq!((c.y, c.x), (1, 2)); // "xy": display-clamped to its end
         c.move_down(&ls);
@@ -424,7 +488,11 @@ mod tests {
     #[test]
     fn sticky_eol_after_line_end_sticks_to_line_ends() {
         // (B) move_line_end ($) sets an EOL goal: vertical moves stick to each end.
-        let ls = vec!["short".to_string(), "a much longer line".to_string(), "mid".to_string()];
+        let ls = vec![
+            "short".to_string(),
+            "a much longer line".to_string(),
+            "mid".to_string(),
+        ];
         let mut c = Cursor::default();
         c.move_line_end(&ls); // y0, x=5 (end of "short"), goal = EOL
         c.move_down(&ls);
@@ -436,8 +504,16 @@ mod tests {
     #[test]
     fn horizontal_move_resets_goal() {
         // A horizontal move between vertical moves re-anchors the goal column.
-        let ls = vec!["abcdefghij".to_string(), "xy".to_string(), "ABCDEFGHIJ".to_string()];
-        let mut c = Cursor { x: 8, y: 0, ..Default::default() }; // col 8
+        let ls = vec![
+            "abcdefghij".to_string(),
+            "xy".to_string(),
+            "ABCDEFGHIJ".to_string(),
+        ];
+        let mut c = Cursor {
+            x: 8,
+            y: 0,
+            ..Default::default()
+        }; // col 8
         c.move_down(&ls);
         assert_eq!((c.y, c.x), (1, 2)); // "xy" end, goal still 8
         c.move_left(&ls); // now at col 1 -> breaks the anchor
@@ -449,7 +525,11 @@ mod tests {
     fn sticky_column_is_display_aware_with_wide_chars() {
         // Non-wrap vertical move keeps the *display* column across wide chars.
         let ls = vec!["aあb".to_string(), "xyzw".to_string()]; // 'a'@0 'あ'@1..4 'b'@4
-        let mut c = Cursor { x: 4, y: 0, ..Default::default() }; // on 'b', display col 3
+        let mut c = Cursor {
+            x: 4,
+            y: 0,
+            ..Default::default()
+        }; // on 'b', display col 3
         c.move_down(&ls);
         assert_eq!((c.y, c.x), (1, 3)); // display col 3 -> 'w' @ byte 3
     }
@@ -470,7 +550,11 @@ mod tests {
     fn visual_down_steps_into_wrap_then_next_line() {
         // tw 5: "abcdefg" -> ["abcde","fg"], then line "XY".
         let ls = vec!["abcdefg".to_string(), "XY".to_string()];
-        let mut c = Cursor { x: 0, y: 0, ..Default::default() };
+        let mut c = Cursor {
+            x: 0,
+            y: 0,
+            ..Default::default()
+        };
         c.move_down_visual(&ls, 5);
         assert_eq!((c.y, c.x), (0, 5)); // sub1 "fg", vcol0 -> 'f' @ byte5
         c.move_down_visual(&ls, 5);
@@ -483,7 +567,11 @@ mod tests {
     fn visual_down_preserves_column() {
         // Regression for the reported bug shape: descend within a wrapped last line.
         let ls = vec!["abcdefghij".to_string()]; // tw5 -> ["abcde","fghij"]
-        let mut c = Cursor { x: 2, y: 0, ..Default::default() }; // sub0, vcol2 ('c')
+        let mut c = Cursor {
+            x: 2,
+            y: 0,
+            ..Default::default()
+        }; // sub0, vcol2 ('c')
         c.move_down_visual(&ls, 5);
         assert_eq!((c.y, c.x), (0, 7)); // sub1 vcol2 -> "fghij"[2]='h' @ byte7
         c.move_down_visual(&ls, 5);
@@ -493,7 +581,11 @@ mod tests {
     #[test]
     fn visual_up_steps_back_through_wrap_then_prev_line() {
         let ls = vec!["abcde".to_string(), "fghijklmn".to_string()]; // tw5: line1 -> ["fghij","klmn"]
-        let mut c = Cursor { x: 5, y: 1, ..Default::default() }; // line1 sub1 ('k'), vcol0
+        let mut c = Cursor {
+            x: 5,
+            y: 1,
+            ..Default::default()
+        }; // line1 sub1 ('k'), vcol0
         c.move_up_visual(&ls, 5);
         assert_eq!((c.y, c.x), (1, 0)); // sub1 -> sub0, vcol0
         c.move_up_visual(&ls, 5);
@@ -505,7 +597,11 @@ mod tests {
     #[test]
     fn visual_falls_back_to_logical_when_tw_zero() {
         let ls = vec!["abc".to_string(), "de".to_string()];
-        let mut c = Cursor { x: 1, y: 0, ..Default::default() };
+        let mut c = Cursor {
+            x: 1,
+            y: 0,
+            ..Default::default()
+        };
         c.move_down_visual(&ls, 0); // tw==0 -> logical move_down
         assert_eq!((c.y, c.x), (1, 1));
     }
