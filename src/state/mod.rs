@@ -1,5 +1,4 @@
 pub mod buffer;
-pub mod clipboard;
 pub mod cursor;
 pub mod editor;
 pub mod key;

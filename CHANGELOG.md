@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.2.2
+
+### Highlights
+
+- Refactored host boundaries for hsh-ios embedding: input, file I/O, config I/O,
+  clipboard I/O, and startup runtime are now isolated from reducer/editor logic.
+- Documented the planned session-diff workflow.
+
 ## v0.2.1
 
 ### Highlights

@@ -2,38 +2,10 @@ use crate::reducer::EventResult;
 use crate::reducer::helper::mark_modified;
 use crate::state::{EditorMode, EditorState, Register};
 
-// A clipboard handle that lives for the whole process. On X11/Wayland the
-// clipboard contents are served by the owning connection, so a throwaway
-// `Clipboard::new()` per call relinquishes ownership the instant it drops —
-// copied text vanished immediately unless a clipboard manager happened to cache
-// it. Holding one handle alive for the session keeps the selection owned and
-// pasteable. Kept out of EditorState so the state stays pure (Core/UI split).
-#[cfg(feature = "clipboard")]
-thread_local! {
-    static CLIPBOARD: std::cell::RefCell<Option<arboard::Clipboard>> =
-        std::cell::RefCell::new(None);
-}
-
-/// Run `f` with the process-lifetime clipboard, lazily creating it. Returns
-/// `None` when no clipboard is available (e.g. headless / no display).
-#[cfg(feature = "clipboard")]
-fn with_clipboard<R>(f: impl FnOnce(&mut arboard::Clipboard) -> R) -> Option<R> {
-    CLIPBOARD.with(|cell| {
-        let mut slot = cell.borrow_mut();
-        if slot.is_none() {
-            *slot = arboard::Clipboard::new().ok();
-        }
-        slot.as_mut().map(f)
-    })
-}
-
 /// Store linewise text in the unnamed register and mirror it to the system
 /// clipboard (deliberate, line-level cut/yank should be reachable from other apps).
 pub fn set_register_linewise(editor: &mut EditorState, text: String) {
-    #[cfg(feature = "clipboard")]
-    {
-        let _ = with_clipboard(|cb| cb.set_text(&text));
-    }
+    crate::clipboard_io::set_text(&text);
     editor.register = Register {
         text,
         linewise: true,
@@ -102,11 +74,15 @@ pub fn paste_register(editor: &mut EditorState, after: bool) -> EventResult {
     EventResult::Continue
 }
 
-#[cfg(feature = "clipboard")]
 pub fn paste_from_clipboard(editor: &mut EditorState) -> EventResult {
-    match with_clipboard(|cb| cb.get_text()) {
-        Some(Ok(text)) => paste_string(editor, &text),
-        _ => {
+    #[cfg(not(feature = "clipboard"))]
+    let _ = editor;
+
+    match crate::clipboard_io::get_text() {
+        #[cfg(feature = "clipboard")]
+        crate::clipboard_io::ClipboardRead::Text(text) => paste_string(editor, &text),
+        #[cfg(feature = "clipboard")]
+        crate::clipboard_io::ClipboardRead::Failed => {
             editor.set_status_message(
                 "Failed to read from clipboard".to_string(),
                 crate::state::StatusKind::Error,
@@ -114,12 +90,9 @@ pub fn paste_from_clipboard(editor: &mut EditorState) -> EventResult {
             );
             EventResult::Continue
         }
+        #[cfg(not(feature = "clipboard"))]
+        crate::clipboard_io::ClipboardRead::Unavailable => EventResult::Continue,
     }
-}
-
-#[cfg(not(feature = "clipboard"))]
-pub fn paste_from_clipboard(_editor: &mut EditorState) -> EventResult {
-    EventResult::Continue
 }
 
 pub fn paste_string(editor: &mut EditorState, s: &str) -> EventResult {

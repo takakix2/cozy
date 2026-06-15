@@ -1,19 +1,25 @@
 mod action;
 mod browse;
+mod clipboard_io;
 mod commands;
+mod config_io;
 mod event_loop;
+mod file_io;
 mod glide;
 mod host;
+mod input;
 mod reducer;
+mod runtime_env;
 mod shortcuts;
 mod state;
 mod ui;
 mod utils;
 
-pub use event_loop::{CrosstermEventSource, EventSource};
-pub use host::run_cli;
+pub use host::{run_cli, run_cli_from_env, run_cli_with_config};
+pub use input::{CrosstermEventSource, EventSource};
 use ratatui::{Terminal, backend::CrosstermBackend};
 use state::EditorState;
+use state::editor::EditorStateInit;
 use std::io::{self, Write};
 use std::path::PathBuf;
 
@@ -24,9 +30,12 @@ pub struct CozyConfig {
     /// Override config file search directory (e.g. iOS Documents/.hsh/).
     /// `None` uses the default XDG / home-dir search.
     pub config_dir: Option<PathBuf>,
-    /// Set to false when the host (e.g. xterm.js PTY) already owns raw mode.
+    /// CLI host setup only: set to false when the host already owns raw mode.
+    /// `run()` does not toggle raw mode; this is consumed by `run_cli_with_config()`.
     pub enable_raw_mode: bool,
-    /// Set to false when the host manages the screen buffer.
+    /// CLI host setup only: set to false when the host manages the screen buffer.
+    /// `run()` does not enter/leave the alternate screen; this is consumed by
+    /// `run_cli_with_config()`.
     pub enable_alternate_screen: bool,
     /// Terminal size (cols, rows). Required when the host is not a real TTY.
     /// `None` lets ratatui detect the size via ioctl (CLI use).
@@ -54,25 +63,35 @@ pub fn run<W: Write>(
     config: CozyConfig,
     event_src: &mut dyn EventSource,
 ) -> io::Result<()> {
-    let backend = CrosstermBackend::new(writer);
-    let mut terminal = if let Some((cols, rows)) = config.terminal_size {
-        use ratatui::layout::Rect;
-        Terminal::with_options(
-            backend,
-            ratatui::TerminalOptions {
-                viewport: ratatui::Viewport::Fixed(Rect::new(0, 0, cols, rows)),
-            },
-        )?
-    } else {
-        Terminal::new(backend)?
-    };
-
-    let mut editor = match config.config_dir.as_ref() {
-        Some(dir) => EditorState::new_with_config_dir(config.filename, Some(dir)),
-        None => EditorState::new(config.filename),
-    };
+    let mut terminal = create_terminal(writer, config.terminal_size)?;
+    let mut editor = create_editor(config);
 
     event_loop::run(&mut terminal, &mut editor, event_src)?;
 
     Ok(())
+}
+
+fn create_terminal<W: Write>(
+    writer: W,
+    terminal_size: Option<(u16, u16)>,
+) -> io::Result<Terminal<CrosstermBackend<W>>> {
+    let backend = CrosstermBackend::new(writer);
+    if let Some((cols, rows)) = terminal_size {
+        use ratatui::layout::Rect;
+        return Terminal::with_options(
+            backend,
+            ratatui::TerminalOptions {
+                viewport: ratatui::Viewport::Fixed(Rect::new(0, 0, cols, rows)),
+            },
+        );
+    } else {
+        Terminal::new(backend)
+    }
+}
+
+fn create_editor(config: CozyConfig) -> EditorState {
+    EditorState::from_init(EditorStateInit::from_runtime(
+        config.filename,
+        config.config_dir,
+    ))
 }

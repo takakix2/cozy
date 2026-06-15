@@ -1,38 +1,9 @@
 use crate::state::Cursor;
 use crate::state::TextBuffer;
 use serde::Deserialize;
-use std::fs::File;
-use std::io::{self, Write};
+use std::io;
 use std::path::PathBuf;
 use std::time::Instant;
-
-const DEFAULT_CONFIG_TOML: &str = r##"# cozy config
-
-page_size = 20
-theme = "dark"
-show_line_numbers = true
-status_duration = 3
-
-line_number_bg = "darkgray"
-line_number_fg = "white"
-
-footer_bg = "#222226"
-footer_key_fg = "cyan"
-footer_fg = "gray"
-
-status_bar_bg = "darkgray"
-status_bar_fg = "white"
-
-cursor_blink = true
-
-# Resting mode after actions: "edit" or "glide".
-default_mode = "edit"
-
-# Override only the shortcuts you want to change.
-# [keys]
-# enter_exit = "ctrl+x"
-# toggle_markdown = "f2"
-"##;
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct Config {
@@ -56,101 +27,27 @@ pub struct Config {
 
 impl Config {
     pub fn load() -> Self {
-        Self::load_from(None)
+        crate::config_io::load()
     }
 
     /// Load config, optionally overriding the search directory (for iOS sandbox etc.).
     pub fn load_from(config_dir: Option<&PathBuf>) -> Self {
-        let paths: Vec<PathBuf> = if let Some(dir) = config_dir {
-            vec![dir.join("cozy.toml"), dir.join("config.toml")]
-        } else {
-            vec![
-                dirs::config_dir()
-                    .map(|p| p.join("cozy/config.toml"))
-                    .unwrap_or_default(),
-                PathBuf::from("config.toml"),
-                dirs::home_dir()
-                    .map(|p| p.join(".cozy/config.toml"))
-                    .unwrap_or_default(),
-            ]
-        };
-
-        if let Some(path) = Self::default_config_path(config_dir) {
-            if !path.exists() {
-                if let Err(e) = Self::write_default_config(&path) {
-                    eprintln!(
-                        "warning: Failed to create default config '{}': {}",
-                        path.display(),
-                        e
-                    );
-                }
-            }
-        }
-
-        for path in &paths {
-            if path.exists() {
-                if let Ok(content) = std::fs::read_to_string(path) {
-                    match toml::from_str::<Config>(&content) {
-                        Ok(config) => return config,
-                        Err(e) => {
-                            eprintln!(
-                                "warning: Failed to parse config file '{}': {}",
-                                path.display(),
-                                e
-                            );
-                            eprintln!("warning: Using default configuration");
-                            // Continue to next path or use defaults
-                        }
-                    }
-                }
-            }
-        }
-
-        Self::default_values()
+        crate::config_io::load_from(config_dir)
     }
 
     pub fn user_config_path(config_dir: Option<&PathBuf>) -> Option<PathBuf> {
-        if let Some(dir) = config_dir {
-            return Some(dir.join("config.toml"));
-        }
-        dirs::config_dir()
-            .map(|p| p.join("cozy/config.toml"))
-            .or_else(|| dirs::home_dir().map(|p| p.join(".cozy/config.toml")))
+        crate::config_io::user_config_path(config_dir)
     }
 
     pub fn load_from_path(path: &std::path::Path) -> io::Result<Self> {
-        let content = std::fs::read_to_string(path)?;
-        toml::from_str::<Config>(&content)
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))
-    }
-
-    fn default_config_path(config_dir: Option<&PathBuf>) -> Option<PathBuf> {
-        Self::user_config_path(config_dir)
+        crate::config_io::load_from_path(path)
     }
 
     pub fn ensure_default_config_file(config_dir: Option<&PathBuf>) -> io::Result<PathBuf> {
-        let path = Self::default_config_path(config_dir).ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::NotFound,
-                "Could not resolve config directory",
-            )
-        })?;
-        if !path.exists() {
-            Self::write_default_config(&path)?;
-        }
-        Ok(path)
+        crate::config_io::ensure_default_config_file(config_dir)
     }
 
-    fn write_default_config(path: &std::path::Path) -> io::Result<()> {
-        if let Some(parent) = path.parent() {
-            if !parent.as_os_str().is_empty() {
-                std::fs::create_dir_all(parent)?;
-            }
-        }
-        std::fs::write(path, DEFAULT_CONFIG_TOML)
-    }
-
-    fn default_values() -> Self {
+    pub(crate) fn default_values() -> Self {
         Self {
             page_size: 20,
             theme: Some("dark".to_string()),
@@ -280,6 +177,26 @@ pub struct EditorState {
     pub command_selected: usize,
 }
 
+pub(crate) struct EditorStateInit {
+    pub filename: Option<String>,
+    pub config_dir: Option<PathBuf>,
+    pub working_dir: PathBuf,
+    pub startup_args: Vec<String>,
+    pub startup_time: Instant,
+}
+
+impl EditorStateInit {
+    pub(crate) fn from_runtime(filename: Option<String>, config_dir: Option<PathBuf>) -> Self {
+        Self {
+            filename,
+            config_dir,
+            working_dir: crate::runtime_env::current_working_dir(),
+            startup_args: crate::runtime_env::startup_args(),
+            startup_time: Instant::now(),
+        }
+    }
+}
+
 /// The unnamed register: holds cut/yanked text. `linewise` means the content is
 /// whole lines (`dd`, `yy`) rather than an inline span (`D`, `dw`).
 #[derive(Debug, Clone, Default)]
@@ -327,43 +244,36 @@ fn default_save_name(dir: &std::path::Path) -> String {
 }
 
 impl EditorState {
+    #[cfg(test)]
     pub fn new(filename: Option<String>) -> Self {
         Self::new_with_config_dir(filename, None)
     }
 
+    #[cfg(test)]
     pub fn new_with_config_dir(filename: Option<String>, config_dir: Option<&PathBuf>) -> Self {
-        let config = Config::load_from(config_dir);
-        let mut lines = vec![String::new()];
-        let mut path_buf = None;
-        let mut initial_mode = EditorMode::Welcome;
-        let mut browse_tree = None;
+        Self::from_init(EditorStateInit::from_runtime(filename, config_dir.cloned()))
+    }
 
-        if let Some(ref path) = filename {
-            // `cozy <folder>` opens the tree; `cozy <file>` edits as before. Without
-            // this branch a directory path fell through to Edit with the dir as
-            // `filename`, which then broke on save.
-            if std::path::Path::new(path).is_dir() {
-                browse_tree = Some(crate::browse::BrowseTree::build(std::path::Path::new(path)));
-                initial_mode = EditorMode::Browse;
-            } else {
-                if let Ok(content) = std::fs::read_to_string(path) {
-                    lines = content.lines().map(|s| s.to_string()).collect();
-                    if lines.is_empty() {
-                        lines.push(String::new());
-                    }
-                }
-                path_buf = Some(PathBuf::from(path));
-                initial_mode = Self::resolve_home(&config);
+    pub(crate) fn from_init(init: EditorStateInit) -> Self {
+        let config = Config::load_from(init.config_dir.as_ref());
+        let startup_document = crate::file_io::load_startup_document(init.filename.as_deref());
+        let (lines, path_buf, initial_mode, browse_tree) = match startup_document {
+            crate::file_io::StartupDocument::Empty => {
+                (vec![String::new()], None, EditorMode::Welcome, None)
             }
-        }
-
-        let working_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+            crate::file_io::StartupDocument::File { path, lines } => {
+                (lines, Some(path), Self::resolve_home(&config), None)
+            }
+            crate::file_io::StartupDocument::Directory { tree } => {
+                (vec![String::new()], None, EditorMode::Browse, Some(tree))
+            }
+        };
 
         Self {
             buffer: TextBuffer::from_lines(lines),
             cursor: Cursor::default(),
             filename: path_buf,
-            _working_dir: working_dir,
+            _working_dir: init.working_dir,
             modified: false,
             mode: initial_mode,
             save_filename_buffer: String::new(),
@@ -374,8 +284,8 @@ impl EditorState {
             status_persistent: true, // デフォルトは常時表示
             status_kind: StatusKind::Info,
             scroll_offset: 0,
-            _startup_args: std::env::args().collect(),
-            _startup_time: Instant::now(),
+            _startup_args: init.startup_args,
+            _startup_time: init.startup_time,
             _footer_shortcuts: crate::shortcuts::footer_labels(),
             shortcut_map: crate::shortcuts::build_shortcut_map(config.keys.as_ref()),
             search_buffer: String::new(),
@@ -462,29 +372,6 @@ impl EditorState {
         Self::resolve_home(&self.config)
     }
 
-    /// Pick a Browse root that actually exists.
-    ///
-    /// A missing file path can still be the current filename after startup or
-    /// from the Open dialog. Browse should not try to root itself at a missing
-    /// directory; instead, walk up to the nearest existing ancestor and fall
-    /// back to the working directory if nothing in the chain exists.
-    fn browse_root(&self) -> PathBuf {
-        let mut current = self
-            .filename
-            .as_ref()
-            .and_then(|path| path.parent())
-            .map(PathBuf::from)
-            .unwrap_or_else(|| self._working_dir.clone());
-
-        while !current.exists() {
-            if !current.pop() || current.as_os_str().is_empty() {
-                return self._working_dir.clone();
-            }
-        }
-
-        current
-    }
-
     /// Same resolution as [`home_mode`], usable before `EditorState` exists
     /// (e.g. when picking the startup mode in `new_with_config_dir`).
     pub fn resolve_home(config: &Config) -> EditorMode {
@@ -546,14 +433,10 @@ impl EditorState {
                 self.status_message = None;
             }
             EditorMode::Browse => {
-                // Root the tree at the current file's parent so Ctrl+O shows "around
-                // here"; fall back to the working dir when no file is open.
-                let root = self.browse_root();
-                let mut tree = crate::browse::BrowseTree::build(&root);
-                if let Some(file) = &self.filename {
-                    tree.select_path(file);
-                }
-                self.browse_tree = Some(tree);
+                self.browse_tree = Some(crate::file_io::build_browse_tree(
+                    self.filename.as_ref(),
+                    &self._working_dir,
+                ));
                 self.status_message = None;
             }
             EditorMode::Markdown => {
@@ -583,7 +466,7 @@ impl EditorState {
     /// to (`_working_dir`). This keeps the actual write in the same folder the
     /// default-name collision check looked at — and the same folder regardless of
     /// the process cwd, which matters once Browse can span multiple repos.
-    fn resolve_in_working_dir(&self, path: &std::path::Path) -> PathBuf {
+    pub(crate) fn resolve_in_working_dir(&self, path: &std::path::Path) -> PathBuf {
         if path.is_absolute() {
             path.to_path_buf()
         } else {
@@ -593,128 +476,17 @@ impl EditorState {
 
     /// 通常保存（現在のファイル名に保存）
     pub fn save(&mut self) -> io::Result<()> {
-        let Some(path) = self.filename.clone() else {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "No filename set. Use Save As to specify a filename.",
-            ));
-        };
-        let target = self.resolve_in_working_dir(&path);
-
-        // ディレクトリが存在するか確認（空の親 = カレントディレクトリは常に存在）
-        if let Some(parent) = target.parent() {
-            if !parent.as_os_str().is_empty() && !parent.exists() {
-                return Err(io::Error::new(
-                    io::ErrorKind::NotFound,
-                    format!("Directory not found:{}", parent.display()),
-                ));
-            }
-        }
-
-        let mut file = File::create(&target).map_err(|e| {
-            io::Error::new(
-                e.kind(),
-                format!("Failed to save '{}': {}", target.display(), e),
-            )
-        })?;
-
-        for line in &self.buffer.lines {
-            writeln!(file, "{}", line).map_err(|e| {
-                io::Error::new(io::ErrorKind::WriteZero, format!("Write error: {}", e))
-            })?;
-        }
-
-        self.last_saved_id = self.undo_stack.len(); // 保存時のスナップショットIDを記録
-        self.modified = false; // 互換性のため（将来削除可）
-        Ok(())
+        crate::file_io::save(self)
     }
 
     /// 名前をつけて保存（新しいファイル名を指定して保存し、記憶する）
     pub fn save_as(&mut self, path: &str) -> io::Result<()> {
-        if path.is_empty() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "Filename is empty",
-            ));
-        }
-
-        let path_buf = PathBuf::from(path);
-        let target = self.resolve_in_working_dir(&path_buf);
-
-        // ディレクトリが存在するか確認（空の親 = カレントディレクトリは常に存在）
-        if let Some(parent) = target.parent() {
-            if !parent.as_os_str().is_empty() && !parent.exists() {
-                return Err(io::Error::new(
-                    io::ErrorKind::NotFound,
-                    format!("Directory not found:{}", parent.display()),
-                ));
-            }
-        }
-
-        let mut file = File::create(&target).map_err(|e| {
-            let kind = if e.kind() == io::ErrorKind::PermissionDenied {
-                io::ErrorKind::PermissionDenied
-            } else {
-                e.kind()
-            };
-            io::Error::new(kind, format!("Failed to save '{}': {}", path, e))
-        })?;
-
-        for line in &self.buffer.lines {
-            writeln!(file, "{}", line).map_err(|e| {
-                io::Error::new(io::ErrorKind::WriteZero, format!("Write error: {}", e))
-            })?;
-        }
-
-        self.filename = Some(path_buf);
-        self.last_saved_id = self.undo_stack.len(); // 保存時のスナップショットIDを記録
-        self.modified = false; // 互換性のため（将来削除可）
-        Ok(())
+        crate::file_io::save_as(self, path)
     }
 
     /// ファイルを開く
     pub fn open_file(&mut self, path: &str) -> io::Result<()> {
-        if path.is_empty() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "Filename is empty",
-            ));
-        }
-
-        let path_buf = PathBuf::from(path);
-
-        // ファイルが存在するか確認
-        if !path_buf.exists() {
-            return Err(io::Error::new(
-                io::ErrorKind::NotFound,
-                format!("File not found: {}", path),
-            ));
-        }
-
-        // ファイルかどうか確認（ディレクトリではない）
-        if !path_buf.is_file() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                format!("Not a file: {}", path),
-            ));
-        }
-
-        let content = std::fs::read_to_string(&path_buf).map_err(|e| {
-            let kind = if e.kind() == io::ErrorKind::PermissionDenied {
-                io::ErrorKind::PermissionDenied
-            } else {
-                e.kind()
-            };
-            io::Error::new(kind, format!("Failed to open '{}': {}", path, e))
-        })?;
-
-        let lines: Vec<String> = content.lines().map(|s| s.to_string()).collect();
-        self.buffer = TextBuffer::from_lines(lines);
-        self.filename = Some(path_buf);
-        self.cursor = Cursor::default();
-        self.modified = false;
-        self.scroll_offset = 0; // スクロール位置もリセット
-        Ok(())
+        crate::file_io::open_file(self, path)
     }
 
     pub fn adjust_scroll(&mut self, viewport_height: usize) {
