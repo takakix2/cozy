@@ -224,13 +224,21 @@ toggle_markdown = "f2"
 
 ## アーキテクチャ
 
-cozy は Redux 風の構成です。
+cozy は Redux 風の core と薄い host adapter で構成されています。
 
 ```text
-Input -> Keymap -> Action -> Reducer -> State -> UI
+Host (CLI / embedded)
+  -> EventSource + input mapping
+  -> Keymap
+  -> Action
+  -> Reducer
+  -> EditorState
+  -> UI render
+
+File / config / clipboard / runtime IO は小さな adapter module に分離
 ```
 
-中心となる状態は `EditorState` にあり、テキストは行ベースの `TextBuffer` で保持します。エディタの挙動は reducer に分離されているため、ターミナル入力、状態遷移、描画を切り分けてテストできます。
+中心となる状態は `EditorState` にあり、テキストは行ベースの `TextBuffer` で保持します。エディタの挙動は reducer に分離されています。CLI の terminal setup、event source、file/config loading、clipboard access、startup runtime は host/IO 境界に置いているため、core editor behavior を直接テストでき、hsh-ios のような host からも埋め込みやすくなっています。
 
 ## 開発
 

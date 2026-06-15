@@ -224,13 +224,21 @@ toggle_markdown = "f2"
 
 ## Architecture
 
-cozy uses a Redux-inspired architecture:
+cozy uses a Redux-inspired core with thin host adapters:
 
 ```text
-Input -> Keymap -> Action -> Reducer -> State -> UI
+Host (CLI / embedded)
+  -> EventSource + input mapping
+  -> Keymap
+  -> Action
+  -> Reducer
+  -> EditorState
+  -> UI render
+
+File / config / clipboard / runtime IO stay behind small adapter modules.
 ```
 
-The main editor state lives in `EditorState`, text is stored in a line-based `TextBuffer`, and editor behavior is implemented through reducers. This keeps terminal input, state transitions, and rendering separate enough to test core editor behavior directly.
+The main editor state lives in `EditorState`, text is stored in a line-based `TextBuffer`, and editor behavior is implemented through reducers. CLI terminal setup, event sources, file/config loading, clipboard access, and startup runtime are kept at the host/IO boundary so the core editor behavior can be tested directly and embedded by hosts such as hsh-ios.
 
 ## Development
 
