@@ -2,6 +2,8 @@ use crate::action::Action;
 use crate::reducer::editor::apply_editor_event;
 use crate::reducer::reduce;
 use crate::state::{Config, EditorMode, EditorState, TextBuffer, YankHighlight};
+use crate::ui::Renderer;
+use ratatui::layout::Rect;
 
 #[test]
 fn test_edit_mode_navigation_unaffected() {
@@ -224,6 +226,76 @@ fn test_ctrl_n_p_are_search_mode_local_shortcuts() {
 }
 
 #[test]
+fn test_ctrl_u_toggles_footer_visibility() {
+    use crate::state::key::{KeyCode, KeyModifiers};
+    use crate::ui::Keymap;
+
+    let mut editor = EditorState::new(None);
+    editor.enter_mode(EditorMode::Edit);
+
+    let action =
+        Keymap::map_key_to_action(&editor, KeyCode::Char('u'), KeyModifiers::CONTROL).unwrap();
+    assert_eq!(action, Action::ToggleFooter);
+
+    reduce(&mut editor, action);
+    assert!(!editor.footer_visible_runtime);
+    assert_eq!(editor.status_message.as_deref(), Some("Footer: off"));
+
+    reduce(&mut editor, Action::ToggleFooter);
+    assert!(editor.footer_visible_runtime);
+    assert_eq!(editor.status_message.as_deref(), Some("Footer: on"));
+}
+
+#[test]
+fn test_low_height_layout_keeps_compact_footer_for_mobile_edit() {
+    let mut editor = EditorState::new(None);
+    editor.enter_mode(EditorMode::Edit);
+
+    let chunks = Renderer::editor_layout(Rect::new(0, 0, 26, 12), &editor);
+
+    assert_eq!(chunks[0].height, 10);
+    assert_eq!(chunks[1].height, 1);
+    assert_eq!(chunks[2].height, 1);
+}
+
+#[test]
+fn test_hidden_footer_reclaims_rows_but_keeps_status() {
+    let mut editor = EditorState::new(None);
+    editor.enter_mode(EditorMode::Edit);
+    editor.footer_visible_runtime = false;
+
+    let chunks = Renderer::editor_layout(Rect::new(0, 0, 26, 12), &editor);
+
+    assert_eq!(chunks[0].height, 11);
+    assert_eq!(chunks[1].height, 0);
+    assert_eq!(chunks[2].height, 1);
+}
+
+#[test]
+fn test_hidden_footer_preserves_prompt_input_rows() {
+    let mut editor = EditorState::new(None);
+    editor.footer_visible_runtime = false;
+
+    editor.enter_mode(EditorMode::Save);
+    let save = Renderer::editor_layout(Rect::new(0, 0, 26, 12), &editor);
+    assert_eq!(save[1].height, 2);
+
+    editor.enter_mode(EditorMode::Command);
+    let command = Renderer::editor_layout(Rect::new(0, 0, 26, 12), &editor);
+    assert_eq!(command[1].height, 2);
+}
+
+#[test]
+fn test_low_height_command_does_not_reserve_full_palette() {
+    let mut editor = EditorState::new(None);
+    editor.enter_mode(EditorMode::Command);
+
+    let chunks = Renderer::editor_layout(Rect::new(0, 0, 26, 12), &editor);
+
+    assert_eq!(chunks[1].height, 3);
+}
+
+#[test]
 fn test_command_palette_filters_and_executes_mode_command() {
     use crate::state::key::{KeyCode, KeyModifiers};
     use crate::ui::Keymap;
@@ -348,6 +420,7 @@ fn test_command_palette_empty_query_groups_commands_by_namespace() {
             "View.Markdown",
             "View.ToggleLineNumbers",
             "View.ToggleWrap",
+            "View.ToggleFooter",
             "Config.Open",
             "Config.Reload",
             "App.Quit",
@@ -413,6 +486,13 @@ fn test_command_palette_executes_view_toggles() {
     }
     reduce(&mut editor, Action::CommandExecute);
     assert!(!editor.soft_wrap);
+
+    editor.enter_mode(EditorMode::Command);
+    for c in "view.togglefooter".chars() {
+        reduce(&mut editor, Action::CommandInput(c));
+    }
+    reduce(&mut editor, Action::CommandExecute);
+    assert!(!editor.footer_visible_runtime);
 
     editor.enter_mode(EditorMode::Command);
     for c in "view.markdown".chars() {

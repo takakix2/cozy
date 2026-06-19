@@ -151,6 +151,8 @@ pub struct EditorState {
     pub search_current: usize,
     /// Whether soft-wrap is active (long lines wrap within the viewport)
     pub soft_wrap: bool,
+    /// Runtime visibility for shortcut footers. Prompt input rows remain visible.
+    pub footer_visible_runtime: bool,
     /// Text display width (columns after subtracting line-number gutter); set by renderer
     pub text_display_width: usize,
     /// Pending prefix key in Glide mode (e.g. Some('g') while waiting for second 'g')
@@ -309,6 +311,7 @@ impl EditorState {
             search_matches: Vec::new(),
             search_current: 0,
             soft_wrap: true,
+            footer_visible_runtime: true,
             text_display_width: 0,
             glide_prefix: None,
             glide_count: String::new(),

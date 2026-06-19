@@ -356,6 +356,16 @@ pub fn apply_editor_event(editor: &mut EditorState, action: &Action) -> EventRes
             crate::reducer::status::set_info(editor, &format!("Soft wrap: {}", status));
             EventResult::Continue
         }
+        Action::ToggleFooter => {
+            editor.footer_visible_runtime = !editor.footer_visible_runtime;
+            let status = if editor.footer_visible_runtime {
+                "on"
+            } else {
+                "off"
+            };
+            crate::reducer::status::set_info(editor, &format!("Footer: {}", status));
+            EventResult::Continue
+        }
         Action::ToggleMarkdownPreview => {
             if editor.mode == EditorMode::Markdown {
                 editor.enter_mode(editor.home_mode());

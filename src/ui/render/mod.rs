@@ -21,25 +21,22 @@ pub struct Renderer;
 impl Renderer {
     pub fn editor_layout(area: Rect, editor: &EditorState) -> Rc<[Rect]> {
         let is_narrow = area.width < 50;
-        let shortcut_h: u16 = match (is_narrow, editor.mode) {
-            (_, EditorMode::Welcome) => 0,
-            (_, EditorMode::Help) => 1,
-            (_, EditorMode::Command) => 10,
-            (true, _) => 4,
-            (false, _) => 2,
-        };
-        let status_bar_h: u16 = match editor.mode {
-            EditorMode::Welcome | EditorMode::Help => 0,
-            _ => 1,
-        };
-        // On narrow screens (iPhone), collapse shortcuts when height is small
-        // (iOS soft keyboard visible typically leaves ~12 rows; without keyboard ~23 rows).
-        let actual_shortcut_h = if is_narrow && area.height < 18 && shortcut_h > 0 {
-            0
+        let is_low_height = area.height < 18;
+        let status_bar_h: u16 =
+            if matches!(editor.mode, EditorMode::Welcome | EditorMode::Help) || area.height < 2 {
+                0
+            } else {
+                1
+            };
+        let requested_shortcut_h = if !editor.footer_visible_runtime {
+            hidden_shortcut_rows(editor.mode)
+        } else if is_low_height {
+            compact_shortcut_rows(is_narrow, editor.mode)
         } else {
-            let available = area.height.saturating_sub(1 + status_bar_h);
-            shortcut_h.min(available)
+            normal_shortcut_rows(is_narrow, editor.mode)
         };
+        let available = area.height.saturating_sub(1 + status_bar_h);
+        let actual_shortcut_h = requested_shortcut_h.min(available);
         Layout::default()
             .direction(Direction::Vertical)
             .constraints(
@@ -80,5 +77,43 @@ impl Renderer {
 
     pub fn render_status_bar(editor: &EditorState, f: &mut Frame, area: Rect) {
         footer::render_status_bar(editor, f, area);
+    }
+}
+
+fn normal_shortcut_rows(is_narrow: bool, mode: EditorMode) -> u16 {
+    match (is_narrow, mode) {
+        (_, EditorMode::Welcome) => 0,
+        (_, EditorMode::Help) => 1,
+        (_, EditorMode::Command) => 10,
+        (true, _) => 4,
+        (false, _) => 2,
+    }
+}
+
+fn compact_shortcut_rows(is_narrow: bool, mode: EditorMode) -> u16 {
+    match mode {
+        EditorMode::Welcome => 0,
+        EditorMode::Help => 1,
+        EditorMode::Command => {
+            if is_narrow {
+                3
+            } else {
+                4
+            }
+        }
+        EditorMode::Save | EditorMode::Open => 2,
+        EditorMode::Quit | EditorMode::Replace => 3,
+        EditorMode::Search | EditorMode::Goto => 2,
+        EditorMode::Edit | EditorMode::Glide | EditorMode::Browse | EditorMode::Markdown => 1,
+    }
+}
+
+fn hidden_shortcut_rows(mode: EditorMode) -> u16 {
+    match mode {
+        EditorMode::Welcome | EditorMode::Help => 0,
+        EditorMode::Save | EditorMode::Open | EditorMode::Replace | EditorMode::Command => 2,
+        EditorMode::Quit => 2,
+        EditorMode::Search | EditorMode::Goto => 1,
+        EditorMode::Edit | EditorMode::Glide | EditorMode::Browse | EditorMode::Markdown => 0,
     }
 }

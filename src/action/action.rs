@@ -49,6 +49,7 @@ pub enum Action {
     PasteFromClipboard,
     ToggleWrap,
     ToggleMarkdownPreview,
+    ToggleFooter,
 
     // Command palette
     CommandInput(char),

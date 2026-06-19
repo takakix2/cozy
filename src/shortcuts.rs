@@ -31,6 +31,7 @@ pub enum EditorAction {
     Cancel,
     ToggleLineNumbers,
     ToggleWrap,
+    ToggleFooter,
     DeleteLine,
     Paste,
     EnterGoto,
@@ -218,6 +219,12 @@ fn utility_shortcuts() -> Vec<Shortcut> {
             "Ctrl+W Wrap",
         ),
         sc(
+            KeyCode::Char('u'),
+            KeyModifiers::CONTROL,
+            EditorAction::ToggleFooter,
+            "Ctrl+U Footer",
+        ),
+        sc(
             KeyCode::Char('k'),
             KeyModifiers::CONTROL,
             EditorAction::DeleteLine,
@@ -240,6 +247,12 @@ fn utility_shortcuts() -> Vec<Shortcut> {
             KeyModifiers::NONE,
             EditorAction::ToggleMarkdownPreview,
             "F2 Markdown",
+        ),
+        sc(
+            KeyCode::Char('d'),
+            KeyModifiers::CONTROL,
+            EditorAction::ToggleMarkdownPreview,
+            "Ctrl+D Markdown",
         ),
     ]
 }
@@ -402,6 +415,7 @@ pub fn action_from_name(name: &str) -> Option<EditorAction> {
         "delete_line" => Some(EditorAction::DeleteLine),
         "toggle_line_numbers" => Some(EditorAction::ToggleLineNumbers),
         "toggle_wrap" => Some(EditorAction::ToggleWrap),
+        "toggle_footer" => Some(EditorAction::ToggleFooter),
         "reload_config" => Some(EditorAction::ReloadConfig),
         "enter_goto" => Some(EditorAction::EnterGoto),
         "enter_glide" => Some(EditorAction::EnterGlide),
@@ -432,4 +446,45 @@ pub fn build_shortcut_map(
         map.insert(key, action);
     }
     map
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn markdown_preview_has_function_key_and_ctrl_fallback() {
+        let map = shortcut_map();
+
+        assert_eq!(
+            map.get(&(KeyCode::F(2), KeyModifiers::NONE)),
+            Some(&EditorAction::ToggleMarkdownPreview)
+        );
+        assert_eq!(
+            map.get(&(KeyCode::Char('d'), KeyModifiers::CONTROL)),
+            Some(&EditorAction::ToggleMarkdownPreview)
+        );
+    }
+
+    #[test]
+    fn footer_toggle_has_default_shortcut() {
+        let map = shortcut_map();
+
+        assert_eq!(
+            map.get(&(KeyCode::Char('u'), KeyModifiers::CONTROL)),
+            Some(&EditorAction::ToggleFooter)
+        );
+    }
+
+    #[test]
+    fn footer_toggle_binding_can_be_overridden() {
+        let overrides = HashMap::from([("toggle_footer".to_string(), "f6".to_string())]);
+        let map = build_shortcut_map(Some(&overrides));
+
+        assert_eq!(
+            map.get(&(KeyCode::F(6), KeyModifiers::NONE)),
+            Some(&EditorAction::ToggleFooter)
+        );
+        assert_eq!(map.get(&(KeyCode::Char('u'), KeyModifiers::CONTROL)), None);
+    }
 }

@@ -91,6 +91,11 @@ pub static COMMANDS: &[CommandSpec] = &[
         action: CommandAction::Dispatch(Action::ToggleWrap),
     },
     CommandSpec {
+        label: "View.ToggleFooter",
+        keywords: &["footer", "shortcuts", "chrome"],
+        action: CommandAction::Dispatch(Action::ToggleFooter),
+    },
+    CommandSpec {
         label: "Config.Open",
         keywords: &["open config", "settings"],
         action: CommandAction::OpenConfig,

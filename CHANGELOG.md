@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.2.3
+
+### Highlights
+
+- Added a mobile footer visibility toggle for low-height embedded terminals.
+- Tightened one-row and compact footer layouts for iPhone-sized `hsh-ios`
+  sessions.
+- Kept search, goto, save, open, quit, and replace prompts usable when footer
+  height is constrained.
+
 ## v0.2.2
 
 ### Highlights

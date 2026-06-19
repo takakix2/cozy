@@ -44,7 +44,7 @@ default_mode = "edit"
 #   enter_search, enter_replace, replace_all
 #   undo, redo, paste, delete_line
 #   page_up, page_down, page_top, page_bottom, home, end
-#   toggle_line_numbers, toggle_wrap, toggle_markdown, reload_config
+#   toggle_line_numbers, toggle_wrap, toggle_footer, toggle_markdown, reload_config
 #   enter_help, enter_goto, enter_glide, cancel
 #
 # [keys]
@@ -52,3 +52,4 @@ default_mode = "edit"
 # delete_line = "ctrl+k"
 # paste       = "ctrl+v"
 # toggle_markdown = "f2"
+# toggle_footer = "ctrl+u"

@@ -92,6 +92,7 @@ impl Keymap {
                 EditorAction::Cancel => return Some(Action::Cancel),
                 EditorAction::ToggleLineNumbers => return Some(Action::ToggleLineNumbers),
                 EditorAction::ToggleWrap => return Some(Action::ToggleWrap),
+                EditorAction::ToggleFooter => return Some(Action::ToggleFooter),
                 EditorAction::DeleteLine => return Some(Action::DeleteLine),
                 EditorAction::Enter => {
                     // Context-dependent Enter handling

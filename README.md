@@ -74,7 +74,7 @@ Markdown preview renders the current document with readable wrapping, code block
 - **Open**: Open-file dialog (`Ctrl+O`).
 - **Browse**: Full-screen file tree (`Ctrl+B`).
 - **Command**: Command palette (`Ctrl+P`).
-- **Markdown**: Markdown reading mode powered by `ratatui-markdown` (`F2`).
+- **Markdown**: Markdown reading mode powered by `ratatui-markdown` (`F2` or `Ctrl+D`).
 - **Help**: Help screen (`Ctrl+H` or `F1`).
 
 ## Key Bindings
@@ -123,7 +123,8 @@ The source of truth for key bindings is `src/shortcuts.rs` (`get_shortcuts()`). 
 - `Ctrl+H` / `F1`: Help
 - `Ctrl+L`: Toggle line numbers
 - `Ctrl+W`: Toggle line wrap
-- `F2`: Toggle Markdown preview
+- `Ctrl+U`: Toggle shortcut footer visibility
+- `F2` / `Ctrl+D`: Toggle Markdown preview
 - `Esc` / `Ctrl+[`: Cancel current operation or leave the current mode
 
 ### Command Palette
@@ -147,6 +148,7 @@ Built-in commands are currently grouped as:
 - `View.Markdown`
 - `View.ToggleLineNumbers`
 - `View.ToggleWrap`
+- `View.ToggleFooter`
 - `Config.Open`
 - `Config.Reload`
 - `App.Quit`
@@ -154,7 +156,7 @@ Built-in commands are currently grouped as:
 
 ## Markdown Preview
 
-Markdown preview is available with `F2`. It is a read-only view for quickly reading README files, plans, notes, and other Markdown documents. cozy now uses `ratatui-markdown` for the rendered preview, so headings, lists, block quotes, inline code, wrapped paragraphs, fenced code blocks, and Mermaid diagram blocks follow the renderer's output instead of the old hand-written formatter.
+Markdown preview is available with `F2` or `Ctrl+D`. It is a read-only view for quickly reading README files, plans, notes, and other Markdown documents. cozy now uses `ratatui-markdown` for the rendered preview, so headings, lists, block quotes, inline code, wrapped paragraphs, fenced code blocks, and Mermaid diagram blocks follow the renderer's output instead of the old hand-written formatter.
 
 - Move: `j`/`k` or `Up`/`Down`
 - Page: `PageUp` / `PageDown`
@@ -220,6 +222,7 @@ enter_browse = "ctrl+b"
 enter_glide = "ctrl+g"
 enter_help = "f1"
 toggle_markdown = "f2"
+toggle_footer = "ctrl+u"
 ```
 
 ## Architecture
