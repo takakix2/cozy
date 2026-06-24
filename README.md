@@ -72,7 +72,7 @@ Markdown preview renders the current document with readable wrapping, code block
 - **Goto**: Jump to a line number (`Ctrl+J`).
 - **Save**: Save dialog (`Ctrl+S`).
 - **Open**: Open-file dialog (`Ctrl+O`).
-- **Browse**: Full-screen file tree (`Ctrl+B`).
+- **Browse**: Full-screen file tree (`Ctrl+B`, or `F3` inside tmux where `Ctrl+B` is the prefix).
 - **Command**: Command palette (`Ctrl+P`).
 - **Markdown**: Markdown reading mode powered by `ratatui-markdown` (`F2` or `Ctrl+D`).
 - **Help**: Help screen (`Ctrl+H` or `F1`).
@@ -86,7 +86,7 @@ The source of truth for key bindings is `src/shortcuts.rs` (`get_shortcuts()`). 
 - `Ctrl+S`: Save
 - `Ctrl+Shift+S`: Save as
 - `Ctrl+O`: Open file
-- `Ctrl+B`: Browse files
+- `Ctrl+B` / `F3`: Browse files (`F3` is a tmux-safe fallback; tmux uses `Ctrl+B` as its prefix)
 - `Ctrl+X`: Exit, prompting to save when modified
 - `Ctrl+Q`: Quit immediately without saving
 

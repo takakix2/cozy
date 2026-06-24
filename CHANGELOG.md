@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.2.5
+
+### Highlights
+
+- Added `F3` as a tmux-safe Browse shortcut. tmux's default prefix is `Ctrl+B`,
+  which it swallows before cozy sees it, so Browse was unreachable inside tmux.
+  `Ctrl+B` still works outside tmux.
+- The in-app Help screen now lists the fallback keys (`Ctrl+B / F3` for Browse,
+  `Ctrl+H / F1` for Help) so they are discoverable without crowding the footer.
+
 ## v0.2.4
 
 ### Highlights

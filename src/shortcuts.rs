@@ -90,6 +90,15 @@ fn file_shortcuts() -> Vec<Shortcut> {
             EditorAction::EnterBrowse,
             "Ctrl+B Browse...",
         ),
+        // F3 is a tmux-safe Browse fallback: tmux's default prefix is Ctrl+B,
+        // which it swallows before cozy ever sees it. Same shape as the F1/Ctrl+H
+        // and F2/Ctrl+D fallbacks for keys terminals or multiplexers intercept.
+        sc(
+            KeyCode::F(3),
+            KeyModifiers::NONE,
+            EditorAction::EnterBrowse,
+            "F3 Browse...",
+        ),
         sc(
             KeyCode::Char('x'),
             KeyModifiers::CONTROL,
@@ -463,6 +472,21 @@ mod tests {
         assert_eq!(
             map.get(&(KeyCode::Char('d'), KeyModifiers::CONTROL)),
             Some(&EditorAction::ToggleMarkdownPreview)
+        );
+    }
+
+    #[test]
+    fn browse_has_ctrl_b_and_f3_fallback() {
+        let map = shortcut_map();
+
+        assert_eq!(
+            map.get(&(KeyCode::Char('b'), KeyModifiers::CONTROL)),
+            Some(&EditorAction::EnterBrowse)
+        );
+        // F3 is reachable inside tmux, where Ctrl+B is the multiplexer prefix.
+        assert_eq!(
+            map.get(&(KeyCode::F(3), KeyModifiers::NONE)),
+            Some(&EditorAction::EnterBrowse)
         );
     }
 
