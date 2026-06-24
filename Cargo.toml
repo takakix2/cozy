@@ -1,6 +1,6 @@
 [package]
 name = "cozy"
-version = "0.2.3"
+version = "0.2.4"
 edition = "2024"
 rust-version = "1.85"
 description = "A Comfort First terminal text editor: type like nano, navigate like vim"

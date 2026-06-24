@@ -1,20 +1,32 @@
 use ratatui::style::{Color, Style};
 use regex::Regex;
+use std::sync::LazyLock;
+
+// Compile each language's regex set exactly once for the process lifetime.
+// Previously `SyntaxHighlighter::new` recompiled every pattern on each call, and
+// the renderer constructs a highlighter per visible line per frame — so editing
+// a highlighted file recompiled hundreds of regexes on every keystroke, which
+// made shortcuts and typing feel sluggish.
+static RUST_PATTERNS: LazyLock<Vec<(Regex, Style)>> = LazyLock::new(rust_patterns);
+static PYTHON_PATTERNS: LazyLock<Vec<(Regex, Style)>> = LazyLock::new(python_patterns);
+static JAVASCRIPT_PATTERNS: LazyLock<Vec<(Regex, Style)>> = LazyLock::new(javascript_patterns);
+static JSON_PATTERNS: LazyLock<Vec<(Regex, Style)>> = LazyLock::new(json_patterns);
+static TOML_PATTERNS: LazyLock<Vec<(Regex, Style)>> = LazyLock::new(toml_patterns);
 
 /// Simple syntax highlighting using regex patterns
 pub struct SyntaxHighlighter {
-    patterns: Vec<(Regex, Style)>,
+    patterns: &'static [(Regex, Style)],
 }
 
 impl SyntaxHighlighter {
     pub fn new(language: Option<&str>) -> Self {
-        let patterns = match language {
-            Some("rust") | Some("rs") => rust_patterns(),
-            Some("python") | Some("py") => python_patterns(),
-            Some("javascript") | Some("js") => javascript_patterns(),
-            Some("json") => json_patterns(),
-            Some("toml") => toml_patterns(),
-            _ => vec![], // No highlighting for unknown languages
+        let patterns: &'static [(Regex, Style)] = match language {
+            Some("rust") | Some("rs") => RUST_PATTERNS.as_slice(),
+            Some("python") | Some("py") => PYTHON_PATTERNS.as_slice(),
+            Some("javascript") | Some("js") => JAVASCRIPT_PATTERNS.as_slice(),
+            Some("json") => JSON_PATTERNS.as_slice(),
+            Some("toml") => TOML_PATTERNS.as_slice(),
+            _ => &[], // No highlighting for unknown languages
         };
 
         Self { patterns }
@@ -31,7 +43,7 @@ impl SyntaxHighlighter {
         let mut matches: Vec<(usize, usize, Style)> = Vec::new();
 
         // Find all matches
-        for (pattern, style) in &self.patterns {
+        for (pattern, style) in self.patterns {
             for mat in pattern.find_iter(line) {
                 matches.push((mat.start(), mat.end(), *style));
             }

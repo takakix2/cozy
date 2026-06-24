@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.2.4
+
+### Highlights
+
+- Fixed sluggish typing and shortcut response when editing highlighted files.
+  Syntax highlighter regex sets are now compiled once per language instead of
+  on every visible line on every frame.
+
 ## v0.2.3
 
 ### Highlights
