@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.2.7
+
+### Highlights
+
+- Added tree-sitter syntax highlighting for TypeScript (`.ts`/`.mts`/`.cts`/
+  `.tsx`) and Go (`.go`). TypeScript inherits the JavaScript highlight query so
+  keywords, strings, and comments are covered alongside the TS-specific nodes.
+
 ## v0.2.6
 
 ### Highlights

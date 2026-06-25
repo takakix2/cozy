@@ -160,6 +160,30 @@ mod tests {
         h.ensure(&buf, 0..buf.len());
         assert_eq!(h.style_at(0, 0), None);
     }
+
+    #[test]
+    fn go_keyword_and_function() {
+        let buf = to_lines("func main() {}");
+        let mut h = Highlighter::new();
+        h.set_file(Some(Path::new("main.go")));
+        h.ensure(&buf, 0..buf.len());
+        assert_eq!(fg_at(&h, 0, 0), Some(Color::Magenta), "func keyword");
+        let f = buf[0].find("main").unwrap();
+        assert_eq!(fg_at(&h, 0, f), Some(Color::LightBlue), "function name");
+    }
+
+    #[test]
+    fn typescript_inherits_javascript_query() {
+        // `const`/`function` come from the JS query; without prepending it TS
+        // would only highlight TS-specific nodes (e.g. `: number`).
+        let buf = to_lines("function add(a: number) { return a; }");
+        let mut h = Highlighter::new();
+        h.set_file(Some(Path::new("x.ts")));
+        h.ensure(&buf, 0..buf.len());
+        assert_eq!(fg_at(&h, 0, 0), Some(Color::Magenta), "function keyword");
+        let add = buf[0].find("add").unwrap();
+        assert_eq!(fg_at(&h, 0, add), Some(Color::LightBlue), "function name");
+    }
 }
 
 #[cfg(feature = "treesitter")]
@@ -203,7 +227,7 @@ mod ts {
                     if self.parser.set_language(&language).is_err() {
                         return;
                     }
-                    match Query::new(&language, query_src) {
+                    match Query::new(&language, &query_src) {
                         Ok(query) => {
                             let styles = capture_styles(&query);
                             Some(LangConfig { query, styles })
@@ -272,30 +296,52 @@ mod ts {
         }
     }
 
-    fn resolve(ext: Option<&str>) -> Option<(Language, &'static str)> {
+    fn resolve(ext: Option<&str>) -> Option<(Language, String)> {
         Some(match ext? {
             "rs" => (
                 tree_sitter_rust::LANGUAGE.into(),
-                tree_sitter_rust::HIGHLIGHTS_QUERY,
+                tree_sitter_rust::HIGHLIGHTS_QUERY.to_string(),
             ),
             "py" | "pyi" => (
                 tree_sitter_python::LANGUAGE.into(),
-                tree_sitter_python::HIGHLIGHTS_QUERY,
+                tree_sitter_python::HIGHLIGHTS_QUERY.to_string(),
             ),
             "js" | "mjs" | "cjs" | "jsx" => (
                 tree_sitter_javascript::LANGUAGE.into(),
-                tree_sitter_javascript::HIGHLIGHT_QUERY,
+                tree_sitter_javascript::HIGHLIGHT_QUERY.to_string(),
+            ),
+            // TypeScript's highlights query only carries TS-specific additions;
+            // it inherits the rest from JavaScript, so prepend the JS query.
+            "ts" | "mts" | "cts" => (
+                tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
+                typescript_query(),
+            ),
+            "tsx" => (
+                tree_sitter_typescript::LANGUAGE_TSX.into(),
+                typescript_query(),
+            ),
+            "go" => (
+                tree_sitter_go::LANGUAGE.into(),
+                tree_sitter_go::HIGHLIGHTS_QUERY.to_string(),
             ),
             "json" => (
                 tree_sitter_json::LANGUAGE.into(),
-                tree_sitter_json::HIGHLIGHTS_QUERY,
+                tree_sitter_json::HIGHLIGHTS_QUERY.to_string(),
             ),
             "toml" => (
                 tree_sitter_toml_ng::LANGUAGE.into(),
-                tree_sitter_toml_ng::HIGHLIGHTS_QUERY,
+                tree_sitter_toml_ng::HIGHLIGHTS_QUERY.to_string(),
             ),
             _ => return None,
         })
+    }
+
+    fn typescript_query() -> String {
+        format!(
+            "{}\n{}",
+            tree_sitter_javascript::HIGHLIGHT_QUERY,
+            tree_sitter_typescript::HIGHLIGHTS_QUERY
+        )
     }
 
     fn capture_styles(query: &Query) -> Vec<Style> {
