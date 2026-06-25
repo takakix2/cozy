@@ -108,6 +108,7 @@ pub enum ReplaceFocus {
 pub struct EditorState {
     pub buffer: TextBuffer,
     pub cursor: Cursor,
+    pub highlighter: crate::utils::highlight::Highlighter, // syntax highlight cache
     pub filename: Option<PathBuf>,         // PathBufに変更
     pub _working_dir: PathBuf,             // 新規: カレントディレクトリ
     pub modified: bool,                    // 新規: 変更フラグ
@@ -274,6 +275,11 @@ impl EditorState {
         Self {
             buffer: TextBuffer::from_lines(lines),
             cursor: Cursor::default(),
+            highlighter: {
+                let mut h = crate::utils::highlight::Highlighter::new();
+                h.set_file(path_buf.as_deref());
+                h
+            },
             filename: path_buf,
             _working_dir: init.working_dir,
             modified: false,
@@ -489,7 +495,11 @@ impl EditorState {
 
     /// ファイルを開く
     pub fn open_file(&mut self, path: &str) -> io::Result<()> {
-        crate::file_io::open_file(self, path)
+        let result = crate::file_io::open_file(self, path);
+        if result.is_ok() {
+            self.highlighter.set_file(self.filename.as_deref());
+        }
+        result
     }
 
     pub fn adjust_scroll(&mut self, viewport_height: usize) {

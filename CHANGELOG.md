@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.2.6
+
+### Highlights
+
+- Replaced the line-by-line regex syntax highlighter with tree-sitter (new
+  default `treesitter` feature). Multi-line strings and block comments are now
+  highlighted correctly, and highlights are computed for the visible window on
+  change instead of per line on every frame.
+- Function names are now highlighted (light blue). Disable the `treesitter`
+  feature to fall back to the regex highlighter for a lighter embedded build.
+
 ## v0.2.5
 
 ### Highlights

@@ -46,6 +46,16 @@ pub fn render_text_buffer(editor: &mut EditorState, f: &mut Frame, area: Rect) {
     editor.text_display_width = text_width;
     editor.adjust_scroll(viewport_height);
 
+    // Refresh syntax highlight spans for the visible window (no-op unless the
+    // buffer is dirty or the window moved). Over-including with soft wrap is
+    // fine — the extra lines just won't be drawn.
+    let line_count = editor.buffer.lines.len();
+    let vis_end = (editor.scroll_offset + viewport_height).min(line_count);
+    let vis_start = editor.scroll_offset.min(vis_end);
+    editor
+        .highlighter
+        .ensure(&editor.buffer.lines, vis_start..vis_end);
+
     let (bg_color, fg_color) = {
         let bg = match editor.config.line_number_bg.as_deref() {
             Some("blue") => Color::Blue,
@@ -271,14 +281,6 @@ fn render_line_range(
         Style::default()
     };
 
-    let language = editor
-        .filename
-        .as_ref()
-        .and_then(|p| p.extension())
-        .and_then(|ext| ext.to_str());
-    let highlighter = crate::utils::syntax::SyntaxHighlighter::new(language);
-    let highlighted = highlighter.highlight(line_text);
-
     let line_matches: Vec<(usize, usize)> = editor
         .search_matches
         .iter()
@@ -291,45 +293,41 @@ fn render_line_range(
         .filter(|&&(my, _, _)| my == y)
         .map(|&(_, s, e)| (s, e));
 
-    let mut byte_pos = 0usize;
     let mut has_content = false;
 
-    for (text, style) in highlighted {
-        for ch in text.chars() {
-            let ch_end = byte_pos + ch.len_utf8();
-            let in_range = if byte_end > byte_start {
-                byte_pos >= byte_start && byte_pos < byte_end
-            } else {
-                true
-            };
+    for (byte_pos, ch) in line_text.char_indices() {
+        let in_range = if byte_end > byte_start {
+            byte_pos >= byte_start && byte_pos < byte_end
+        } else {
+            true
+        };
 
-            if in_range {
-                let mut final_style = style;
-                // Yank flash (green): shown until the next keypress so you can see
-                // what was just copied. A live search match still wins over it.
-                if let Some(hl) = &editor.yank_highlight {
-                    if hl.contains(y, byte_pos) {
-                        final_style = final_style.bg(Color::Green).fg(Color::Black);
-                    }
+        if in_range {
+            // Base style comes from the precomputed highlight cache (tree-sitter
+            // or regex fallback); the search/yank overlays are applied on top.
+            let mut final_style = editor.highlighter.style_at(y, byte_pos).unwrap_or(default_style);
+            // Yank flash (green): shown until the next keypress so you can see
+            // what was just copied. A live search match still wins over it.
+            if let Some(hl) = &editor.yank_highlight {
+                if hl.contains(y, byte_pos) {
+                    final_style = final_style.bg(Color::Green).fg(Color::Black);
                 }
-                if let Some(&(ms, me)) = line_matches
-                    .iter()
-                    .find(|&&(s, e)| byte_pos >= s && byte_pos < e)
-                {
-                    if current_match == Some((ms, me)) {
-                        final_style = final_style
-                            .bg(Color::Yellow)
-                            .fg(Color::Black)
-                            .add_modifier(Modifier::BOLD);
-                    } else {
-                        final_style = final_style.bg(Color::Rgb(100, 80, 0)).fg(Color::White);
-                    }
-                }
-                spans.push(Span::styled(ch.to_string(), final_style));
-                has_content = true;
             }
-
-            byte_pos = ch_end;
+            if let Some(&(ms, me)) = line_matches
+                .iter()
+                .find(|&&(s, e)| byte_pos >= s && byte_pos < e)
+            {
+                if current_match == Some((ms, me)) {
+                    final_style = final_style
+                        .bg(Color::Yellow)
+                        .fg(Color::Black)
+                        .add_modifier(Modifier::BOLD);
+                } else {
+                    final_style = final_style.bg(Color::Rgb(100, 80, 0)).fg(Color::White);
+                }
+            }
+            spans.push(Span::styled(ch.to_string(), final_style));
+            has_content = true;
         }
     }
 
@@ -338,4 +336,39 @@ fn render_line_range(
     }
 
     Line::from(spans)
+}
+
+#[cfg(all(test, feature = "treesitter"))]
+mod render_color_tests {
+    use super::*;
+    use crate::state::buffer::TextBuffer;
+    use crate::state::EditorState;
+    use ratatui::{backend::TestBackend, Terminal};
+
+    #[test]
+    fn function_name_gets_color_through_render() {
+        let mut editor = EditorState::new(Some("probe.rs".to_string()));
+        editor.buffer = TextBuffer::from_lines(vec!["fn foo() {}".to_string()]);
+        editor.highlighter.set_file(Some(std::path::Path::new("probe.rs")));
+        editor.highlighter.mark_dirty();
+        editor.mode = EditorMode::Edit;
+
+        let backend = TestBackend::new(40, 4);
+        let mut term = Terminal::new(backend).unwrap();
+        term.draw(|f| render_text_buffer(&mut editor, f, Rect::new(0, 0, 40, 4)))
+            .unwrap();
+        let buf = term.backend().buffer();
+        let mut fgs = std::collections::HashSet::new();
+        for x in 0..40u16 {
+            if let Some(cell) = buf.cell((x, 0)) {
+                fgs.insert(cell.fg);
+            }
+        }
+        assert!(fgs.contains(&Color::Magenta), "fn keyword should be magenta");
+        assert!(
+            fgs.contains(&Color::LightBlue),
+            "function name should be LightBlue; got {:?}",
+            fgs
+        );
+    }
 }

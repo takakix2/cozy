@@ -35,6 +35,11 @@ pub fn run<B: Backend>(
                         break;
                     }
                     editor.cursor_blink = true;
+                    // MVP: any action may have mutated the buffer; reparse on the
+                    // next render. Buffer mutations are not funneled through one
+                    // method, so a precise dirty signal (revision / InputEdit) is
+                    // a follow-up — see cozy-notes treesitter-integration.md.
+                    editor.highlighter.mark_dirty();
                     needs_redraw = true;
                 }
                 InputEvent::Resize(cols, rows) => {
