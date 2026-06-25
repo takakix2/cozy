@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.2.8
+
+### Highlights
+
+- Reorganized the Help screen: split the cross-mode shortcuts out of "Edit Mode"
+  into new "View" (line numbers, wrap, footer, Markdown preview) and "Global"
+  (command palette, help) sections, and added the previously missing `Ctrl+L`,
+  `Ctrl+W`, `Ctrl+U`, and `Ctrl+P` entries. Fixed column alignment on the
+  multi-key rows.
+
 ## v0.2.7
 
 ### Highlights
