@@ -42,7 +42,7 @@ cozy <フォルダ名>
 - ファイルを開く、保存、名前を付けて保存、未保存終了確認、フォルダブラウズ
 - 通常検索、大文字小文字区別、単語境界、正規表現検索と置換
 - Undo/Redo、行カット、クリップボード貼り付け、行番号、行折り返し、行番号ジャンプ
-- Rust / Python / JavaScript / TypeScript / Go / JSON / TOML の tree-sitter シンタックスハイライト
+- Rust / Python / JavaScript / TypeScript / Go / JSON / TOML / Markdown の tree-sitter シンタックスハイライト
 - Mermaid 図ブロックも表示できる `ratatui-markdown` ベースの Markdown プレビューモード
 - Markdown プレビューでの高速な読書用操作
 - Glide モードによる vim 風の移動、operator、yank、change、delete、join、paste

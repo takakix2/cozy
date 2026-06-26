@@ -304,8 +304,11 @@ fn render_line_range(
 
         if in_range {
             // Base style comes from the precomputed highlight cache (tree-sitter
-            // or regex fallback); the search/yank overlays are applied on top.
-            let mut final_style = editor.highlighter.style_at(y, byte_pos).unwrap_or(default_style);
+            // or regex fallback), patched onto the theme default so modifier-only
+            // highlights (e.g. Markdown bold/italic, which set no fg) keep the
+            // theme's foreground/background; the search/yank overlays go on top.
+            let mut final_style =
+                default_style.patch(editor.highlighter.style_at(y, byte_pos).unwrap_or_default());
             // Yank flash (green): shown until the next keypress so you can see
             // what was just copied. A live search match still wins over it.
             if let Some(hl) = &editor.yank_highlight {

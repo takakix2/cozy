@@ -1,5 +1,21 @@
 # Changelog
 
+## v0.2.9
+
+### Highlights
+
+- Added tree-sitter syntax highlighting for Markdown source (`.md`/`.markdown`)
+  in the edit view, so headings, bold/italic emphasis, inline code, list/quote
+  markers, and link URLs are colored while you type — not only in the
+  `ratatui-markdown` preview. Colors mirror VS Code's Dark+ theme (blue
+  headings/bold, purple italics, orange inline code, light-blue list markers,
+  green quote markers; fenced-code-block contents stay the default color).
+  Markdown uses a two-grammar parser (block + inline) via `tree-sitter-md`; the
+  highlighter backend was generalized to drive it. Bumped the core `tree-sitter`
+  dependency to 0.26 (required by `tree-sitter-md`).
+- Refreshed the edit-mode and glide-mode README screenshots to show the new
+  Markdown source highlighting.
+
 ## v0.2.8
 
 ### Highlights

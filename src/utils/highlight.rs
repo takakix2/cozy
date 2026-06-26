@@ -123,7 +123,7 @@ fn regex_line_spans(hl: &super::syntax::SyntaxHighlighter, line: &str) -> LineSp
 #[cfg(all(test, feature = "treesitter"))]
 mod tests {
     use super::*;
-    use ratatui::style::Color;
+    use ratatui::style::{Color, Modifier};
 
     fn to_lines(s: &str) -> Vec<String> {
         s.lines().map(|l| l.to_string()).collect()
@@ -184,22 +184,115 @@ mod tests {
         let add = buf[0].find("add").unwrap();
         assert_eq!(fg_at(&h, 0, add), Some(Color::LightBlue), "function name");
     }
+
+    #[test]
+    fn markdown_matches_vscode_dark_plus_colors() {
+        // Markdown uses two grammars: the heading comes from the block tree,
+        // while bold/italic/code/link come from an inline tree. Asserting the
+        // inline styles by their document position also proves inline-tree node
+        // coordinates land in the whole-document space (so push_span is reused).
+        // Colors mirror VS Code's Dark+ theme (dark_vs.json).
+        let blue = Color::Rgb(0x56, 0x9C, 0xD6);
+        let purple = Color::Rgb(0xC5, 0x86, 0xC0);
+        let orange = Color::Rgb(0xCE, 0x91, 0x78);
+
+        let buf = to_lines("# Title\n\n**bold** *it* `code` [lbl](http://x)");
+        let mut h = Highlighter::new();
+        h.set_file(Some(Path::new("notes.md")));
+        h.ensure(&buf, 0..buf.len());
+
+        // Heading text (the `(inline)` after "# ") is blue + bold.
+        let title = buf[0].find("Title").unwrap();
+        assert_eq!(fg_at(&h, 0, title), Some(blue), "heading color");
+        assert!(
+            h.style_at(0, title).unwrap().add_modifier.contains(Modifier::BOLD),
+            "heading bold"
+        );
+
+        // **bold** is blue + bold (inner chars; proves inline coordinates).
+        let bold = buf[2].find("bold").unwrap();
+        let strong = h.style_at(2, bold).expect("strong span");
+        assert_eq!(strong.fg, Some(blue), "bold color");
+        assert!(strong.add_modifier.contains(Modifier::BOLD), "bold modifier");
+
+        // *it* is purple + italic.
+        let italic = buf[2].find("it").unwrap();
+        let emphasis = h.style_at(2, italic).expect("emphasis span");
+        assert_eq!(emphasis.fg, Some(purple), "italic color");
+        assert!(
+            emphasis.add_modifier.contains(Modifier::ITALIC),
+            "italic modifier"
+        );
+
+        // Inline `code` is orange.
+        let code = buf[2].find("code").unwrap();
+        assert_eq!(fg_at(&h, 2, code), Some(orange), "inline code color");
+
+        // Link URL keeps the default fg (none) but is underlined, like VS Code.
+        let uri = buf[2].find("http").unwrap();
+        let link = h.style_at(2, uri).expect("link span");
+        assert_eq!(link.fg, None, "link uri keeps default fg");
+        assert!(
+            link.add_modifier.contains(Modifier::UNDERLINED),
+            "link underline"
+        );
+    }
+
+    #[test]
+    fn markdown_list_and_quote_markers() {
+        let blue_list = Color::Rgb(0x67, 0x96, 0xE6);
+        let green_quote = Color::Rgb(0x6A, 0x99, 0x55);
+        let buf = to_lines("- item\n> quote");
+        let mut h = Highlighter::new();
+        h.set_file(Some(Path::new("notes.md")));
+        h.ensure(&buf, 0..buf.len());
+
+        assert_eq!(fg_at(&h, 0, 0), Some(blue_list), "list marker color");
+        assert_eq!(fg_at(&h, 1, 0), Some(green_quote), "quote marker color");
+    }
 }
 
 #[cfg(feature = "treesitter")]
 mod ts {
     use super::LineSpans;
-    use ratatui::style::{Color, Style};
+    use ratatui::style::{Color, Modifier, Style};
     use std::collections::HashMap;
     use std::ops::Range;
-    use tree_sitter::{Language, Parser, Point, Query, QueryCursor, StreamingIterator, Tree};
+    use tree_sitter::{Language, Node, Parser, Point, Query, QueryCursor, StreamingIterator, Tree};
 
     pub struct TsBackend {
+        engine: Engine,
+    }
+
+    /// Most languages parse into a single tree. Markdown is the exception: it
+    /// uses two grammars (block structure + inline content) coordinated by
+    /// `MarkdownParser`, so it gets its own engine variant.
+    enum Engine {
+        None,
+        Single(SingleEngine),
+        // Boxed: `MdEngine` (two grammars + parser) is much larger than the
+        // other variants, and there is only ever one engine per editor.
+        Markdown(Box<MdEngine>),
+    }
+
+    struct SingleEngine {
         parser: Parser,
         tree: Option<Tree>,
-        lang: Option<LangConfig>,
+        lang: LangConfig,
         /// The exact source the current `tree` was parsed from (`lines` joined
         /// with '\n'), reused by `spans_for` so we don't rebuild it twice.
+        source: String,
+    }
+
+    /// Markdown's inline trees are parsed with document-global byte ranges
+    /// (`MarkdownParser` sets included ranges from the block nodes), so their
+    /// node positions share the block tree's coordinate space and `push_span`
+    /// works unchanged for both.
+    struct MdEngine {
+        parser: tree_sitter_md::MarkdownParser,
+        tree: Option<tree_sitter_md::MarkdownTree>,
+        block: LangConfig,
+        inline: LangConfig,
         source: String,
     }
 
@@ -212,40 +305,26 @@ mod ts {
     impl TsBackend {
         pub fn new() -> Self {
             Self {
-                parser: Parser::new(),
-                tree: None,
-                lang: None,
-                source: String::new(),
+                engine: Engine::None,
             }
         }
 
         pub fn set_language(&mut self, ext: Option<&str>) {
-            self.tree = None;
-            self.source.clear();
-            self.lang = match resolve(ext) {
-                Some((language, query_src)) => {
-                    if self.parser.set_language(&language).is_err() {
-                        return;
-                    }
-                    match Query::new(&language, &query_src) {
-                        Ok(query) => {
-                            let styles = capture_styles(&query);
-                            Some(LangConfig { query, styles })
-                        }
-                        Err(_) => None,
-                    }
-                }
-                None => None,
-            };
+            self.engine = build_engine(ext);
         }
 
         pub fn reparse(&mut self, lines: &[String]) {
-            if self.lang.is_none() {
-                self.tree = None;
-                return;
+            match &mut self.engine {
+                Engine::None => {}
+                Engine::Single(s) => {
+                    s.source = lines.join("\n");
+                    s.tree = s.parser.parse(&s.source, None);
+                }
+                Engine::Markdown(m) => {
+                    m.source = lines.join("\n");
+                    m.tree = m.parser.parse(m.source.as_bytes(), None);
+                }
             }
-            self.source = lines.join("\n");
-            self.tree = self.parser.parse(&self.source, None);
         }
 
         pub fn spans_for(
@@ -254,21 +333,122 @@ mod ts {
             visible: &Range<usize>,
             out: &mut HashMap<usize, LineSpans>,
         ) {
-            let (Some(lc), Some(tree)) = (self.lang.as_ref(), self.tree.as_ref()) else {
-                return;
-            };
-            let mut cursor = QueryCursor::new();
-            cursor.set_point_range(Point::new(visible.start, 0)..Point::new(visible.end, 0));
-            let mut captures =
-                cursor.captures(&lc.query, tree.root_node(), self.source.as_bytes());
-            while let Some((m, idx)) = captures.next() {
-                let cap = m.captures[*idx];
-                let style = lc.styles[cap.index as usize];
-                if style == Style::default() {
-                    continue;
+            match &self.engine {
+                Engine::None => {}
+                Engine::Single(s) => {
+                    if let Some(tree) = s.tree.as_ref() {
+                        collect_spans(
+                            &s.lang,
+                            tree.root_node(),
+                            s.source.as_bytes(),
+                            lines,
+                            visible,
+                            out,
+                        );
+                    }
                 }
-                push_span(lines, out, cap.node.start_position(), cap.node.end_position(), style, visible);
+                Engine::Markdown(m) => {
+                    let Some(tree) = m.tree.as_ref() else {
+                        return;
+                    };
+                    let src = m.source.as_bytes();
+                    collect_spans(&m.block, tree.block_tree().root_node(), src, lines, visible, out);
+                    for inline in tree.inline_trees() {
+                        collect_spans(&m.inline, inline.root_node(), src, lines, visible, out);
+                    }
+                }
             }
+        }
+    }
+
+    /// Resolve a file extension to a highlight engine. Markdown is special-cased
+    /// because its two-grammar parser does not fit the single-`Tree` path.
+    fn build_engine(ext: Option<&str>) -> Engine {
+        if matches!(ext, Some("md") | Some("markdown")) {
+            // Custom queries (not the crate's stock highlights) so the capture
+            // set maps cleanly onto VS Code's Dark+ Markdown colors: headings,
+            // bold/italic, inline code, list/quote markers, link URLs — while
+            // leaving fenced-code-block *contents* at the default color, like
+            // VS Code does. Capture names here are private to Markdown, so they
+            // never collide with the code grammars' shared scopes.
+            let block = lang_config(
+                &tree_sitter_md::LANGUAGE.into(),
+                MD_BLOCK_QUERY,
+                md_style_for_capture,
+            );
+            let inline = lang_config(
+                &tree_sitter_md::INLINE_LANGUAGE.into(),
+                MD_INLINE_QUERY,
+                md_style_for_capture,
+            );
+            return match (block, inline) {
+                (Some(block), Some(inline)) => Engine::Markdown(Box::new(MdEngine {
+                    parser: tree_sitter_md::MarkdownParser::default(),
+                    tree: None,
+                    block,
+                    inline,
+                    source: String::new(),
+                })),
+                _ => Engine::None,
+            };
+        }
+
+        let Some((language, query_src)) = resolve(ext) else {
+            return Engine::None;
+        };
+        let mut parser = Parser::new();
+        if parser.set_language(&language).is_err() {
+            return Engine::None;
+        }
+        match lang_config(&language, &query_src, style_for_capture) {
+            Some(lang) => Engine::Single(SingleEngine {
+                parser,
+                tree: None,
+                lang,
+                source: String::new(),
+            }),
+            None => Engine::None,
+        }
+    }
+
+    fn lang_config(
+        language: &Language,
+        query_src: &str,
+        style_fn: fn(&str) -> Style,
+    ) -> Option<LangConfig> {
+        let query = Query::new(language, query_src).ok()?;
+        let styles = query.capture_names().iter().map(|n| style_fn(n)).collect();
+        Some(LangConfig { query, styles })
+    }
+
+    /// Run one highlight query over `root` and push the styled spans into `out`.
+    /// Shared by the single-tree path and by each of Markdown's block/inline
+    /// trees, all of which report positions in the same document coordinates.
+    fn collect_spans(
+        lc: &LangConfig,
+        root: Node,
+        source: &[u8],
+        lines: &[String],
+        visible: &Range<usize>,
+        out: &mut HashMap<usize, LineSpans>,
+    ) {
+        let mut cursor = QueryCursor::new();
+        cursor.set_point_range(Point::new(visible.start, 0)..Point::new(visible.end, 0));
+        let mut captures = cursor.captures(&lc.query, root, source);
+        while let Some((m, idx)) = captures.next() {
+            let cap = m.captures[*idx];
+            let style = lc.styles[cap.index as usize];
+            if style == Style::default() {
+                continue;
+            }
+            push_span(
+                lines,
+                out,
+                cap.node.start_position(),
+                cap.node.end_position(),
+                style,
+                visible,
+            );
         }
     }
 
@@ -344,15 +524,56 @@ mod ts {
         )
     }
 
-    fn capture_styles(query: &Query) -> Vec<Style> {
-        query
-            .capture_names()
-            .iter()
-            .map(|name| style_for_capture(name))
-            .collect()
+    /// Highlight query for Markdown's block grammar. Heading text *and* its `#`
+    /// markers share one capture (VS Code colors both blue); list/quote markers
+    /// get their own. Code blocks are intentionally not captured so their
+    /// contents render at the default color, matching VS Code.
+    const MD_BLOCK_QUERY: &str = r#"
+        (atx_heading (inline) @heading)
+        (setext_heading (paragraph) @heading)
+        [
+          (atx_h1_marker) (atx_h2_marker) (atx_h3_marker)
+          (atx_h4_marker) (atx_h5_marker) (atx_h6_marker)
+          (setext_h1_underline) (setext_h2_underline)
+        ] @heading
+        [
+          (list_marker_plus) (list_marker_minus) (list_marker_star)
+          (list_marker_dot) (list_marker_parenthesis) (thematic_break)
+        ] @list_marker
+        (block_quote_marker) @quote
+    "#;
+
+    /// Highlight query for Markdown's inline grammar. Each capture spans the
+    /// whole construct (delimiters included), matching how VS Code styles e.g.
+    /// the `**` of bold the same as its text.
+    const MD_INLINE_QUERY: &str = r#"
+        (code_span) @code
+        (emphasis) @italic
+        (strong_emphasis) @bold
+        [ (link_destination) (uri_autolink) ] @link
+    "#;
+
+    /// Map a Markdown capture (from `MD_BLOCK_QUERY` / `MD_INLINE_QUERY`) to a
+    /// style matching VS Code's Dark+ Markdown source colors. True-color RGB is
+    /// used so the hues match exactly. `@link` sets only an underline so the
+    /// foreground stays the theme default, like VS Code.
+    fn md_style_for_capture(name: &str) -> Style {
+        match name {
+            "heading" | "bold" => Style::default()
+                .fg(Color::Rgb(0x56, 0x9C, 0xD6))
+                .add_modifier(Modifier::BOLD),
+            "italic" => Style::default()
+                .fg(Color::Rgb(0xC5, 0x86, 0xC0))
+                .add_modifier(Modifier::ITALIC),
+            "code" => Style::default().fg(Color::Rgb(0xCE, 0x91, 0x78)),
+            "list_marker" => Style::default().fg(Color::Rgb(0x67, 0x96, 0xE6)),
+            "quote" => Style::default().fg(Color::Rgb(0x6A, 0x99, 0x55)),
+            "link" => Style::default().add_modifier(Modifier::UNDERLINED),
+            _ => Style::default(),
+        }
     }
 
-    /// Map a tree-sitter capture name to a terminal style. The base segment
+    /// Map a code-grammar capture name to a terminal style. The base segment
     /// (before the first '.') carries the meaning, e.g. `keyword.control`.
     fn style_for_capture(name: &str) -> Style {
         let base = name.split('.').next().unwrap_or(name);

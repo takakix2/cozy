@@ -42,7 +42,7 @@ cozy <folder>
 - File open/save/save-as, unsaved-change prompts, and folder browsing
 - Search and replace with literal, case-sensitive, word-boundary, and regex modes
 - Undo/redo, line cut, clipboard paste, line numbers, line wrap, and goto-line
-- Tree-sitter syntax highlighting for Rust, Python, JavaScript, TypeScript, Go, JSON, and TOML
+- Tree-sitter syntax highlighting for Rust, Python, JavaScript, TypeScript, Go, JSON, TOML, and Markdown
 - Markdown preview powered by `ratatui-markdown`, including Mermaid diagram blocks
 - Fast reading controls in Markdown preview
 - Glide mode for vim-like movement, operators, yanking, changing, deleting, joining, and paste
