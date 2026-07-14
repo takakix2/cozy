@@ -32,11 +32,13 @@ pub fn render_shortcuts(editor: &EditorState, f: &mut Frame, area: Rect) {
         EditorMode::Replace => render_replace_shortcuts(editor, f, area),
         EditorMode::Save => render_save_shortcuts(editor, f, area),
         EditorMode::Open => render_open_shortcuts(editor, f, area),
-        EditorMode::Help => render_help_shortcuts(editor, f, area),
+        EditorMode::Help => render_read_shortcuts(editor, f, area),
         EditorMode::Quit => render_quit_shortcuts(editor, f, area),
         EditorMode::Goto => render_goto_shortcuts(editor, f, area),
         EditorMode::Browse => render_browse_shortcuts(editor, f, area),
-        EditorMode::Markdown => render_markdown_shortcuts(editor, f, area),
+        EditorMode::Markdown => render_read_shortcuts(editor, f, area),
+        EditorMode::DiffReview => render_diff_review_shortcuts(editor, f, area),
+        EditorMode::DiffCommitMsg => render_diff_commit_shortcuts(editor, f, area),
         EditorMode::Command => render_command_shortcuts(editor, f, area),
     }
 }
@@ -49,6 +51,19 @@ fn shortcut_bar_style(editor: &EditorState) -> Style {
 }
 
 pub fn render_status_bar(editor: &EditorState, f: &mut Frame, area: Rect) {
+    // A pending recovery owns the line: it is a question, and the user cannot
+    // edit until they answer it. One line, two keys — vim's swap dialog is a
+    // wall of text, and cozy's whole pitch is that you can type like nano.
+    if let Some(recovery) = &editor.recovery {
+        let offer = format!(
+            " Unsaved changes from {} — [Enter] restore  [Esc] discard",
+            crate::swap::describe_age(recovery.age)
+        );
+        let line = Line::from(vec![Span::raw(compose_status(&offer, "", area.width as usize))]);
+        f.render_widget(Paragraph::new(line).style(status_bar_style(editor)), area);
+        return;
+    }
+
     let status = inline_status(editor);
     let narrow = area.width < 50;
     let wide = area.width >= 80;
@@ -58,7 +73,24 @@ pub fn render_status_bar(editor: &EditorState, f: &mut Frame, area: Rect) {
     // the right zone empty and keep the whole line left-aligned.
     let (left, right) = match editor.mode {
         EditorMode::Welcome => (" cozy".to_string(), String::new()),
-        EditorMode::Help => (format!(" Help{}", status), String::new()),
+        EditorMode::Help => {
+            let mut pend = String::new();
+            pend.push_str(&editor.glide_count);
+            if let Some(p) = editor.glide_prefix {
+                pend.push(p);
+            }
+            let hint = if pend.is_empty() {
+                String::new()
+            } else {
+                format!(" [{}]", pend)
+            };
+            let total = editor.help_rendered_line_count.max(1);
+            let pos = (editor.help_cursor_line + 1).min(total);
+            (
+                format!(" Help{}{}", hint, status),
+                format!("{}/{} ", pos, total),
+            )
+        }
         EditorMode::Edit => {
             let name = editor
                 .filename
@@ -160,6 +192,28 @@ pub fn render_status_bar(editor: &EditorState, f: &mut Frame, area: Rect) {
             (
                 format!(" Markdown{}{}", hint, status),
                 format!("{}/{} ", pos, total.max(1)),
+            )
+        }
+        EditorMode::DiffReview => {
+            let (cur, total, approved) = editor
+                .diff_review
+                .as_ref()
+                .map(|d| (d.current + 1, d.hunks.len(), d.approved_count()))
+                .unwrap_or((0, 0, 0));
+            (
+                format!(" DiffReview {}/{} approved{}", approved, total, status),
+                format!("hunk {}/{} ", cur, total.max(1)),
+            )
+        }
+        EditorMode::DiffCommitMsg => {
+            let approved = editor
+                .diff_review
+                .as_ref()
+                .map(|d| d.approved_count())
+                .unwrap_or(0);
+            (
+                format!(" Commit {} hunk(s){}", approved, status),
+                String::new(),
             )
         }
     };
@@ -616,13 +670,15 @@ fn render_browse_shortcuts(editor: &EditorState, f: &mut Frame, area: Rect) {
     }
 }
 
-fn render_markdown_shortcuts(editor: &EditorState, f: &mut Frame, area: Rect) {
+/// Shortcut footer shared by the read-only scrolling views (Markdown preview and
+/// Help), so both advertise the same navigation keys.
+fn render_read_shortcuts(editor: &EditorState, f: &mut Frame, area: Rect) {
     if area.width < 50 {
         if area.height <= 1 {
             f.render_widget(
                 Paragraph::new(compact_line(
                     editor,
-                    &[("jk", "Move"), ("Pg", "Page"), ("Esc", "Ret")],
+                    &[("jk", "Move"), ("Spc/b", "Page"), ("Esc", "Ret")],
                 )),
                 row(area, 0),
             );
@@ -641,7 +697,7 @@ fn render_markdown_shortcuts(editor: &EditorState, f: &mut Frame, area: Rect) {
             layout[1],
         );
         f.render_widget(
-            Paragraph::new(compact_line(editor, &[("PgUp/PgDn", "Page")])),
+            Paragraph::new(compact_line(editor, &[("Spc/b · PgUp/Dn", "Page")])),
             layout[2],
         );
         f.render_widget(
@@ -667,9 +723,70 @@ fn render_markdown_shortcuts(editor: &EditorState, f: &mut Frame, area: Rect) {
             Paragraph::new(shortcut_line(
                 editor,
                 narrow,
-                &[("PgUp/PgDn", "Page"), ("Esc", "Return")],
+                &[("Spc/f/b · PgUp/PgDn", "Page"), ("Esc", "Return")],
             )),
             layout[1],
+        );
+    }
+}
+
+fn render_diff_commit_shortcuts(editor: &EditorState, f: &mut Frame, area: Rect) {
+    // Append-only commit-message prompt (no left/right cursor, like Goto): show
+    // the message and park the caret at its end; a hint line below.
+    let buf = &editor.commit_msg_buffer;
+    let prefix = "Commit message: ";
+    f.render_widget(Paragraph::new(format!("{prefix}{buf}")), row(area, 0));
+    if area.height > 1 {
+        f.render_widget(
+            Paragraph::new(shortcut_line(
+                editor,
+                area.width < 80,
+                &[("Enter", "Commit"), ("Esc", "Cancel")],
+            )),
+            row(area, 1),
+        );
+    }
+    let col = area.x
+        + UnicodeWidthStr::width(prefix) as u16
+        + UnicodeWidthStr::width(buf.as_str()) as u16;
+    let (cx, cy) = clamp_cursor(f, col, area.y);
+    f.set_cursor_position((cx, cy));
+}
+
+fn render_diff_review_shortcuts(editor: &EditorState, f: &mut Frame, area: Rect) {
+    if area.width < 50 {
+        f.render_widget(
+            Paragraph::new(compact_line(
+                editor,
+                &[
+                    ("jk", "Hunk"),
+                    ("Spc", "Apprv"),
+                    ("a", "All"),
+                    ("s", "Stage"),
+                    ("c", "Commit"),
+                    ("P", "Push"),
+                    ("Esc", "Close"),
+                ],
+            )),
+            row(area, 0),
+        );
+    } else {
+        let narrow = area.width < 80;
+        f.render_widget(
+            Paragraph::new(shortcut_line(
+                editor,
+                narrow,
+                &[
+                    ("jk/↑↓", "Hunk"),
+                    ("Space", "Approve"),
+                    ("a", "Approve all"),
+                    ("s", "Stage"),
+                    ("c", "Commit"),
+                    ("P", "Push"),
+                    ("q/Esc", "Close"),
+                ],
+            )),
+            row(area, 0),
         );
     }
 }
@@ -1046,17 +1163,6 @@ fn render_open_shortcuts(editor: &EditorState, f: &mut Frame, area: Rect) {
     }
 }
 
-fn render_help_shortcuts(editor: &EditorState, f: &mut Frame, area: Rect) {
-    let narrow = area.width < 80;
-    f.render_widget(
-        Paragraph::new(shortcut_line(
-            editor,
-            narrow,
-            &[("↑↓", "Scroll"), ("Esc", "Return")],
-        )),
-        Rect::new(area.x, area.y, area.width, 1.min(area.height)),
-    );
-}
 
 fn render_goto_shortcuts(editor: &EditorState, f: &mut Frame, area: Rect) {
     let total = editor.buffer.lines.len();
@@ -1324,7 +1430,7 @@ mod tests {
         );
         assert_eq!(
             render_footer_lines(&markdown, 26, 1),
-            vec!["jk Move Pg Page Esc Ret".to_string()]
+            vec!["jk Move Spc/b Page Esc Ret".to_string()]
         );
     }
 

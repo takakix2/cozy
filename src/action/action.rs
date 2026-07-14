@@ -49,6 +49,13 @@ pub enum Action {
     PasteFromClipboard,
     ToggleWrap,
     ToggleMarkdownPreview,
+    ToggleDiffReview,   // F4 / Review.SessionDiff: enter or leave session diff review
+    DiffToggleApprove,  // Space: approve/un-approve the current hunk
+    DiffApproveAll,     // a: approve all hunks (or un-approve all when already full)
+    DiffStageApproved,  // s: stage the approved hunks into git's index (git add)
+    DiffCommitApproved, // c/Enter: open the commit-message prompt for approved hunks
+    DiffCommitConfirm,  // Enter in DiffCommitMsg: stage approved + git commit
+    DiffPush,           // P: push the current branch (explicit; never auto after commit)
     ToggleFooter,
 
     // Command palette

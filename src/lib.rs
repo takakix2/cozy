@@ -12,6 +12,7 @@ mod reducer;
 mod runtime_env;
 mod shortcuts;
 mod state;
+mod swap;
 mod ui;
 mod utils;
 

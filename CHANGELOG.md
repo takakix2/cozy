@@ -1,5 +1,46 @@
 # Changelog
 
+## v0.2.11
+
+### Highlights
+
+- **Unsaved work survives a kill.** cozy now keeps a swap file — a snapshot of the
+  buffer, written about a second after you stop typing (and every 200 keystrokes if
+  you never stop). Open the file again after a crash, a `kill -9`, or an iOS app
+  eviction, and cozy offers the edits back on one line: `[Enter]` restores,
+  `[Esc]` discards. Restoring loads the buffer and leaves it unsaved — the file on
+  disk is not touched until you say so.
+
+  The swap is not a `.swp` beside your file: it lives in a state directory
+  (`~/.local/state/cozy/swap`, or the host's config dir when embedded), so it
+  cannot dirty a git worktree and works when the file's directory is read-only.
+  It is removed on save and on a deliberate quit — it exists for the exits you
+  did not choose — and an unclaimed one is swept after 14 days.
+
+  This is vim's model, not nano's, and deliberately so: nano writes its emergency
+  copy when a signal arrives, but iOS kills a backgrounded app with SIGKILL, where
+  no handler runs at all. The only writes that survive are the ones already made.
+
+### Fixes
+
+- Saving through a symlink whose target does not exist yet (a dotfiles repo not
+  cloned on this machine, a target deleted a moment ago) replaced the link with a
+  regular file. The link is now followed to where it points, and the file is
+  written there.
+
+## v0.2.10
+
+### Highlights
+
+- Added a compact / low-spec host mode via the `COZY_COMPACT` environment
+  variable (set it to anything but empty or `0`). When on, cozy uses the
+  lightweight bordered welcome (a centered, width-capped box — no longer
+  stretched edge-to-edge on a wide screen) instead of the block-art logo, and hides line
+  numbers by default — both cut the number of cells redrawn each frame, which
+  matters on full-repaint GPUs (e.g. an Android tablet's Mali-G52 driven by
+  hsh-ios). The host sets it; cozy can't detect the GPU itself. A runtime
+  `Ctrl+L` toggle still turns line numbers on even under compact.
+
 ## v0.2.9
 
 ### Highlights

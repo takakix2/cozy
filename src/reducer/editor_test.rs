@@ -130,6 +130,120 @@ fn test_markdown_preview_page_keys_use_visible_height() {
 }
 
 #[test]
+fn test_help_scrolls_with_read_view_keys() {
+    // Help shares Markdown's read-view navigation: j/k move a highlighted line
+    // (not the edit cursor), PageDown pages by the visible height, gg/G jump.
+    use crate::state::key::{KeyCode, KeyModifiers};
+    use crate::ui::Keymap;
+
+    let mut editor = EditorState::new(None);
+    editor.enter_mode(EditorMode::Help);
+    editor.page_size = 20;
+    editor.help_view_height = 7;
+    editor.help_rendered_line_count = 50;
+
+    let down = Keymap::map_key_to_action(&editor, KeyCode::Char('j'), KeyModifiers::NONE).unwrap();
+    reduce(&mut editor, down);
+    assert_eq!(editor.help_cursor_line, 1);
+    assert_eq!((editor.cursor.y, editor.cursor.x), (0, 0));
+
+    // Pages by the visible height (7), not page_size (20).
+    let page_down =
+        Keymap::map_key_to_action(&editor, KeyCode::PageDown, KeyModifiers::NONE).unwrap();
+    reduce(&mut editor, page_down);
+    assert_eq!(editor.help_cursor_line, 8);
+
+    let bottom =
+        Keymap::map_key_to_action(&editor, KeyCode::Char('G'), KeyModifiers::NONE).unwrap();
+    reduce(&mut editor, bottom);
+    assert_eq!(editor.help_cursor_line, 49);
+
+    // gg back to the top.
+    let g1 = Keymap::map_key_to_action(&editor, KeyCode::Char('g'), KeyModifiers::NONE).unwrap();
+    reduce(&mut editor, g1);
+    let g2 = Keymap::map_key_to_action(&editor, KeyCode::Char('g'), KeyModifiers::NONE).unwrap();
+    reduce(&mut editor, g2);
+    assert_eq!(editor.help_cursor_line, 0);
+}
+
+#[test]
+fn test_help_space_b_f_page() {
+    // Soft keyboards have no PgUp/PgDn, so Space/f page forward and b pages back
+    // (the less/man idiom) — reachable on any keyboard. Shared with Markdown.
+    use crate::state::key::{KeyCode, KeyModifiers};
+    use crate::ui::Keymap;
+
+    let mut editor = EditorState::new(None);
+    editor.enter_mode(EditorMode::Help);
+    editor.help_view_height = 7;
+    editor.help_rendered_line_count = 50;
+
+    let space = Keymap::map_key_to_action(&editor, KeyCode::Char(' '), KeyModifiers::NONE).unwrap();
+    reduce(&mut editor, space);
+    assert_eq!(editor.help_cursor_line, 7);
+
+    let f = Keymap::map_key_to_action(&editor, KeyCode::Char('f'), KeyModifiers::NONE).unwrap();
+    reduce(&mut editor, f);
+    assert_eq!(editor.help_cursor_line, 14);
+
+    let b = Keymap::map_key_to_action(&editor, KeyCode::Char('b'), KeyModifiers::NONE).unwrap();
+    reduce(&mut editor, b);
+    assert_eq!(editor.help_cursor_line, 7);
+}
+
+#[test]
+fn test_help_renders_without_panic_at_various_sizes() {
+    // Exercises the shared read-view render path for Help: pre-wrap, scroll-follow,
+    // per-row highlight, and the Markdown-shared footer at odd/tiny sizes.
+    use ratatui::{Terminal, backend::TestBackend};
+
+    let mut editor = EditorState::new(None);
+    editor.enter_mode(EditorMode::Help);
+    editor.help_cursor_line = 30; // clamped to content; forces scroll-follow + highlight
+
+    for (w, h) in [(80u16, 24u16), (40, 20), (60, 3), (30, 2), (100, 40), (50, 1)] {
+        let backend = TestBackend::new(w, h);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|f| {
+                let chunks = Renderer::editor_layout(f.area(), &editor);
+                Renderer::render_body(&mut editor, f, chunks[0]);
+                Renderer::render_shortcuts(&editor, f, chunks[1]);
+                Renderer::render_status_bar(&editor, f, chunks[2]);
+            })
+            .unwrap();
+    }
+}
+
+#[test]
+fn test_help_screen_motions_move_highlight() {
+    // H/M/L position the highlight within the visible page, mirroring Markdown.
+    use crate::state::key::{KeyCode, KeyModifiers};
+    use crate::ui::Keymap;
+
+    let mut editor = EditorState::new(None);
+    editor.enter_mode(EditorMode::Help);
+    editor.page_size = 10;
+    editor.help_view_height = 7;
+    editor.help_scroll_offset = 20;
+    editor.help_rendered_line_count = 50;
+
+    let middle =
+        Keymap::map_key_to_action(&editor, KeyCode::Char('M'), KeyModifiers::NONE).unwrap();
+    reduce(&mut editor, middle);
+    assert_eq!(editor.help_cursor_line, 23);
+
+    let bottom =
+        Keymap::map_key_to_action(&editor, KeyCode::Char('L'), KeyModifiers::NONE).unwrap();
+    reduce(&mut editor, bottom);
+    assert_eq!(editor.help_cursor_line, 26);
+
+    let top = Keymap::map_key_to_action(&editor, KeyCode::Char('H'), KeyModifiers::NONE).unwrap();
+    reduce(&mut editor, top);
+    assert_eq!(editor.help_cursor_line, 20);
+}
+
+#[test]
 fn test_markdown_preview_counted_line_jumps() {
     use crate::state::key::{KeyCode, KeyModifiers};
     use crate::ui::Keymap;
@@ -418,6 +532,7 @@ fn test_command_palette_empty_query_groups_commands_by_namespace() {
             "Browse.Files",
             "Navigate.GotoLine",
             "View.Markdown",
+            "Review.SessionDiff",
             "View.ToggleLineNumbers",
             "View.ToggleWrap",
             "View.ToggleFooter",

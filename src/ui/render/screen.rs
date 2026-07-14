@@ -3,15 +3,19 @@ use ratatui::{
     layout::{Alignment, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Paragraph, Wrap},
+    widgets::{Block, Paragraph},
 };
+use unicode_width::UnicodeWidthStr;
 
 use crate::state::EditorState;
 
 // ── Welcome ───────────────────────────────────────────────────────────────────
 
 pub fn render_welcome(f: &mut Frame, area: Rect) {
-    if area.width < 50 {
+    // Compact/low-spec hosts (e.g. an Android tablet, even in wide landscape) get
+    // the lightweight box instead of the heavy block-art logo — the wide art is
+    // expensive to rasterize every frame on a full-repaint GPU.
+    if area.width < 50 || crate::runtime_env::compact() {
         render_welcome_narrow(f, area);
     } else {
         render_welcome_wide(f, area);
@@ -19,9 +23,11 @@ pub fn render_welcome(f: &mut Frame, area: Rect) {
 }
 
 fn render_welcome_narrow(f: &mut Frame, area: Rect) {
-    use unicode_width::UnicodeWidthStr;
-
-    let w = area.width as usize;
+    // Cap the box width so it doesn't stretch edge-to-edge on wide screens — a
+    // compact/low-spec tablet routes here even in landscape, where a full-width
+    // box looks stretched. On a real narrow phone (width <= cap) this is a no-op.
+    const MAX_BOX_WIDTH: usize = 40;
+    let w = (area.width as usize).min(MAX_BOX_WIDTH);
     let iw = w.saturating_sub(2); // inner width (border uses 1 char each side)
 
     let border_h = Style::default().fg(Color::DarkGray);
@@ -96,7 +102,10 @@ fn render_welcome_narrow(f: &mut Frame, area: Rect) {
     // 垂直センタリング
     let h = lines.len() as u16;
     let y = area.y + area.height.saturating_sub(h) / 2;
-    let rect = Rect::new(area.x, y, area.width, h.min(area.height)).intersection(area);
+    // Center the (capped-width) box horizontally.
+    let bw = w as u16;
+    let x = area.x + area.width.saturating_sub(bw) / 2;
+    let rect = Rect::new(x, y, bw, h.min(area.height)).intersection(area);
     f.render_widget(Paragraph::new(lines).alignment(Alignment::Left), rect);
 }
 
@@ -148,7 +157,7 @@ fn render_welcome_wide(f: &mut Frame, area: Rect) {
 
 // ── Help ──────────────────────────────────────────────────────────────────────
 
-pub fn render_help(editor: &EditorState, f: &mut Frame, area: Rect) {
+pub fn render_help(editor: &mut EditorState, f: &mut Frame, area: Rect) {
     if area.width < 50 {
         render_help_narrow(editor, f, area);
     } else {
@@ -156,7 +165,7 @@ pub fn render_help(editor: &EditorState, f: &mut Frame, area: Rect) {
     }
 }
 
-fn render_help_narrow(editor: &EditorState, f: &mut Frame, area: Rect) {
+fn render_help_narrow(editor: &mut EditorState, f: &mut Frame, area: Rect) {
     let w = area.width as usize;
     let col = w / 2;
     let hdr = Style::default()
@@ -166,7 +175,7 @@ fn render_help_narrow(editor: &EditorState, f: &mut Frame, area: Rect) {
 
     let lines: Vec<Line> = vec![
         Line::from(Span::styled(
-            "cozy Help  (↑↓ scroll)",
+            "cozy Help",
             Style::default()
                 .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
@@ -215,14 +224,10 @@ fn render_help_narrow(editor: &EditorState, f: &mut Frame, area: Rect) {
         Line::from(Span::styled("Esc → back to Edit", dim)),
     ];
 
-    let para = Paragraph::new(lines)
-        .alignment(Alignment::Left)
-        .scroll((editor.help_scroll_offset, 0));
-
-    f.render_widget(para, area);
+    render_help_body(editor, f, area, lines);
 }
 
-fn render_help_wide(editor: &EditorState, f: &mut Frame, area: Rect) {
+fn render_help_wide(editor: &mut EditorState, f: &mut Frame, area: Rect) {
     let cyan = Style::default()
         .fg(Color::Cyan)
         .add_modifier(Modifier::BOLD);
@@ -295,12 +300,83 @@ fn render_help_wide(editor: &EditorState, f: &mut Frame, area: Rect) {
         Line::from(""),
     ];
 
-    let para = Paragraph::new(lines)
-        .alignment(Alignment::Left)
-        .wrap(Wrap { trim: false })
-        .scroll((editor.help_scroll_offset, 0));
+    render_help_body(editor, f, area, lines);
+}
 
-    f.render_widget(para, area);
+/// Render a Help page the same way the Markdown preview renders: pre-wrap to the
+/// width, keep the cursor line on screen, and paint row-by-row with the current
+/// line highlighted. Sharing this model means Help scrolls a page/line at a time
+/// (one repaint per motion) instead of repainting every row on each key.
+fn render_help_body(editor: &mut EditorState, f: &mut Frame, area: Rect, lines: Vec<Line<'static>>) {
+    let lines = wrap_help_lines(lines, area.width as usize);
+    editor.help_view_height = area.height as usize;
+    editor.help_rendered_line_count = lines.len().max(1);
+
+    let height = (area.height as usize).max(1);
+    let max_line = lines.len().saturating_sub(1);
+    let max_scroll = lines.len().saturating_sub(area.height as usize);
+    editor.help_cursor_line = editor.help_cursor_line.min(max_line);
+
+    let cursor = editor.help_cursor_line;
+    let top = editor.help_scroll_offset;
+    if cursor < top {
+        editor.help_scroll_offset = cursor;
+    } else if cursor >= top.saturating_add(height) {
+        editor.help_scroll_offset = cursor.saturating_sub(height - 1);
+    }
+    editor.help_scroll_offset = editor.help_scroll_offset.min(max_scroll);
+
+    for row in 0..area.height {
+        let idx = editor.help_scroll_offset + row as usize;
+        let mut line = lines.get(idx).cloned().unwrap_or_else(|| Line::from(""));
+        let row_area = Rect {
+            x: area.x,
+            y: area.y + row,
+            width: area.width,
+            height: 1,
+        };
+        if idx == editor.help_cursor_line && idx <= max_line {
+            f.render_widget(
+                Block::default().style(Style::default().bg(Color::DarkGray)),
+                row_area,
+            );
+            line = line.style(Style::default().bg(Color::DarkGray));
+        }
+        f.render_widget(Paragraph::new(line).alignment(Alignment::Left), row_area);
+    }
+}
+
+/// Wrap any help line that overflows the width. Overflowing lines are the wide
+/// layout's single-styled body text, so word-wrap on the plain text and reuse
+/// the line's style for each continuation row; short/multi-span lines pass through.
+fn wrap_help_lines(lines: Vec<Line<'static>>, width: usize) -> Vec<Line<'static>> {
+    if width == 0 {
+        return lines;
+    }
+    let mut out: Vec<Line<'static>> = Vec::with_capacity(lines.len());
+    for line in lines {
+        let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+        if UnicodeWidthStr::width(text.as_str()) <= width {
+            out.push(line);
+            continue;
+        }
+        let style = line.spans.first().map(|s| s.style).unwrap_or_default();
+        let mut cur = String::new();
+        let mut cur_w = 0usize;
+        for word in text.split_inclusive(' ') {
+            let ww = UnicodeWidthStr::width(word);
+            if cur_w + ww > width && !cur.is_empty() {
+                out.push(Line::from(Span::styled(std::mem::take(&mut cur), style)));
+                cur_w = 0;
+            }
+            cur.push_str(word);
+            cur_w += ww;
+        }
+        if !cur.is_empty() {
+            out.push(Line::from(Span::styled(cur, style)));
+        }
+    }
+    out
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

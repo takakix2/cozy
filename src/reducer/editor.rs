@@ -54,6 +54,20 @@ fn apply_glide_move(editor: &mut EditorState, motion: crate::glide::Motion) -> E
 /// Save using the same name-resolution rule as the Save dialog:
 /// a non-empty name that differs from the current file → Save As; otherwise
 /// save to the current file (or Save As when there is no current file yet).
+/// Re-read `git diff` and refresh the review hunks in place, clamping the
+/// cursor. Staged/committed hunks drop out of the working-tree diff, so this
+/// shrinks the list after a stage. Keeps DiffReview mode (empty list renders a
+/// "no changes" surface) rather than bouncing the user out.
+fn reload_diff_review(editor: &mut EditorState, dir: &std::path::Path) {
+    if let Ok(hunks) = crate::state::diff::load_git_diff(dir) {
+        if let Some(dr) = editor.diff_review.as_mut() {
+            dr.current = dr.current.min(hunks.len().saturating_sub(1));
+            dr.hunks = hunks;
+            dr.scroll = 0;
+        }
+    }
+}
+
 fn save_dispatch(editor: &mut EditorState, fname: &str) -> std::io::Result<()> {
     if !fname.is_empty()
         && editor
@@ -76,9 +90,7 @@ pub fn apply_editor_event(editor: &mut EditorState, action: &Action) -> EventRes
         // Navigation
         // Navigation
         Action::MoveUp => {
-            if editor.mode == EditorMode::Help {
-                editor.help_scroll_offset = editor.help_scroll_offset.saturating_sub(1);
-            } else if editor.mode == EditorMode::Glide {
+            if editor.mode == EditorMode::Glide {
                 editor.pending_operator = None; // arrow = plain move, cancels a pending operator
                 let n = take_count(editor);
                 let tw = editor.text_display_width;
@@ -101,9 +113,7 @@ pub fn apply_editor_event(editor: &mut EditorState, action: &Action) -> EventRes
             EventResult::Continue
         }
         Action::MoveDown => {
-            if editor.mode == EditorMode::Help {
-                editor.help_scroll_offset = editor.help_scroll_offset.saturating_add(1);
-            } else if editor.mode == EditorMode::Glide {
+            if editor.mode == EditorMode::Glide {
                 editor.pending_operator = None;
                 let n = take_count(editor);
                 let tw = editor.text_display_width;
@@ -342,9 +352,7 @@ pub fn apply_editor_event(editor: &mut EditorState, action: &Action) -> EventRes
             EventResult::Continue
         }
         Action::ToggleLineNumbers => {
-            let current = editor
-                .show_line_numbers_runtime
-                .unwrap_or(editor.config.show_line_numbers.unwrap_or(true));
+            let current = editor.line_numbers_visible();
             editor.show_line_numbers_runtime = Some(!current);
             let status = if !current { "on" } else { "off" };
             crate::reducer::status::set_info(editor, &format!("Line numbers: {}", status));
@@ -371,6 +379,155 @@ pub fn apply_editor_event(editor: &mut EditorState, action: &Action) -> EventRes
                 editor.enter_mode(editor.home_mode());
             } else {
                 editor.enter_mode(EditorMode::Markdown);
+            }
+            EventResult::Continue
+        }
+        Action::ToggleDiffReview => {
+            if editor.mode == EditorMode::DiffReview {
+                editor.diff_review = None;
+                editor.enter_mode(editor.home_mode());
+            } else {
+                let dir = editor._working_dir.clone();
+                match crate::state::diff::load_git_diff(&dir) {
+                    Ok(hunks) if !hunks.is_empty() => {
+                        editor.diff_review = Some(crate::state::DiffReviewState {
+                            hunks,
+                            current: 0,
+                            scroll: 0,
+                        });
+                        editor.enter_mode(EditorMode::DiffReview);
+                    }
+                    Ok(_) => crate::reducer::status::set_info(
+                        editor,
+                        "No changes to review (git diff is empty)",
+                    ),
+                    Err(e) => crate::reducer::status::set_error(
+                        editor,
+                        &format!("git diff failed: {e}"),
+                    ),
+                }
+            }
+            EventResult::Continue
+        }
+        Action::DiffToggleApprove => {
+            let summary = editor.diff_review.as_mut().map(|dr| {
+                if let Some(h) = dr.hunks.get_mut(dr.current) {
+                    h.approved = !h.approved;
+                }
+                (dr.approved_count(), dr.hunks.len())
+            });
+            if let Some((approved, total)) = summary {
+                crate::reducer::status::set_info(
+                    editor,
+                    &format!("Approved {approved}/{total} hunks"),
+                );
+            }
+            EventResult::Continue
+        }
+        Action::DiffApproveAll => {
+            // Toggle: approve everything, or clear when already all-approved.
+            let summary = editor.diff_review.as_mut().map(|dr| {
+                let all = !dr.hunks.is_empty() && dr.hunks.iter().all(|h| h.approved);
+                for h in &mut dr.hunks {
+                    h.approved = !all;
+                }
+                (dr.approved_count(), dr.hunks.len())
+            });
+            if let Some((approved, total)) = summary {
+                crate::reducer::status::set_info(
+                    editor,
+                    &format!("Approved {approved}/{total} hunks"),
+                );
+            }
+            EventResult::Continue
+        }
+        Action::DiffStageApproved => {
+            let dir = editor._working_dir.clone();
+            let hunks = editor.diff_review.as_ref().map(|dr| dr.hunks.clone());
+            if let Some(hunks) = hunks {
+                match crate::state::diff::stage_approved(&dir, &hunks) {
+                    Ok(0) => crate::reducer::status::set_info(
+                        editor,
+                        "No approved hunks to stage (Space to approve, a for all)",
+                    ),
+                    Ok(n) => {
+                        // Staged hunks leave the working-tree `git diff`, so reload
+                        // to drop them from the review; the list shrinks naturally.
+                        reload_diff_review(editor, &dir);
+                        crate::reducer::status::set_info(
+                            editor,
+                            &format!("Staged {n} hunk(s) — commit them with git"),
+                        );
+                    }
+                    Err(e) => crate::reducer::status::set_error(
+                        editor,
+                        &format!("git apply failed: {e}"),
+                    ),
+                }
+            }
+            EventResult::Continue
+        }
+        Action::DiffCommitApproved => {
+            // Standalone "review → commit" terminus: needs approved hunks to
+            // commit. (Use `s` instead to stage for an external/git commit.)
+            let approved = editor
+                .diff_review
+                .as_ref()
+                .map(|dr| dr.approved_count())
+                .unwrap_or(0);
+            if approved == 0 {
+                crate::reducer::status::set_info(
+                    editor,
+                    "Nothing approved to commit (Space/a to approve)",
+                );
+            } else {
+                editor.enter_mode(EditorMode::DiffCommitMsg);
+            }
+            EventResult::Continue
+        }
+        Action::DiffCommitConfirm => {
+            let dir = editor._working_dir.clone();
+            let msg = editor.commit_msg_buffer.trim().to_string();
+            if msg.is_empty() {
+                crate::reducer::status::set_error(editor, "Commit message required");
+                return EventResult::Continue; // stay in DiffCommitMsg
+            }
+            let hunks = editor.diff_review.as_ref().map(|dr| dr.hunks.clone());
+            // Stage the approved hunks, then commit the index.
+            let staged = hunks
+                .as_ref()
+                .map(|h| crate::state::diff::stage_approved(&dir, h))
+                .unwrap_or(Ok(0));
+            match staged {
+                Ok(_) => match crate::state::diff::commit_index(&dir, &msg) {
+                    Ok(sha) => {
+                        reload_diff_review(editor, &dir);
+                        editor.enter_mode(EditorMode::DiffReview);
+                        crate::reducer::status::set_info(
+                            editor,
+                            &format!("Committed {sha} — P to push, or push with git"),
+                        );
+                    }
+                    Err(e) => {
+                        editor.enter_mode(EditorMode::DiffReview);
+                        crate::reducer::status::set_error(
+                            editor,
+                            &format!("commit failed (changes are staged): {e}"),
+                        );
+                    }
+                },
+                Err(e) => {
+                    editor.enter_mode(EditorMode::DiffReview);
+                    crate::reducer::status::set_error(editor, &format!("git apply failed: {e}"));
+                }
+            }
+            EventResult::Continue
+        }
+        Action::DiffPush => {
+            let dir = editor._working_dir.clone();
+            match crate::state::diff::push_current(&dir) {
+                Ok(summary) => crate::reducer::status::set_info(editor, &format!("Pushed: {summary}")),
+                Err(e) => crate::reducer::status::set_error(editor, &format!("push failed: {e}")),
             }
             EventResult::Continue
         }

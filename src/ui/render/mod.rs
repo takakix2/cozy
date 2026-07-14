@@ -1,5 +1,6 @@
 pub mod body;
 pub mod browse;
+pub mod diff;
 pub mod footer;
 pub mod markdown;
 pub mod screen;
@@ -22,12 +23,11 @@ impl Renderer {
     pub fn editor_layout(area: Rect, editor: &EditorState) -> Rc<[Rect]> {
         let is_narrow = area.width < 50;
         let is_low_height = area.height < 18;
-        let status_bar_h: u16 =
-            if matches!(editor.mode, EditorMode::Welcome | EditorMode::Help) || area.height < 2 {
-                0
-            } else {
-                1
-            };
+        let status_bar_h: u16 = if matches!(editor.mode, EditorMode::Welcome) || area.height < 2 {
+            0
+        } else {
+            1
+        };
         let requested_shortcut_h = if !editor.footer_visible_runtime {
             hidden_shortcut_rows(editor.mode)
         } else if is_low_height {
@@ -68,6 +68,11 @@ impl Renderer {
             markdown::render_markdown(editor, f, area);
             return;
         }
+        if editor.mode == EditorMode::DiffReview || editor.mode == EditorMode::DiffCommitMsg {
+            // Keep the diff visible while the commit message is typed.
+            diff::render_diff_review(editor, f, area);
+            return;
+        }
         render_text_buffer(editor, f, area);
     }
 
@@ -83,7 +88,6 @@ impl Renderer {
 fn normal_shortcut_rows(is_narrow: bool, mode: EditorMode) -> u16 {
     match (is_narrow, mode) {
         (_, EditorMode::Welcome) => 0,
-        (_, EditorMode::Help) => 1,
         (_, EditorMode::Command) => 10,
         (true, _) => 4,
         (false, _) => 2,
@@ -93,7 +97,6 @@ fn normal_shortcut_rows(is_narrow: bool, mode: EditorMode) -> u16 {
 fn compact_shortcut_rows(is_narrow: bool, mode: EditorMode) -> u16 {
     match mode {
         EditorMode::Welcome => 0,
-        EditorMode::Help => 1,
         EditorMode::Command => {
             if is_narrow {
                 3
@@ -101,19 +104,29 @@ fn compact_shortcut_rows(is_narrow: bool, mode: EditorMode) -> u16 {
                 4
             }
         }
-        EditorMode::Save | EditorMode::Open => 2,
+        EditorMode::Save | EditorMode::Open | EditorMode::DiffCommitMsg => 2,
         EditorMode::Quit | EditorMode::Replace => 3,
         EditorMode::Search | EditorMode::Goto => 2,
-        EditorMode::Edit | EditorMode::Glide | EditorMode::Browse | EditorMode::Markdown => 1,
+        EditorMode::Edit
+        | EditorMode::Glide
+        | EditorMode::Browse
+        | EditorMode::Markdown
+        | EditorMode::DiffReview
+        | EditorMode::Help => 1,
     }
 }
 
 fn hidden_shortcut_rows(mode: EditorMode) -> u16 {
     match mode {
-        EditorMode::Welcome | EditorMode::Help => 0,
+        EditorMode::Welcome => 0,
         EditorMode::Save | EditorMode::Open | EditorMode::Replace | EditorMode::Command => 2,
-        EditorMode::Quit => 2,
+        EditorMode::Quit | EditorMode::DiffCommitMsg => 2,
         EditorMode::Search | EditorMode::Goto => 1,
-        EditorMode::Edit | EditorMode::Glide | EditorMode::Browse | EditorMode::Markdown => 0,
+        EditorMode::Edit
+        | EditorMode::Glide
+        | EditorMode::Browse
+        | EditorMode::Markdown
+        | EditorMode::DiffReview
+        | EditorMode::Help => 0,
     }
 }

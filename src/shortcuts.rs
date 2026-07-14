@@ -37,6 +37,7 @@ pub enum EditorAction {
     EnterGoto,
     EnterGlide,
     ToggleMarkdownPreview,
+    ToggleDiffReview,
     EnterCommand,
 }
 
@@ -263,6 +264,12 @@ fn utility_shortcuts() -> Vec<Shortcut> {
             EditorAction::ToggleMarkdownPreview,
             "Ctrl+D Markdown",
         ),
+        sc(
+            KeyCode::F(4),
+            KeyModifiers::NONE,
+            EditorAction::ToggleDiffReview,
+            "F4 Diff",
+        ),
     ]
 }
 
@@ -429,6 +436,7 @@ pub fn action_from_name(name: &str) -> Option<EditorAction> {
         "enter_goto" => Some(EditorAction::EnterGoto),
         "enter_glide" => Some(EditorAction::EnterGlide),
         "toggle_markdown" => Some(EditorAction::ToggleMarkdownPreview),
+        "toggle_diff_review" => Some(EditorAction::ToggleDiffReview),
         "enter_command" => Some(EditorAction::EnterCommand),
         "paste" => Some(EditorAction::Paste),
         _ => None,

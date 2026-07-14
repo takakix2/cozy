@@ -1,6 +1,6 @@
 [package]
 name = "cozy"
-version = "0.2.9"
+version = "0.2.11"
 edition = "2024"
 rust-version = "1.85"
 description = "A Comfort First terminal text editor: type like nano, navigate like vim"
@@ -42,6 +42,7 @@ tree-sitter-toml-ng = { version = "0.7", optional = true }
 tree-sitter-typescript = { version = "0.23", optional = true }
 tree-sitter-go = { version = "0.23", optional = true }
 tree-sitter-md = { version = "0.5", features = ["parser"], optional = true }
+atomicwrites = "0.4.4"
 
 [features]
 default = ["clipboard", "crossterm-events", "treesitter"]

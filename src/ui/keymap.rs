@@ -113,6 +113,10 @@ impl Keymap {
                         // Enter expands a dir / opens a file; while filtering it
                         // confirms the filter (handled by the reducer).
                         EditorMode::Browse => Some(Action::BrowseExpandOrOpen),
+                        // In the review, Enter is the commit accelerator; in the
+                        // commit prompt it confirms the message.
+                        EditorMode::DiffReview => Some(Action::DiffCommitApproved),
+                        EditorMode::DiffCommitMsg => Some(Action::DiffCommitConfirm),
                         _ => Some(Action::Enter),
                     };
                 }
@@ -120,6 +124,7 @@ impl Keymap {
                 EditorAction::Paste => return Some(Action::PasteFromClipboard),
                 EditorAction::EnterGlide => return Some(Action::EnterMode(EditorMode::Glide)),
                 EditorAction::ToggleMarkdownPreview => return Some(Action::ToggleMarkdownPreview),
+                EditorAction::ToggleDiffReview => return Some(Action::ToggleDiffReview),
                 EditorAction::EnterCommand => {
                     if editor.mode != EditorMode::Search && editor.mode != EditorMode::Replace {
                         return Some(Action::EnterMode(EditorMode::Command));
@@ -272,11 +277,9 @@ impl Keymap {
                 KeyCode::Char(c) if is_printable(modifiers) => Some(Action::InsertChar(c)),
                 _ => None,
             },
-            EditorMode::Help => {
-                // All Help mode shortcuts handled by shortcut_map
-                None
-            }
-            EditorMode::Markdown => {
+            // Help shares the read-only navigation model with Markdown preview:
+            // same keys (j/k, gg/G, H/M/L, counts, Page) drive the shared scroll view.
+            EditorMode::Help | EditorMode::Markdown => {
                 if let Some(prefix) = editor.glide_prefix {
                     return match (prefix, code) {
                         ('g', KeyCode::Char('g')) => Some(Action::GlideMove(Motion::FileTop)),
@@ -302,9 +305,29 @@ impl Keymap {
                     KeyCode::Char('L') | KeyCode::Char('l') => {
                         Some(Action::GlideMove(Motion::ScreenBottom))
                     }
+                    // Pager keys reachable from any soft keyboard (no PgUp/PgDn on
+                    // mobile): Space/f page forward, b pages back — the less/man idiom.
+                    KeyCode::Char(' ') | KeyCode::Char('f') => Some(Action::PageDown),
+                    KeyCode::Char('b') => Some(Action::PageUp),
                     _ => None,
                 }
             }
+            EditorMode::DiffReview => match code {
+                KeyCode::Char('j') => Some(Action::MoveDown),
+                KeyCode::Char('k') => Some(Action::MoveUp),
+                KeyCode::Char(' ') => Some(Action::DiffToggleApprove),
+                KeyCode::Char('a') => Some(Action::DiffApproveAll),
+                KeyCode::Char('s') => Some(Action::DiffStageApproved),
+                KeyCode::Char('c') => Some(Action::DiffCommitApproved),
+                KeyCode::Char('P') => Some(Action::DiffPush),
+                KeyCode::Char('q') => Some(Action::ToggleDiffReview),
+                _ => None,
+            },
+            EditorMode::DiffCommitMsg => match code {
+                KeyCode::Backspace => Some(Action::Backspace),
+                KeyCode::Char(c) if is_printable(modifiers) => Some(Action::InsertChar(c)),
+                _ => None,
+            },
             EditorMode::Goto => match code {
                 KeyCode::Backspace => Some(Action::Backspace),
                 KeyCode::Char(c) if c.is_ascii_digit() => Some(Action::InsertChar(c)),

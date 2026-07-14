@@ -82,6 +82,8 @@ pub enum EditorMode {
     Goto,
     Browse,
     Markdown,
+    DiffReview,
+    DiffCommitMsg,
     Command,
 }
 
@@ -113,6 +115,8 @@ pub struct EditorState {
     pub _working_dir: PathBuf,             // 新規: カレントディレクトリ
     pub modified: bool,                    // 新規: 変更フラグ
     pub mode: EditorMode,                  // 新規: モード管理
+    pub diff_review: Option<crate::state::diff::DiffReviewState>, // 新規: セッション diff レビュー状態
+    pub commit_msg_buffer: String,         // 新規: diff レビューからのコミットメッセージ入力
     pub save_filename_buffer: String,      // 新規: 保存時の入力バッファ
     pub open_filename_buffer: String,      // 新規: 読み込み時の入力バッファ
     pub filename_cursor: usize,            // 新規: ファイル名入力カーソル位置 (byte index)
@@ -139,7 +143,10 @@ pub struct EditorState {
     pub undo_stack: Vec<(TextBuffer, Cursor)>, // 新規: Undoスタック
     pub redo_stack: Vec<(TextBuffer, Cursor)>, // 新規: Redoスタック
     pub last_saved_id: usize,              // 新規: 保存時のスナップショットID（dirty判定用）
-    pub help_scroll_offset: u16,           // 新規: ヘルプ画面のスクロール位置
+    pub help_scroll_offset: usize,         // ヘルプ画面のスクロール位置
+    pub help_cursor_line: usize,           // ヘルプ画面の現在行（Markdown preview と共通モデル）
+    pub help_view_height: usize,           // ヘルプ画面の表示行数
+    pub help_rendered_line_count: usize,   // ヘルプ画面の折り返し後の行数
     pub markdown_scroll_offset: usize,     // Markdown preview のスクロール位置
     pub markdown_cursor_line: usize,       // Markdown preview の現在行
     pub markdown_view_height: usize,       // Markdown preview の表示行数
@@ -178,6 +185,18 @@ pub struct EditorState {
     pub command_query: String,
     /// Selected row within the filtered command palette results.
     pub command_selected: usize,
+    /// Where swap files live for this session (`None` = no writable state dir,
+    /// so recovery is simply off rather than half-working).
+    pub swap_dir: Option<PathBuf>,
+    /// The swap file for the open document. Follows Save As.
+    pub swap_path: Option<PathBuf>,
+    /// Edits since the swap was last written (see `swap::EDITS_PER_WRITE`).
+    pub swap_edits: usize,
+    /// The buffer has moved on since the swap was written.
+    pub swap_dirty: bool,
+    /// A swap found at startup, waiting on the user's one-line answer. While
+    /// this is set, input is answering the prompt, not editing the buffer.
+    pub recovery: Option<crate::swap::Recovery>,
 }
 
 pub(crate) struct EditorStateInit {
@@ -257,6 +276,17 @@ impl EditorState {
         Self::from_init(EditorStateInit::from_runtime(filename, config_dir.cloned()))
     }
 
+    /// Effective line-number visibility. Precedence: an explicit runtime toggle
+    /// (Ctrl+L) wins; otherwise the config default, but a compact/low-spec host
+    /// (`COZY_COMPACT`) hides them by default to shrink the per-frame gutter.
+    /// Single source of truth so the renderer and the toggle reducer agree
+    /// (otherwise the first toggle on a compact host would be a no-op).
+    pub(crate) fn line_numbers_visible(&self) -> bool {
+        self.show_line_numbers_runtime.unwrap_or(
+            self.config.show_line_numbers.unwrap_or(true) && !crate::runtime_env::compact(),
+        )
+    }
+
     pub(crate) fn from_init(init: EditorStateInit) -> Self {
         let config = Config::load_from(init.config_dir.as_ref());
         let startup_document = crate::file_io::load_startup_document(init.filename.as_deref());
@@ -284,6 +314,8 @@ impl EditorState {
             _working_dir: init.working_dir,
             modified: false,
             mode: initial_mode,
+            diff_review: None,
+            commit_msg_buffer: String::new(),
             save_filename_buffer: String::new(),
             open_filename_buffer: String::new(),
             filename_cursor: 0,
@@ -308,6 +340,9 @@ impl EditorState {
             redo_stack: Vec::new(),
             last_saved_id: 0,
             help_scroll_offset: 0,
+            help_cursor_line: 0,
+            help_view_height: 0,
+            help_rendered_line_count: 1,
             markdown_scroll_offset: 0,
             markdown_cursor_line: 0,
             markdown_view_height: 0,
@@ -329,7 +364,29 @@ impl EditorState {
             browse_tree,
             command_query: String::new(),
             command_selected: 0,
+            swap_dir: crate::swap::swap_dir(init.config_dir.as_ref()),
+            swap_path: None,
+            swap_edits: 0,
+            swap_dirty: false,
+            recovery: None,
         }
+        .with_recovery_offer()
+    }
+
+    /// Look for a swap left behind by a session that did not get to finish, and
+    /// hold it out as an offer. Nothing is restored without an answer: the buffer
+    /// still shows the file, so a wrong swap costs the user one keystroke, not
+    /// their document.
+    fn with_recovery_offer(mut self) -> Self {
+        if let Some(dir) = &self.swap_dir {
+            crate::swap::prune(dir);
+        }
+        self.swap_path = crate::swap::path_for(&self);
+        if let (Some(swap), Some(target)) = (&self.swap_path, &self.filename) {
+            let target = self.resolve_in_working_dir(target);
+            self.recovery = crate::swap::load(swap, &target);
+        }
+        self
     }
 
     pub fn save_snapshot(&mut self) {
@@ -457,9 +514,22 @@ impl EditorState {
                 self.glide_count.clear();
                 self.status_message = None;
             }
+            EditorMode::Help => {
+                self.help_scroll_offset = 0;
+                self.help_cursor_line = 0;
+                self.help_view_height = 0;
+                self.help_rendered_line_count = 1;
+                self.glide_prefix = None;
+                self.glide_count.clear();
+                self.status_message = None;
+            }
             EditorMode::Command => {
                 self.command_query.clear();
                 self.command_selected = 0;
+                self.status_message = None;
+            }
+            EditorMode::DiffCommitMsg => {
+                self.commit_msg_buffer.clear();
                 self.status_message = None;
             }
             _ => {

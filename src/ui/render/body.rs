@@ -21,9 +21,7 @@ fn clamp_cursor(frame_area: Rect, x: u16, y: u16) -> (u16, u16) {
 pub fn render_text_buffer(editor: &mut EditorState, f: &mut Frame, area: Rect) {
     let viewport_height = area.height as usize;
 
-    let show_line_numbers = editor
-        .show_line_numbers_runtime
-        .unwrap_or(editor.config.show_line_numbers.unwrap_or(true));
+    let show_line_numbers = editor.line_numbers_visible();
 
     let (line_number_width, line_number_digits) = if show_line_numbers {
         let max_lines = editor.buffer.lines.len();

@@ -81,6 +81,11 @@ pub static COMMANDS: &[CommandSpec] = &[
         action: CommandAction::Dispatch(Action::ToggleMarkdownPreview),
     },
     CommandSpec {
+        label: "Review.SessionDiff",
+        keywords: &["diff", "review", "approve", "hunk", "git", "stage", "add", "commit"],
+        action: CommandAction::Dispatch(Action::ToggleDiffReview),
+    },
+    CommandSpec {
         label: "View.ToggleLineNumbers",
         keywords: &["line numbers", "gutter"],
         action: CommandAction::Dispatch(Action::ToggleLineNumbers),

@@ -32,7 +32,21 @@ pub fn run<B: Backend>(
             match input::map_event(editor, event_src.read()?) {
                 InputEvent::Action(action) => {
                     if let EventResult::Exit = reduce(editor, action) {
+                        // A deliberate exit: whatever the user wanted to keep is
+                        // saved, and whatever they discarded they discarded on
+                        // purpose. The swap exists for the exits nobody chose.
+                        crate::swap::remove(editor);
                         break;
+                    }
+                    if editor.modified {
+                        editor.swap_dirty = true;
+                        editor.swap_edits += 1;
+                        // Do not let a long uninterrupted burst of typing outrun
+                        // the journal — the idle tick below never fires while the
+                        // keys keep coming.
+                        if editor.swap_edits >= crate::swap::EDITS_PER_WRITE {
+                            crate::swap::write(editor);
+                        }
                     }
                     editor.cursor_blink = true;
                     // MVP: any action may have mutated the buffer; reparse on the
@@ -49,6 +63,13 @@ pub fn run<B: Backend>(
                 InputEvent::Ignore => {}
             }
         } else {
+            // No key for a second: the user stopped typing, so write the swap
+            // now. This is the whole cadence — an iOS kill is announced to
+            // nobody, so "on the way out" is not a moment we are given.
+            if editor.swap_dirty {
+                crate::swap::write(editor);
+            }
+
             // Timeout: toggle cursor blink only if enabled
             if editor.config.cursor_blink.unwrap_or(false) {
                 editor.cursor_blink = !editor.cursor_blink;
