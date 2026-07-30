@@ -60,6 +60,14 @@ pub fn run<B: Backend>(
                     let _ = terminal.resize(ratatui::layout::Rect::new(0, 0, cols, rows));
                     needs_redraw = true;
                 }
+                InputEvent::Flush => {
+                    // The one second of typing the idle tick has not written yet
+                    // is exactly what a kill would take. Write it while we still
+                    // hold the thread.
+                    if editor.swap_dirty {
+                        crate::swap::write(editor);
+                    }
+                }
                 InputEvent::Ignore => {}
             }
         } else {

@@ -241,6 +241,30 @@ mod tests {
         assert_eq!(recovered.lines, vec!["saved", "typed but never saved"]);
     }
 
+    /// A kill arrives without warning; losing focus is the warning we do get.
+    /// The swap has to be on disk by the time we leave the screen — not one idle
+    /// tick later, because that tick may never come.
+    #[test]
+    fn losing_focus_writes_the_swap_at_once() {
+        let dir = scratch("focus_lost");
+        fs::write(dir.join("notes.md"), "saved\n").unwrap();
+
+        // Typed, but the idle tick has not fired: this is the second of work
+        // that a kill would take.
+        let mut editor = editor_at(&dir, "notes.md", &["saved", "typed a moment ago"]);
+        editor.swap_dirty = true;
+
+        match crate::input::map_event(&editor, crossterm::event::Event::FocusLost) {
+            crate::input::InputEvent::Flush => write(&mut editor),
+            _ => panic!("losing focus must ask for a flush"),
+        }
+
+        let swap = editor.swap_path.clone().unwrap();
+        let recovered = load(&swap, &dir.join("notes.md")).expect("nothing offered");
+        assert_eq!(recovered.lines, vec!["saved", "typed a moment ago"]);
+        assert!(!editor.swap_dirty, "the flush must clear the debt");
+    }
+
     /// A swap that only repeats the file is not worth a prompt (the crash landed
     /// just after a save). Prompting here teaches people to dismiss prompts.
     #[test]

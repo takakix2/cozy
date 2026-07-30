@@ -1,5 +1,36 @@
 # Changelog
 
+## v0.2.12
+
+### Highlights
+
+- **The swap is written on the way out, not one tick later.** The cadence writes
+  about a second after you stop typing, so a kill landing inside that second took
+  the keystrokes with it. Nothing warns before a kill — but something does say when
+  the app leaves the screen, and that moment was going unused. `Event::FocusLost`
+  now flushes the swap on the spot. No new API was needed: losing focus already
+  means "you are about to stop being the thing in front of the user", so a host
+  that leaves the screen sends it, and a terminal that reports focus gives the CLI
+  the same thing for free.
+
+### Fixes
+
+- **`~` works in the editor's own prompts.** Typing a home-relative path into
+  Save As or Open — `~/.hshrc`, `~/notes.md` — failed with `Directory not found`,
+  because cozy never expanded the tilde itself. Nothing was wrong on the command
+  line: there the shell expands `~` before cozy ever sees it. But cozy's prompts
+  have no shell in front of them, so the path was taken literally and read as a
+  relative one containing a directory named `~`. `vim` (`:e ~/x`) and `nano` both
+  expand it themselves, and cozy now does too — the bare `~`, and `~/…`. A
+  `~user` prefix has no resolution here and is left alone, as is a `~` anywhere
+  but the front, which turns up in ordinary filenames.
+
+  This had been true since the first commit and shipped in every release. It
+  stayed hidden because the common path — `cozy <file>`, then `Ctrl+S` — never
+  involves a tilde reaching cozy. It surfaced on iOS, where the editor is called
+  in-process and no word expansion happens anywhere, so even the command line
+  arrived with the tilde intact.
+
 ## v0.2.11
 
 ### Highlights

@@ -28,6 +28,12 @@ impl EventSource for CrosstermEventSource {
 pub enum InputEvent {
     Action(Action),
     Resize(u16, u16),
+    /// Write the swap now, without waiting for the idle tick.
+    ///
+    /// Losing focus is the last moment a host can still hand us: on iOS the app
+    /// is told it is leaving the screen, and is killed later without a word. A
+    /// terminal that reports focus gives us the same moment for free.
+    Flush,
     Ignore,
 }
 
@@ -44,6 +50,7 @@ pub fn map_event(editor: &EditorState, event: Event) -> InputEvent {
         },
         Event::Paste(data) => InputEvent::Action(Action::InsertString(data)),
         Event::Resize(cols, rows) => InputEvent::Resize(cols, rows),
+        Event::FocusLost => InputEvent::Flush,
         _ => InputEvent::Ignore,
     }
 }

@@ -11,12 +11,44 @@ pub(crate) enum StartupDocument {
     Directory { tree: BrowseTree },
 }
 
+/// 先頭の `~` をホームへ展開する。
+///
+/// `$HOME` を先に見て、無ければ `dirs::home_dir()`。⚠️ **Unix ではこの 2 つは一致する**
+/// （`dirs` も `$HOME` を読む）ので、順序はバグ対策ではなく **ホストが差し替えた値を明示的に
+/// 尊重する**という意思表示。ホストが `HOME` だけ差し替える実装に変わっても追従する。
+///
+/// なぜ cozy 側で展開するのか: **端末に打つとシェルが `~` を展開してくれるので、通常 cozy は
+/// チルダを見ない**。ところが**インプロセスのホスト**（argo が cozy を TUI プロバイダとして
+/// 呼ぶ経路）では単語展開を通らず、`~/.ssh/config` が**そのまま**届く。すると
+/// `<cwd>/~/.ssh/config` ＝ `~` という名のディレクトリを含む相対パスと解釈され、
+/// 親が無いので `Directory not found` で落ちていた（2026-07-30・iOS で実測）。
+///
+/// 展開するのは **POSIX のチルダ接頭辞**だけ: `~` 単独と `~/…`。`~user` は解決手段が無いので
+/// 触らない（そのまま返す）。⚠️ 先頭以外の `~` も触らない —— ファイル名の一部で普通に出る。
+fn expand_tilde(path: &str) -> PathBuf {
+    let home = || {
+        std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .or_else(dirs::home_dir)
+    };
+    match path {
+        "~" => home().unwrap_or_else(|| PathBuf::from(path)),
+        _ => match path.strip_prefix("~/") {
+            // `~/x` → `<home>/x`。home が分からなければ原文のまま（黙って別の場所に
+            // 書くより、呼び出し側のエラーとして見えた方が良い）。
+            Some(rest) => home().map_or_else(|| PathBuf::from(path), |h| h.join(rest)),
+            None => PathBuf::from(path),
+        },
+    }
+}
+
 pub(crate) fn load_startup_document(filename: Option<&str>) -> StartupDocument {
     let Some(path) = filename else {
         return StartupDocument::Empty;
     };
 
-    let path_ref = Path::new(path);
+    let expanded = expand_tilde(path);
+    let path_ref = expanded.as_path();
     if path_ref.is_dir() {
         return StartupDocument::Directory {
             tree: BrowseTree::build(path_ref),
@@ -27,8 +59,10 @@ pub(crate) fn load_startup_document(filename: Option<&str>) -> StartupDocument {
         .map(|content| lines_from_content(&content))
         .unwrap_or_else(|_| vec![String::new()]);
 
+    // ⚠️ 保持するのは**展開後**のパス。原文（`~/x`）を持つと、後の `save` が
+    // また `~` から解き直すことになり、開いた先と保存先がずれうる。
     StartupDocument::File {
-        path: PathBuf::from(path),
+        path: expanded,
         lines,
     }
 }
@@ -67,7 +101,7 @@ pub fn save_as(editor: &mut EditorState, path: &str) -> io::Result<()> {
         ));
     }
 
-    let path_buf = PathBuf::from(path);
+    let path_buf = expand_tilde(path);
     let target = editor.resolve_in_working_dir(&path_buf);
     write_buffer(editor, &target, &format!("Failed to save '{}'", path))?;
 
@@ -84,7 +118,7 @@ pub fn open_file(editor: &mut EditorState, path: &str) -> io::Result<()> {
         ));
     }
 
-    let path_buf = PathBuf::from(path);
+    let path_buf = expand_tilde(path);
     if !path_buf.exists() {
         return Err(io::Error::new(
             io::ErrorKind::NotFound,
@@ -322,6 +356,89 @@ fn lines_from_content(content: &str) -> Vec<String> {
         lines.push(String::new());
     }
     lines
+}
+
+#[cfg(test)]
+mod tilde_tests {
+    use super::*;
+
+    // ここで固定しているのは **「先頭の `~` が展開されること」**。それだけ。
+    //
+    // 2026-07-30 に iOS で踏んだ穴: 端末に打つとシェルが `~` を展開するので、cozy は普段
+    // チルダを見ない。ところが argo が cozy を **インプロセスの TUI プロバイダ**として呼ぶ経路は
+    // 単語展開を通らず、`~/.ssh/config` が**そのまま**届いていた。cozy に展開は
+    // **1 行も無かった**ので `<cwd>/~/.ssh/config`（`~` という名のディレクトリを含む相対パス）と
+    // 解釈され、親が無いので `Directory not found` になっていた。
+    //
+    // ⚠️ **`$HOME` を `dirs::home_dir()` より先に見るのは「明示のため」で、バグの原因ではない。**
+    // 最初は「iOS では両者が別の場所を指す」と考えて、それを固定するテストを書いた ——
+    // **が、カナリアが鳴らなかった**。Unix（iOS を含む）の `dirs::home_dir()` は
+    // まず `$HOME` を読むので、**両者は一致する**。テストは差を検出できていなかった。
+    // ∴ ここが主張できるのは「展開する」ことだけ。⚠️ 展開そのものを外すと 2 本落ちる（実測）。
+
+    /// `HOME` はプロセス全域なので、書き換えるテストは直列化する。
+    static HOME_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// `HOME` を差し替えて `f` を走らせ、必ず元に戻す。
+    fn with_home<T>(home: &str, f: impl FnOnce() -> T) -> T {
+        let _guard = HOME_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let original = std::env::var_os("HOME");
+        // SAFETY: HOME_LOCK で直列化済み。この区間で他スレッドは env を触らない。
+        unsafe { std::env::set_var("HOME", home) };
+        let out = f();
+        unsafe {
+            match original {
+                Some(v) => std::env::set_var("HOME", v),
+                None => std::env::remove_var("HOME"),
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn tilde_slash_expands_to_home() {
+        // ⚠️ カナリア: expand_tilde の展開を外すと `~/.ssh/config` がそのまま残って落ちる（実測）。
+        with_home("/tmp/cozy-home-test", || {
+            assert_eq!(
+                expand_tilde("~/.ssh/config"),
+                PathBuf::from("/tmp/cozy-home-test/.ssh/config")
+            );
+        });
+    }
+
+    #[test]
+    fn bare_tilde_is_the_home_itself() {
+        with_home("/tmp/cozy-home-test", || {
+            assert_eq!(expand_tilde("~"), PathBuf::from("/tmp/cozy-home-test"));
+        });
+    }
+
+    #[test]
+    fn tilde_user_is_left_alone() {
+        // `~alice` を解決する手段が無い。勝手に別の場所へ向けるより原文のまま渡す。
+        with_home("/tmp/cozy-home-test", || {
+            assert_eq!(expand_tilde("~alice/x"), PathBuf::from("~alice/x"));
+        });
+    }
+
+    #[test]
+    fn a_tilde_that_is_not_a_prefix_is_left_alone() {
+        // ファイル名の中の `~` は普通に出る（バックアップ名など）。触らない。
+        with_home("/tmp/cozy-home-test", || {
+            assert_eq!(expand_tilde("notes~"), PathBuf::from("notes~"));
+            assert_eq!(expand_tilde("dir/~/x"), PathBuf::from("dir/~/x"));
+        });
+    }
+
+    #[test]
+    fn ordinary_paths_are_untouched() {
+        with_home("/tmp/cozy-home-test", || {
+            assert_eq!(expand_tilde("notes.md"), PathBuf::from("notes.md"));
+            assert_eq!(expand_tilde("/etc/hosts"), PathBuf::from("/etc/hosts"));
+        });
+    }
 }
 
 #[cfg(all(test, unix))]
