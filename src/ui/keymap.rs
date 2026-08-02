@@ -95,6 +95,16 @@ impl Keymap {
                 EditorAction::ToggleFooter => return Some(Action::ToggleFooter),
                 EditorAction::DeleteLine => return Some(Action::DeleteLine),
                 EditorAction::Enter => {
+                    // ⚠️ A pending one-line question owns Enter — it is the *answer*,
+                    // not the mode's Enter. Without this, a question raised from a
+                    // prompt mode can never be answered: Save mode turns Enter into
+                    // another `Action::Save`, which re-runs the save that just asked,
+                    // and the offer sits there forever (measured — the reducer tests
+                    // passed because they call `reduce(Action::Enter)` directly and
+                    // never go through this mapping).
+                    if editor.create_dir.is_some() || editor.recovery.is_some() {
+                        return Some(Action::Enter);
+                    }
                     // Context-dependent Enter handling
                     return match editor.mode {
                         EditorMode::Welcome => Some(Action::EnterMode(editor.home_mode())),

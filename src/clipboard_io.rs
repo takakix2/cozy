@@ -6,7 +6,7 @@
 #[cfg(feature = "clipboard")]
 thread_local! {
     static CLIPBOARD: std::cell::RefCell<Option<arboard::Clipboard>> =
-        std::cell::RefCell::new(None);
+        const { std::cell::RefCell::new(None) };
 }
 
 /// Run `f` with the process-lifetime clipboard, lazily creating it. Returns

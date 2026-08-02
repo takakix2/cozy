@@ -342,15 +342,17 @@ fn render_line_range(
 #[cfg(all(test, feature = "treesitter"))]
 mod render_color_tests {
     use super::*;
-    use crate::state::buffer::TextBuffer;
     use crate::state::EditorState;
-    use ratatui::{backend::TestBackend, Terminal};
+    use crate::state::buffer::TextBuffer;
+    use ratatui::{Terminal, backend::TestBackend};
 
     #[test]
     fn function_name_gets_color_through_render() {
         let mut editor = EditorState::new(Some("probe.rs".to_string()));
         editor.buffer = TextBuffer::from_lines(vec!["fn foo() {}".to_string()]);
-        editor.highlighter.set_file(Some(std::path::Path::new("probe.rs")));
+        editor
+            .highlighter
+            .set_file(Some(std::path::Path::new("probe.rs")));
         editor.highlighter.mark_dirty();
         editor.mode = EditorMode::Edit;
 
@@ -365,7 +367,10 @@ mod render_color_tests {
                 fgs.insert(cell.fg);
             }
         }
-        assert!(fgs.contains(&Color::Magenta), "fn keyword should be magenta");
+        assert!(
+            fgs.contains(&Color::Magenta),
+            "fn keyword should be magenta"
+        );
         assert!(
             fgs.contains(&Color::LightBlue),
             "function name should be LightBlue; got {:?}",

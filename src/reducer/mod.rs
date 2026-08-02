@@ -69,7 +69,12 @@ fn rv_page_step(editor: &EditorState, view: ReadView) -> usize {
         ReadView::Markdown => editor.markdown_view_height,
         ReadView::Help => editor.help_view_height,
     };
-    if height == 0 { editor.page_size } else { height }.max(1)
+    if height == 0 {
+        editor.page_size
+    } else {
+        height
+    }
+    .max(1)
 }
 
 fn rv_cursor(editor: &EditorState, view: ReadView) -> usize {
@@ -199,11 +204,68 @@ fn answer_recovery(editor: &mut EditorState, action: &Action) -> EventResult {
     }
 }
 
+/// The create-directory offer is the same two keys as the recovery one: Enter
+/// creates the missing parent and finishes the save, Esc leaves the filesystem
+/// alone. Anything else is ignored rather than guessed at — creating a directory
+/// is the kind of side effect that must not happen because someone kept typing.
+///
+/// The retry goes back through `Action::Save`/`SaveAndExit` with the **same name
+/// the save was called with**, so the target is resolved by `save`/`save_as`
+/// exactly once. Rebuilding the path here would be a second implementation of
+/// that rule, and the two would drift.
+///
+/// ⚠️ Cancelling does not leave the Save prompt — the typed filename is still
+/// there to be corrected. `~/.shh/config` is a typo, not a request for a new
+/// directory, and this is the moment the user finds out.
+fn answer_create_dir(editor: &mut EditorState, action: &Action) -> EventResult {
+    match action {
+        Action::Enter => {
+            let offer = editor.create_dir.take().expect("checked by the caller");
+            if let Err(e) = std::fs::create_dir_all(&offer.dir) {
+                crate::reducer::status::set_error(
+                    editor,
+                    &format!("Failed to create '{}': {}", offer.dir.display(), e),
+                );
+                return EventResult::Continue;
+            }
+            let retry = if offer.and_exit {
+                Action::SaveAndExit(offer.fname)
+            } else {
+                Action::Save(offer.fname)
+            };
+            reduce(editor, retry)
+        }
+        Action::Cancel => {
+            editor.create_dir = None;
+            editor.set_status_message(
+                "Not saved — the directory was not created".to_string(),
+                crate::state::StatusKind::Info,
+                false,
+            );
+            EventResult::Continue
+        }
+        // ⚠️ Ctrl+Q must keep working. A question that swallows the quit key
+        // traps the user inside the editor, and pressing it harder does nothing
+        // visible — the worst shape a prompt can have. Quitting here is safe:
+        // it is already the explicit discard path, and the swap still holds the
+        // buffer for the next launch.
+        Action::Quit => EventResult::Exit,
+        _ => EventResult::Continue,
+    }
+}
+
 pub fn reduce(editor: &mut EditorState, action: Action) -> EventResult {
     // A recovered swap is waiting for a yes or no. Answer it first: typing into a
     // buffer that is about to be replaced would silently throw the typing away.
     if editor.recovery.is_some() {
         return answer_recovery(editor, &action);
+    }
+
+    // A save is holding, waiting to be told whether to create the directory.
+    // Same reason to answer first: the next keystroke would otherwise edit the
+    // buffer while the user believes they are answering a question.
+    if editor.create_dir.is_some() {
+        return answer_create_dir(editor, &action);
     }
 
     // The yank flash lasts exactly until the next keypress: clear it here, before

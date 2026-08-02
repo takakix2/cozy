@@ -59,7 +59,29 @@ pub fn render_status_bar(editor: &EditorState, f: &mut Frame, area: Rect) {
             " Unsaved changes from {} — [Enter] restore  [Esc] discard",
             crate::swap::describe_age(recovery.age)
         );
-        let line = Line::from(vec![Span::raw(compose_status(&offer, "", area.width as usize))]);
+        let line = Line::from(vec![Span::raw(compose_status(
+            &offer,
+            "",
+            area.width as usize,
+        ))]);
+        f.render_widget(Paragraph::new(line).style(status_bar_style(editor)), area);
+        return;
+    }
+
+    // A save waiting on "create the directory?" owns the line for the same
+    // reason: it is a question, and the answer has a side effect on disk.
+    // ⚠️ The directory is spelled out in full — the whole point of asking is
+    // that the user can see it is `.shh` before a typo becomes a directory.
+    if let Some(offer) = &editor.create_dir {
+        let text = format!(
+            " Create directory {}? — [Enter] create  [Esc] cancel",
+            offer.dir.display()
+        );
+        let line = Line::from(vec![Span::raw(compose_status(
+            &text,
+            "",
+            area.width as usize,
+        ))]);
         f.render_widget(Paragraph::new(line).style(status_bar_style(editor)), area);
         return;
     }
@@ -1162,7 +1184,6 @@ fn render_open_shortcuts(editor: &EditorState, f: &mut Frame, area: Rect) {
         f.set_cursor_position((cx, cy));
     }
 }
-
 
 fn render_goto_shortcuts(editor: &EditorState, f: &mut Frame, area: Rect) {
     let total = editor.buffer.lines.len();

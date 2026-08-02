@@ -84,6 +84,27 @@ fn save_dispatch(editor: &mut EditorState, fname: &str) -> std::io::Result<()> {
     }
 }
 
+/// A failed save either asks a question or reports an error — never both.
+///
+/// "The parent directory does not exist" is the one failure the user can undo
+/// from inside the editor, so it becomes a one-line offer instead of an error.
+/// Every other failure (permission, read-only mount, a name that is a
+/// directory) is nothing cozy can offer to fix, and stays an error.
+///
+/// ⚠️ The condition is recognised by **type**, not by matching the message —
+/// see `file_io::missing_parent_of`.
+fn offer_or_error(editor: &mut EditorState, e: std::io::Error, fname: &str, and_exit: bool) {
+    if let Some(dir) = crate::file_io::missing_parent_of(&e) {
+        editor.create_dir = Some(crate::file_io::CreateDirOffer {
+            dir,
+            fname: fname.to_string(),
+            and_exit,
+        });
+        return;
+    }
+    crate::reducer::status::set_error(editor, &e.to_string());
+}
+
 pub fn apply_editor_event(editor: &mut EditorState, action: &Action) -> EventResult {
     match action {
         // Navigation
@@ -291,7 +312,7 @@ pub fn apply_editor_event(editor: &mut EditorState, action: &Action) -> EventRes
                     crate::reducer::status::set_success(editor, "Saved", &display_name);
                 }
                 Err(e) => {
-                    crate::reducer::status::set_error(editor, &e.to_string());
+                    offer_or_error(editor, e, fname, false);
                 }
             }
             EventResult::Continue
@@ -302,7 +323,7 @@ pub fn apply_editor_event(editor: &mut EditorState, action: &Action) -> EventRes
         Action::SaveAndExit(fname) => match save_dispatch(editor, fname) {
             Ok(_) => EventResult::Exit,
             Err(e) => {
-                crate::reducer::status::set_error(editor, &e.to_string());
+                offer_or_error(editor, e, fname, true);
                 EventResult::Continue
             }
         },
@@ -401,10 +422,9 @@ pub fn apply_editor_event(editor: &mut EditorState, action: &Action) -> EventRes
                         editor,
                         "No changes to review (git diff is empty)",
                     ),
-                    Err(e) => crate::reducer::status::set_error(
-                        editor,
-                        &format!("git diff failed: {e}"),
-                    ),
+                    Err(e) => {
+                        crate::reducer::status::set_error(editor, &format!("git diff failed: {e}"))
+                    }
                 }
             }
             EventResult::Continue
@@ -459,10 +479,9 @@ pub fn apply_editor_event(editor: &mut EditorState, action: &Action) -> EventRes
                             &format!("Staged {n} hunk(s) — commit them with git"),
                         );
                     }
-                    Err(e) => crate::reducer::status::set_error(
-                        editor,
-                        &format!("git apply failed: {e}"),
-                    ),
+                    Err(e) => {
+                        crate::reducer::status::set_error(editor, &format!("git apply failed: {e}"))
+                    }
                 }
             }
             EventResult::Continue
@@ -526,7 +545,9 @@ pub fn apply_editor_event(editor: &mut EditorState, action: &Action) -> EventRes
         Action::DiffPush => {
             let dir = editor._working_dir.clone();
             match crate::state::diff::push_current(&dir) {
-                Ok(summary) => crate::reducer::status::set_info(editor, &format!("Pushed: {summary}")),
+                Ok(summary) => {
+                    crate::reducer::status::set_info(editor, &format!("Pushed: {summary}"))
+                }
                 Err(e) => crate::reducer::status::set_error(editor, &format!("push failed: {e}")),
             }
             EventResult::Continue

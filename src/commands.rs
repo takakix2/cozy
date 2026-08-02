@@ -82,7 +82,9 @@ pub static COMMANDS: &[CommandSpec] = &[
     },
     CommandSpec {
         label: "Review.SessionDiff",
-        keywords: &["diff", "review", "approve", "hunk", "git", "stage", "add", "commit"],
+        keywords: &[
+            "diff", "review", "approve", "hunk", "git", "stage", "add", "commit",
+        ],
         action: CommandAction::Dispatch(Action::ToggleDiffReview),
     },
     CommandSpec {

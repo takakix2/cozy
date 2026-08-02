@@ -314,12 +314,60 @@ fn write_in_place(editor: &EditorState, real: &Path) -> io::Result<()> {
     file.sync_all()
 }
 
+/// 「保存先の親ディレクトリが無い」を、**文字列ではなく型で**運ぶ。
+///
+/// 呼び出し側（reducer）はこれを見て「作りますか」の一行を出す。⚠️ メッセージ本文の
+/// 一致で判定すると、**文言を直した瞬間に静かに壊れる**（オファーが出なくなり、
+/// 利用者にはただのエラーに戻る＝テストも文言を写していれば一緒に緑のまま）。
+#[derive(Debug)]
+pub struct MissingParent(pub PathBuf);
+
+impl std::fmt::Display for MissingParent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // 従来の文言を保つ（この文字列を読んでいる利用者・ログが在りうる）。
+        write!(f, "Directory not found:{}", self.0.display())
+    }
+}
+
+impl std::error::Error for MissingParent {}
+
+/// 保存が「親ディレクトリが無い」で止まり、**利用者の一行の答えを待っている**状態。
+///
+/// 形は swap 復元のオファー（`swap::Recovery`）に揃えてある —— 一行・2 キー・
+/// それ以外は無視。vim の swap ダイアログのような壁は作らない。
+///
+/// ⚠️ **黙って作らない**（`write_buffer` の方針）と、**mkdir -p のためにエディタを
+/// 抜けさせない**（cozy は comfort-first で、しかも iOS では抜けた先のシェルが狭い）の
+/// 両方を満たすのがこの形。
+pub struct CreateDirOffer {
+    /// 作るべきディレクトリ（欠けている親）。
+    pub dir: PathBuf,
+    /// 止まった保存を**そのまま**やり直すための、呼ばれたときの名前。
+    /// ⚠️ 保存先を自前で組み直さないのが肝 —— 組み直すと `save`/`save_as` の
+    /// 解決規則と 2 実装になり、片方だけ直る。
+    pub fname: String,
+    /// Ctrl+X（保存して終了）から来たか。作って保存できたら、その意図どおり終了する。
+    pub and_exit: bool,
+}
+
+/// `e` が「親ディレクトリが無い」なら、その作るべきディレクトリを返す。
+///
+/// ⚠️ `write_buffer` の `annotate` は `io::Error` を**文字列に潰す**ので、payload を
+/// 残したまま返せるのは `ensure_parent_dir` が `?` で直に上げる経路だけ。
+/// 逆に言えば、annotate を通った先でこれを呼んでも `None` になる（＝取り違えない）。
+#[must_use]
+pub fn missing_parent_of(e: &io::Error) -> Option<PathBuf> {
+    e.get_ref()
+        .and_then(|inner| inner.downcast_ref::<MissingParent>())
+        .map(|m| m.0.clone())
+}
+
 fn ensure_parent_dir(target: &std::path::Path) -> io::Result<()> {
     if let Some(parent) = target.parent() {
         if !parent.as_os_str().is_empty() && !parent.exists() {
             return Err(io::Error::new(
                 io::ErrorKind::NotFound,
-                format!("Directory not found:{}", parent.display()),
+                MissingParent(parent.to_path_buf()),
             ));
         }
     }
@@ -481,10 +529,17 @@ mod write_buffer_tests {
         save_to(&link, &["edited"]);
 
         assert!(
-            fs::symlink_metadata(&link).unwrap().file_type().is_symlink(),
+            fs::symlink_metadata(&link)
+                .unwrap()
+                .file_type()
+                .is_symlink(),
             "symlink が実体ファイルに置き換わった"
         );
-        assert_eq!(fs::read_to_string(&real).unwrap(), "edited\n", "リンク先に書けていない");
+        assert_eq!(
+            fs::read_to_string(&real).unwrap(),
+            "edited\n",
+            "リンク先に書けていない"
+        );
     }
 
     /// 相対リンクも同じ（リンクのある場所を基準に解決する）。
@@ -497,8 +552,16 @@ mod write_buffer_tests {
 
         save_to(&link, &["edited"]);
 
-        assert!(fs::symlink_metadata(&link).unwrap().file_type().is_symlink());
-        assert_eq!(fs::read_to_string(dir.join("dotfiles/hshrc")).unwrap(), "edited\n");
+        assert!(
+            fs::symlink_metadata(&link)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        assert_eq!(
+            fs::read_to_string(dir.join("dotfiles/hshrc")).unwrap(),
+            "edited\n"
+        );
     }
 
     /// リンク先の**親ディレクトリ**が無いときは、黙って作らずに断る
@@ -513,7 +576,10 @@ mod write_buffer_tests {
 
         assert_eq!(err.kind(), io::ErrorKind::NotFound);
         assert!(
-            fs::symlink_metadata(&link).unwrap().file_type().is_symlink(),
+            fs::symlink_metadata(&link)
+                .unwrap()
+                .file_type()
+                .is_symlink(),
             "断ったのに symlink を壊している"
         );
     }
@@ -532,7 +598,10 @@ mod write_buffer_tests {
         save_to(&link, &["edited"]);
 
         assert!(
-            fs::symlink_metadata(&link).unwrap().file_type().is_symlink(),
+            fs::symlink_metadata(&link)
+                .unwrap()
+                .file_type()
+                .is_symlink(),
             "symlink が実体ファイルに置き換わった"
         );
         // 編集がリンク先＝リポジトリ側に届いていること（届かないと黙って乖離する）
@@ -566,8 +635,16 @@ mod write_buffer_tests {
 
         save_to(&a, &["new"]);
 
-        assert_eq!(fs::metadata(&a).unwrap().ino(), ino, "inode が変わった＝リンクが切れた");
-        assert_eq!(fs::read_to_string(&b).unwrap(), "new\n", "相方に反映されていない");
+        assert_eq!(
+            fs::metadata(&a).unwrap().ino(),
+            ino,
+            "inode が変わった＝リンクが切れた"
+        );
+        assert_eq!(
+            fs::read_to_string(&b).unwrap(),
+            "new\n",
+            "相方に反映されていない"
+        );
     }
 
     /// 普通のファイルは rename で置換される（＝保存中の姿が観測されない）。
@@ -580,7 +657,11 @@ mod write_buffer_tests {
 
         save_to(&path, &["new", "lines"]);
 
-        assert_ne!(fs::metadata(&path).unwrap().ino(), ino, "その場書きに落ちている");
+        assert_ne!(
+            fs::metadata(&path).unwrap().ino(),
+            ino,
+            "その場書きに落ちている"
+        );
         assert_eq!(fs::read_to_string(&path).unwrap(), "new\nlines\n");
     }
 

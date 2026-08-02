@@ -22,9 +22,7 @@ fn read_span(lines: &[String], start: (usize, usize), end: (usize, usize)) -> St
     } else {
         let mut parts = Vec::new();
         parts.push(lines[sy][sx.min(lines[sy].len())..].to_string());
-        for y in (sy + 1)..ey {
-            parts.push(lines[y].clone());
-        }
+        parts.extend(lines[(sy + 1)..ey].iter().cloned());
         parts.push(lines[ey][..ex.min(lines[ey].len())].to_string());
         parts.join("\n")
     }

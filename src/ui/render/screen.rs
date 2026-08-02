@@ -307,7 +307,12 @@ fn render_help_wide(editor: &mut EditorState, f: &mut Frame, area: Rect) {
 /// width, keep the cursor line on screen, and paint row-by-row with the current
 /// line highlighted. Sharing this model means Help scrolls a page/line at a time
 /// (one repaint per motion) instead of repainting every row on each key.
-fn render_help_body(editor: &mut EditorState, f: &mut Frame, area: Rect, lines: Vec<Line<'static>>) {
+fn render_help_body(
+    editor: &mut EditorState,
+    f: &mut Frame,
+    area: Rect,
+    lines: Vec<Line<'static>>,
+) {
     let lines = wrap_help_lines(lines, area.width as usize);
     editor.help_view_height = area.height as usize;
     editor.help_rendered_line_count = lines.len().max(1);

@@ -205,7 +205,10 @@ mod tests {
         let title = buf[0].find("Title").unwrap();
         assert_eq!(fg_at(&h, 0, title), Some(blue), "heading color");
         assert!(
-            h.style_at(0, title).unwrap().add_modifier.contains(Modifier::BOLD),
+            h.style_at(0, title)
+                .unwrap()
+                .add_modifier
+                .contains(Modifier::BOLD),
             "heading bold"
         );
 
@@ -213,7 +216,10 @@ mod tests {
         let bold = buf[2].find("bold").unwrap();
         let strong = h.style_at(2, bold).expect("strong span");
         assert_eq!(strong.fg, Some(blue), "bold color");
-        assert!(strong.add_modifier.contains(Modifier::BOLD), "bold modifier");
+        assert!(
+            strong.add_modifier.contains(Modifier::BOLD),
+            "bold modifier"
+        );
 
         // *it* is purple + italic.
         let italic = buf[2].find("it").unwrap();
@@ -352,7 +358,14 @@ mod ts {
                         return;
                     };
                     let src = m.source.as_bytes();
-                    collect_spans(&m.block, tree.block_tree().root_node(), src, lines, visible, out);
+                    collect_spans(
+                        &m.block,
+                        tree.block_tree().root_node(),
+                        src,
+                        lines,
+                        visible,
+                        out,
+                    );
                     for inline in tree.inline_trees() {
                         collect_spans(&m.inline, inline.root_node(), src, lines, visible, out);
                     }

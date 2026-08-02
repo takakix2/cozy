@@ -201,7 +201,14 @@ fn test_help_renders_without_panic_at_various_sizes() {
     editor.enter_mode(EditorMode::Help);
     editor.help_cursor_line = 30; // clamped to content; forces scroll-follow + highlight
 
-    for (w, h) in [(80u16, 24u16), (40, 20), (60, 3), (30, 2), (100, 40), (50, 1)] {
+    for (w, h) in [
+        (80u16, 24u16),
+        (40, 20),
+        (60, 3),
+        (30, 2),
+        (100, 40),
+        (50, 1),
+    ] {
         let backend = TestBackend::new(w, h);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal
@@ -1240,4 +1247,202 @@ fn test_existing_config_is_not_overwritten_when_default_is_generated() {
         existing
     );
     let _ = std::fs::remove_dir_all(&base);
+}
+
+// ── 保存先の親ディレクトリが無いとき ───────────────────────────────
+//
+// 方針は「黙って作らない」かつ「mkdir -p のためにエディタを抜けさせない」＝
+// swap 復元と同じ**一行・2 キー**のオファー。下のテストは 4 つの主張を対で置く:
+//   ① 無い親は**エラーではなくオファー**になる（かつ、まだ何も作られていない）
+//   ② Enter で作って保存まで通る
+//   ③ Esc ではファイルシステムに一切触れない
+//   ④ **他の失敗はオファーにならない** ← ①だけだと「全部オファーにする」で緑になる
+
+fn probe_dir(name: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!("cozy_mkdir_{}_{}", name, std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+fn editor_saving_to(target: &std::path::Path) -> EditorState {
+    let mut editor = EditorState::new(None);
+    editor.enter_mode(EditorMode::Edit);
+    editor.buffer = TextBuffer::from_lines(vec!["hello".to_string()]);
+    editor.filename = Some(target.to_path_buf());
+    editor.modified = true;
+    editor
+}
+
+#[test]
+fn a_missing_parent_asks_instead_of_failing() {
+    let root = probe_dir("ask");
+    let target = root.join("nodir").join("a.txt");
+    let mut editor = editor_saving_to(&target);
+
+    reduce(&mut editor, Action::Save(String::new()));
+
+    let offer = editor.create_dir.as_ref().expect("no offer was made");
+    assert_eq!(offer.dir, root.join("nodir"));
+    assert!(!offer.and_exit);
+    // ⚠️ 訊いている最中に作ってしまっていないこと。
+    assert!(
+        !root.join("nodir").exists(),
+        "the directory was created before the answer"
+    );
+    assert!(editor.modified, "nothing was saved yet");
+}
+
+#[test]
+fn enter_creates_the_directory_and_finishes_the_save() {
+    let root = probe_dir("enter");
+    let target = root.join("nodir").join("deeper").join("a.txt");
+    let mut editor = editor_saving_to(&target);
+
+    reduce(&mut editor, Action::Save(String::new()));
+    reduce(&mut editor, Action::Enter);
+
+    assert!(editor.create_dir.is_none(), "the question is still open");
+    assert_eq!(std::fs::read_to_string(&target).unwrap(), "hello\n");
+    assert!(!editor.modified, "a finished save must clear modified");
+}
+
+#[test]
+fn esc_does_not_touch_the_filesystem() {
+    let root = probe_dir("esc");
+    let target = root.join("nodir").join("a.txt");
+    let mut editor = editor_saving_to(&target);
+
+    reduce(&mut editor, Action::Save(String::new()));
+    reduce(&mut editor, Action::Cancel);
+
+    assert!(editor.create_dir.is_none());
+    assert!(
+        !root.join("nodir").exists(),
+        "Esc must not create the directory"
+    );
+    assert!(!target.exists());
+    assert!(editor.modified, "the buffer still holds unsaved edits");
+}
+
+#[test]
+fn a_failure_cozy_cannot_offer_to_fix_stays_an_error() {
+    // ⚠️ 陽性対照。親が**ファイル**として存在するので `exists()` は真 ——
+    // 「無い親」ではないから、オファーではなくエラーで出なければならない。
+    let root = probe_dir("notadir");
+    std::fs::write(root.join("afile"), b"x").unwrap();
+    let target = root.join("afile").join("a.txt");
+    let mut editor = editor_saving_to(&target);
+
+    reduce(&mut editor, Action::Save(String::new()));
+
+    assert!(
+        editor.create_dir.is_none(),
+        "this is not a missing-parent case"
+    );
+    assert_eq!(editor.status_kind, crate::state::StatusKind::Error);
+}
+
+#[test]
+fn typing_while_the_question_is_open_does_not_reach_the_buffer() {
+    // swap 復元と同じ理由: 答えているつもりの打鍵がバッファへ落ちてはいけない。
+    // しかも今回は**ディスクに副作用が出る**質問なので、なおさら推測しない。
+    let root = probe_dir("typing");
+    let target = root.join("nodir").join("a.txt");
+    let mut editor = editor_saving_to(&target);
+
+    reduce(&mut editor, Action::Save(String::new()));
+    reduce(&mut editor, Action::InsertChar('x'));
+
+    assert!(editor.create_dir.is_some(), "the question is still open");
+    assert_eq!(
+        editor.buffer.lines,
+        vec!["hello"],
+        "the keystroke leaked into the buffer"
+    );
+    assert!(
+        !root.join("nodir").exists(),
+        "a stray keystroke created a directory"
+    );
+}
+
+#[test]
+fn save_and_exit_still_exits_after_creating() {
+    // Ctrl+X → Enter で来た保存は、作って保存できたら**そのまま終了する**のが意図。
+    // ここを取り違えると、作って保存した後にエディタへ残る。
+    let root = probe_dir("exit");
+    let target = root.join("nodir").join("a.txt");
+    let mut editor = editor_saving_to(&target);
+
+    reduce(&mut editor, Action::SaveAndExit(String::new()));
+    assert!(editor.create_dir.as_ref().expect("no offer").and_exit);
+
+    let result = reduce(&mut editor, Action::Enter);
+
+    assert!(
+        matches!(result, crate::reducer::EventResult::Exit),
+        "must exit"
+    );
+    assert_eq!(std::fs::read_to_string(&target).unwrap(), "hello\n");
+}
+
+#[test]
+fn ctrl_q_still_quits_while_the_question_is_open() {
+    // ⚠️ 質問が終了キーを飲み込むと、利用者はエディタに閉じ込められる（しかも
+    // 強く押しても何も起きない＝一番悪い形）。ここは通す。バッファは swap が持つ。
+    let root = probe_dir("quitq");
+    let target = root.join("nodir").join("a.txt");
+    let mut editor = editor_saving_to(&target);
+
+    reduce(&mut editor, Action::Save(String::new()));
+    assert!(
+        editor.create_dir.is_some(),
+        "precondition: the question is open"
+    );
+
+    let result = reduce(&mut editor, Action::Quit);
+
+    assert!(
+        matches!(result, crate::reducer::EventResult::Exit),
+        "Ctrl+Q was swallowed"
+    );
+    assert!(
+        !root.join("nodir").exists(),
+        "quitting must not create the directory"
+    );
+}
+
+/// ⚠️ **この層が今回の抜けだった。** 上のテストは `reduce(Action::Enter)` を直に呼ぶので、
+/// キー → Action の対応（`Keymap::map_key_to_action`）を飛ばしている。実物では Save モードの
+/// Enter は `Action::Save(..)` になるため、質問は**永久に答えられなかった**（実測で発覚）。
+/// 打鍵から通すテストを 1 本置いて、同じ抜けが二度目に効かないようにする。
+#[test]
+fn enter_answers_the_question_even_from_the_save_prompt() {
+    use crate::state::key::{KeyCode as CtKeyCode, KeyModifiers};
+    use crate::ui::Keymap;
+
+    let root = probe_dir("keymap");
+    let target = root.join("nodir").join("a.txt");
+    let mut editor = editor_saving_to(&target);
+
+    // Ctrl+S 相当でプロンプトへ入り、Enter で保存を投げる（＝質問が開く）。
+    editor.enter_mode(EditorMode::Save);
+    editor.save_filename_buffer = target.to_string_lossy().to_string();
+    let submit = Keymap::map_key_to_action(&editor, CtKeyCode::Enter, KeyModifiers::NONE).unwrap();
+    reduce(&mut editor, submit);
+    assert!(
+        editor.create_dir.is_some(),
+        "precondition: the question is open"
+    );
+
+    // 2 度目の Enter。⚠️ ここが `Action::Save` に化けると質問に答えられない。
+    let answer = Keymap::map_key_to_action(&editor, CtKeyCode::Enter, KeyModifiers::NONE).unwrap();
+    assert!(
+        matches!(answer, Action::Enter),
+        "Enter was mapped to {answer:?}, not the answer"
+    );
+    reduce(&mut editor, answer);
+
+    assert!(editor.create_dir.is_none(), "the question is still open");
+    assert_eq!(std::fs::read_to_string(&target).unwrap(), "hello\n");
 }

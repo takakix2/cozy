@@ -66,7 +66,10 @@ pub fn render_diff_review(editor: &mut EditorState, f: &mut Frame, area: Rect) {
                 DiffLineKind::Context => (' ', Color::Gray),
             };
             let text = format!("  {sign}{}", l.text);
-            rows.push((Line::from(Span::styled(text, Style::default().fg(color))), hi));
+            rows.push((
+                Line::from(Span::styled(text, Style::default().fg(color))),
+                hi,
+            ));
         }
     }
 

@@ -96,18 +96,15 @@ pub fn paste_from_clipboard(editor: &mut EditorState) -> EventResult {
 }
 
 pub fn paste_string(editor: &mut EditorState, s: &str) -> EventResult {
-    match editor.mode {
-        EditorMode::Edit => {
-            mark_modified(editor); // Single snapshot for entire paste
-            for c in s.chars() {
-                if c == '\n' {
-                    editor.buffer.enter(&mut editor.cursor);
-                } else if c != '\r' {
-                    editor.buffer.insert_char(c, &mut editor.cursor);
-                }
+    if editor.mode == EditorMode::Edit {
+        mark_modified(editor); // Single snapshot for entire paste
+        for c in s.chars() {
+            if c == '\n' {
+                editor.buffer.enter(&mut editor.cursor);
+            } else if c != '\r' {
+                editor.buffer.insert_char(c, &mut editor.cursor);
             }
         }
-        _ => {}
     }
     EventResult::Continue
 }

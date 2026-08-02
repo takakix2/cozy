@@ -2,7 +2,7 @@ use crate::state::{EditorState, StatusKind};
 
 pub fn set_success(editor: &mut EditorState, action: &str, target: &str) {
     let msg = if target.is_empty() {
-        format!("{}", action)
+        action.to_string()
     } else {
         format!("{}: {}", action, target)
     };

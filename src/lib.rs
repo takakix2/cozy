@@ -79,12 +79,12 @@ fn create_terminal<W: Write>(
     let backend = CrosstermBackend::new(writer);
     if let Some((cols, rows)) = terminal_size {
         use ratatui::layout::Rect;
-        return Terminal::with_options(
+        Terminal::with_options(
             backend,
             ratatui::TerminalOptions {
                 viewport: ratatui::Viewport::Fixed(Rect::new(0, 0, cols, rows)),
             },
-        );
+        )
     } else {
         Terminal::new(backend)
     }

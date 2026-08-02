@@ -1,5 +1,33 @@
 # Changelog
 
+## v0.2.13
+
+> ⓘ **0.2.12 never reached crates.io.** The version was bumped in the repository but
+> not published, so what it described — the swap flushed on focus loss, and `~` in
+> cozy's own prompts — ships here instead. Upgrading from 0.2.11 gets both releases
+> at once.
+
+### Highlights
+
+- **Saving into a directory that does not exist now asks instead of refusing.**
+  `Ctrl+S` on `~/.ssh/config` when there is no `~/.ssh` used to stop with
+  `Directory not found` and leave you to quit, run `mkdir -p`, and start again.
+  It now offers one line — `Create directory ~/.ssh? — [Enter] create  [Esc] cancel`
+  — in the same shape as the swap-recovery offer: one line, two keys, anything
+  else ignored.
+
+  The two ends of this were both wrong to pick on their own. Creating it silently
+  is what a typo does not deserve: `~/.shh/config` is a slip, and the whole value
+  of the question is that you see the directory spelled out before it exists.
+  Refusing is what nano and vim do, and it is defensible on a desktop where the
+  shell is one `Ctrl+Z` away — but cozy also runs inside a phone app, where the
+  shell you would drop to is a few centimetres wide. So it asks.
+
+  Cancelling stays in the Save prompt with the typed name intact, because a wrong
+  directory usually means a wrong name. `Ctrl+Q` still quits while the question is
+  open — a prompt that swallows the quit key traps you, and the swap already holds
+  the buffer.
+
 ## v0.2.12
 
 ### Highlights

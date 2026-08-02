@@ -315,13 +315,20 @@ mod tests {
             Some(target.to_string_lossy().to_string()),
             Some(&config),
         );
-        assert_eq!(editor.buffer.lines, vec!["saved"], "file, not swap, is shown");
+        assert_eq!(
+            editor.buffer.lines,
+            vec!["saved"],
+            "file, not swap, is shown"
+        );
         assert!(editor.recovery.is_some(), "no offer was made");
 
         crate::reducer::reduce(&mut editor, crate::action::Action::Enter);
 
         assert_eq!(editor.buffer.lines, vec!["saved", "never saved"]);
-        assert!(editor.modified, "restored edits must still count as unsaved");
+        assert!(
+            editor.modified,
+            "restored edits must still count as unsaved"
+        );
         assert_eq!(
             fs::read_to_string(&target).unwrap(),
             "saved\n",
@@ -371,7 +378,11 @@ mod tests {
         crate::reducer::reduce(&mut editor, crate::action::Action::InsertChar('x'));
 
         assert!(editor.recovery.is_some(), "the question is still open");
-        assert_eq!(editor.buffer.lines, vec!["saved"], "the keystroke leaked into the buffer");
+        assert_eq!(
+            editor.buffer.lines,
+            vec!["saved"],
+            "the keystroke leaked into the buffer"
+        );
     }
 
     /// Two files with the same basename in different directories get their own swap.

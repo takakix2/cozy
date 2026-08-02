@@ -111,45 +111,45 @@ pub struct EditorState {
     pub buffer: TextBuffer,
     pub cursor: Cursor,
     pub highlighter: crate::utils::highlight::Highlighter, // syntax highlight cache
-    pub filename: Option<PathBuf>,         // PathBufに変更
-    pub _working_dir: PathBuf,             // 新規: カレントディレクトリ
-    pub modified: bool,                    // 新規: 変更フラグ
-    pub mode: EditorMode,                  // 新規: モード管理
+    pub filename: Option<PathBuf>,                         // PathBufに変更
+    pub _working_dir: PathBuf,                             // 新規: カレントディレクトリ
+    pub modified: bool,                                    // 新規: 変更フラグ
+    pub mode: EditorMode,                                  // 新規: モード管理
     pub diff_review: Option<crate::state::diff::DiffReviewState>, // 新規: セッション diff レビュー状態
-    pub commit_msg_buffer: String,         // 新規: diff レビューからのコミットメッセージ入力
-    pub save_filename_buffer: String,      // 新規: 保存時の入力バッファ
-    pub open_filename_buffer: String,      // 新規: 読み込み時の入力バッファ
-    pub filename_cursor: usize,            // 新規: ファイル名入力カーソル位置 (byte index)
-    pub status_message: Option<String>,    // Optionに変更
+    pub commit_msg_buffer: String, // 新規: diff レビューからのコミットメッセージ入力
+    pub save_filename_buffer: String, // 新規: 保存時の入力バッファ
+    pub open_filename_buffer: String, // 新規: 読み込み時の入力バッファ
+    pub filename_cursor: usize,    // 新規: ファイル名入力カーソル位置 (byte index)
+    pub status_message: Option<String>, // Optionに変更
     pub status_timestamp: Option<Instant>, // 名前変更 & Option化
-    pub status_persistent: bool,           // 新規: 常時表示フラグ
-    pub status_kind: StatusKind,           // 新規: ステータス種別
-    pub scroll_offset: usize,              // 新規: スクロール位置
-    pub _startup_args: Vec<String>,        // 新規: 将来用
-    pub _startup_time: Instant,            // 新規: 将来用
-    pub _footer_shortcuts: Vec<String>,    // 新規: 将来用
+    pub status_persistent: bool,   // 新規: 常時表示フラグ
+    pub status_kind: StatusKind,   // 新規: ステータス種別
+    pub scroll_offset: usize,      // 新規: スクロール位置
+    pub _startup_args: Vec<String>, // 新規: 将来用
+    pub _startup_time: Instant,    // 新規: 将来用
+    pub _footer_shortcuts: Vec<String>, // 新規: 将来用
     pub shortcut_map: std::collections::HashMap<
         (crate::state::key::KeyCode, crate::state::key::KeyModifiers),
         crate::shortcuts::EditorAction,
     >, // 新規: ショートカットマップ
-    pub search_buffer: String,             // 新規: 検索用バッファ
-    pub replace_buffer: String,            // 新規: 置換用バッファ
-    pub search_cursor: usize,              // 検索/置換入力欄のカーソル位置 (byte index)
-    pub replace_focus: ReplaceFocus,       // 新規: 置換モードのフォーカス
-    pub page_size: usize,                  // 新規: ページサイズ
-    pub config: Config,                    // 新規: 設定
-    pub cursor_blink: bool,                // 新規: カーソル点滅フラグ
-    pub search_mode: SearchMode,           // 新規: 検索モード
+    pub search_buffer: String,     // 新規: 検索用バッファ
+    pub replace_buffer: String,    // 新規: 置換用バッファ
+    pub search_cursor: usize,      // 検索/置換入力欄のカーソル位置 (byte index)
+    pub replace_focus: ReplaceFocus, // 新規: 置換モードのフォーカス
+    pub page_size: usize,          // 新規: ページサイズ
+    pub config: Config,            // 新規: 設定
+    pub cursor_blink: bool,        // 新規: カーソル点滅フラグ
+    pub search_mode: SearchMode,   // 新規: 検索モード
     pub undo_stack: Vec<(TextBuffer, Cursor)>, // 新規: Undoスタック
     pub redo_stack: Vec<(TextBuffer, Cursor)>, // 新規: Redoスタック
-    pub last_saved_id: usize,              // 新規: 保存時のスナップショットID（dirty判定用）
-    pub help_scroll_offset: usize,         // ヘルプ画面のスクロール位置
-    pub help_cursor_line: usize,           // ヘルプ画面の現在行（Markdown preview と共通モデル）
-    pub help_view_height: usize,           // ヘルプ画面の表示行数
-    pub help_rendered_line_count: usize,   // ヘルプ画面の折り返し後の行数
-    pub markdown_scroll_offset: usize,     // Markdown preview のスクロール位置
-    pub markdown_cursor_line: usize,       // Markdown preview の現在行
-    pub markdown_view_height: usize,       // Markdown preview の表示行数
+    pub last_saved_id: usize,      // 新規: 保存時のスナップショットID（dirty判定用）
+    pub help_scroll_offset: usize, // ヘルプ画面のスクロール位置
+    pub help_cursor_line: usize,   // ヘルプ画面の現在行（Markdown preview と共通モデル）
+    pub help_view_height: usize,   // ヘルプ画面の表示行数
+    pub help_rendered_line_count: usize, // ヘルプ画面の折り返し後の行数
+    pub markdown_scroll_offset: usize, // Markdown preview のスクロール位置
+    pub markdown_cursor_line: usize, // Markdown preview の現在行
+    pub markdown_view_height: usize, // Markdown preview の表示行数
     pub markdown_rendered_line_count: usize, // Markdown preview のレンダリング後の行数
     pub show_line_numbers_runtime: Option<bool>, // 新規: ランタイム行番号表示フラグ (Noneならconfigに従う)
     pub goto_line_buffer: String,                // 行ジャンプ入力バッファ
@@ -197,6 +197,9 @@ pub struct EditorState {
     /// A swap found at startup, waiting on the user's one-line answer. While
     /// this is set, input is answering the prompt, not editing the buffer.
     pub recovery: Option<crate::swap::Recovery>,
+    /// A save that stopped because the target's parent directory does not
+    /// exist, waiting on the same kind of one-line answer as `recovery`.
+    pub create_dir: Option<crate::file_io::CreateDirOffer>,
 }
 
 pub(crate) struct EditorStateInit {
@@ -369,6 +372,7 @@ impl EditorState {
             swap_edits: 0,
             swap_dirty: false,
             recovery: None,
+            create_dir: None,
         }
         .with_recovery_offer()
     }
@@ -390,8 +394,7 @@ impl EditorState {
     }
 
     pub fn save_snapshot(&mut self) {
-        self.undo_stack
-            .push((self.buffer.clone(), self.cursor.clone()));
+        self.undo_stack.push((self.buffer.clone(), self.cursor));
         self.redo_stack.clear();
     }
 
