@@ -42,6 +42,53 @@ fn expand_tilde(path: &str) -> PathBuf {
     }
 }
 
+/// テストが `HOME` を差し替えるときの直列化ロック。
+///
+/// ⚠️ **モジュールを跨いで共有する。** `HOME` はプロセス全域で、テストハーネスは同じ
+/// プロセスの別スレッドで走るので、モジュールごとにロックを持つと**互いに気づかないまま
+/// 取り合う**（片方が戻した値をもう片方が読む）。
+#[cfg(test)]
+pub(crate) static HOME_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// [`expand_tilde`] の逆。ホームの下にあるパスを `~/…` の形にして**見せる**。
+///
+/// なぜ要るのか: cozy は開いたファイルを**解決済みの絶対パスで持っている**ので、保存プロンプトは
+/// 利用者が打った `~/notes.md` ではなく `/home/you/notes.md` を出す。desktop では冗長なだけだが、
+/// **cozy が電話の中（argo）で動くときは致命的**で、ホストが VFS 翻訳した後の
+/// `/data/data/com.hsh.mobile/files/notes.md` のような**コンテナパスがそのまま画面に出る**。
+/// hsh 側は「物理パスは利用者が絶対に見てはならない不透明なコンテナパス」と決めているので、
+/// そこだけ約束が破れていた（2026-08-04 に実機で指摘された）。
+///
+/// ⚠️ **境界はパス区切りで見る。** `HOME=/home/al` のとき `/home/alice/x` を
+/// `~ice/x` にしてはいけない。
+/// ⚠️ **`/` をホームとする環境では縮めない** —— 全部が `~/…` になり、`~` が何も意味しなくなる。
+/// ⭐ 戻り値は [`expand_tilde`] が受け付ける形（`~` 単独 / `~/…`）だけ ＝ **往復する**。
+/// 画面に出す文字列と、保存時に解決される文字列が同じものである、というのがこの対の要件。
+pub(crate) fn shorten_home(path: &str) -> String {
+    let Some(home) = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .or_else(dirs::home_dir)
+    else {
+        return path.to_string();
+    };
+    let Some(home) = home.to_str() else {
+        return path.to_string();
+    };
+    // 空や `/` を home とする環境では縮めない（縮めても情報が増えない）。
+    if home.is_empty() || home == "/" {
+        return path.to_string();
+    }
+    let home = home.strip_suffix('/').unwrap_or(home);
+    if path == home {
+        return "~".to_string();
+    }
+    match path.strip_prefix(home) {
+        // 区切りが続くときだけ ＝ home がパス成分として一致したときだけ縮める。
+        Some(rest) if rest.starts_with('/') => format!("~{rest}"),
+        _ => path.to_string(),
+    }
+}
+
 pub(crate) fn load_startup_document(filename: Option<&str>) -> StartupDocument {
     let Some(path) = filename else {
         return StartupDocument::Empty;
@@ -424,12 +471,10 @@ mod tilde_tests {
     // まず `$HOME` を読むので、**両者は一致する**。テストは差を検出できていなかった。
     // ∴ ここが主張できるのは「展開する」ことだけ。⚠️ 展開そのものを外すと 2 本落ちる（実測）。
 
-    /// `HOME` はプロセス全域なので、書き換えるテストは直列化する。
-    static HOME_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
     /// `HOME` を差し替えて `f` を走らせ、必ず元に戻す。
+    /// ⚠️ ロックは `file_io::HOME_LOCK`（モジュール跨ぎで共有・上の doc）。
     fn with_home<T>(home: &str, f: impl FnOnce() -> T) -> T {
-        let _guard = HOME_LOCK
+        let _guard = super::HOME_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let original = std::env::var_os("HOME");
@@ -443,6 +488,61 @@ mod tilde_tests {
             }
         }
         out
+    }
+
+    #[test]
+    fn a_path_under_home_is_shown_with_a_tilde() {
+        // ⭐ **表示方向**。cozy は解決済みの絶対パスを持っているので、これが無いと
+        // 保存プロンプトが `/home/you/notes.md` を出す —— argo の中では
+        // `/data/data/com.hsh.mobile/files/notes.md` という**コンテナパスが画面に出る**。
+        with_home("/tmp/cozy-home-test", || {
+            assert_eq!(shorten_home("/tmp/cozy-home-test/notes.md"), "~/notes.md");
+            assert_eq!(shorten_home("/tmp/cozy-home-test"), "~");
+        });
+    }
+
+    #[test]
+    fn shorten_home_only_matches_whole_path_components() {
+        // ⚠️ `HOME=/tmp/cozy-home-test` で `/tmp/cozy-home-testing/x` を
+        // `~ing/x` にしてはいけない。前方一致だけで判定すると必ずこれを踏む。
+        with_home("/tmp/cozy-home-test", || {
+            assert_eq!(
+                shorten_home("/tmp/cozy-home-testing/x"),
+                "/tmp/cozy-home-testing/x"
+            );
+            // home の外は素通り。
+            assert_eq!(shorten_home("/etc/hosts"), "/etc/hosts");
+            // 相対パスも素通り（そのまま見せるのが正しい）。
+            assert_eq!(shorten_home("notes.md"), "notes.md");
+        });
+    }
+
+    #[test]
+    fn a_root_home_is_never_shortened() {
+        // `HOME=/` の環境で縮めると**全部が `~/…`** になり、`~` が何も意味しなくなる。
+        with_home("/", || {
+            assert_eq!(shorten_home("/etc/hosts"), "/etc/hosts");
+        });
+    }
+
+    #[test]
+    fn shortening_and_expanding_are_a_round_trip() {
+        // ⭐ **対であることが要件**。画面に出す文字列は、保存時に解決される文字列と
+        // 同じ場所を指していなければならない（利用者はこの buffer をそのまま編集する）。
+        with_home("/tmp/cozy-home-test", || {
+            for original in [
+                "/tmp/cozy-home-test/notes.md",
+                "/tmp/cozy-home-test/a/b/c.txt",
+                "/tmp/cozy-home-test",
+            ] {
+                let shown = shorten_home(original);
+                assert_eq!(
+                    expand_tilde(&shown),
+                    PathBuf::from(original),
+                    "{shown} must resolve back to {original}"
+                );
+            }
+        });
     }
 
     #[test]

@@ -1,5 +1,29 @@
 # Changelog
 
+## v0.2.14
+
+### Highlights
+
+- **The Save and Open prompts show `~` again instead of the resolved path.** cozy
+  holds the file it opened as an absolute path, so pressing `Ctrl+S` on a file you
+  opened as `~/notes.md` used to answer `File: [/home/you/notes.md]`. On a desktop
+  that is merely verbose. Inside the phone app it is a leak: the host rewrites the
+  path into the sandbox's real location before cozy sees it, so the prompt was
+  spelling out `/data/data/com.hsh.mobile/files/notes.md` — a container path the
+  shell around it deliberately never shows, and one you cannot usefully type.
+
+  `~` had only ever worked in the *typing* direction (v0.2.12). This is the other
+  half: a path under `$HOME` is shortened for display, and `Enter` expands it back,
+  so the string on screen and the file that gets written are the same thing.
+
+  Only whole path components match — with `HOME=/home/al`, `/home/alice/x` stays
+  as it is rather than becoming `~ice/x`. A `HOME` of `/` never shortens: turning
+  every path into `~/…` would make `~` mean nothing.
+
+  ⚠️ The shortening happens where the prompt's buffer is seeded, not where it is
+  drawn. That buffer is what you then edit, so shortening at draw time would leave
+  the cursor pointing into a different string than the one on screen.
+
 ## v0.2.13
 
 > ⓘ **0.2.12 never reached crates.io.** The version was bumped in the repository but

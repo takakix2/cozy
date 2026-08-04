@@ -458,10 +458,14 @@ impl EditorState {
                 // hit Enter to drop a memo into the current folder. The default
                 // dodges existing files by counting up: untitled (1).txt, etc.
                 let dir = self._working_dir.clone();
+                // ⚠️ **縮めるのは種を仕込むここ**（描画時ではない）。この文字列は
+                // そのまま編集される buffer なので、表示だけ別物にすると
+                // `filename_cursor` が指す位置と食い違う。
+                // 保存時は `file_io` の `expand_tilde` が戻すので往復する。
                 self.save_filename_buffer = self
                     .filename
                     .as_ref()
-                    .map(|p| p.to_string_lossy().to_string())
+                    .map(|p| crate::file_io::shorten_home(&p.to_string_lossy()))
                     .unwrap_or_else(|| default_save_name(&dir));
                 self.filename_cursor = self.save_filename_buffer.len();
                 self.status_message = None;
@@ -470,7 +474,7 @@ impl EditorState {
                 self.open_filename_buffer = self
                     .filename
                     .as_ref()
-                    .map(|p| p.to_string_lossy().to_string())
+                    .map(|p| crate::file_io::shorten_home(&p.to_string_lossy()))
                     .unwrap_or_default();
                 self.filename_cursor = self.open_filename_buffer.len();
                 self.status_message = None;

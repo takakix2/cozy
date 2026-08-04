@@ -1011,6 +1011,40 @@ fn test_save_prompt_defaults_to_untitled_for_new_buffer() {
 }
 
 #[test]
+fn test_save_prompt_shows_home_as_a_tilde() {
+    // ⭐ **これが実際に画面に出る文字列**。cozy は解決済みの絶対パスを持っているので、
+    // 縮めないと保存プロンプトが `/home/you/notes.md` を出す —— argo の中では
+    // `/data/data/com.hsh.mobile/files/notes.md` という**コンテナパスが利用者に見える**
+    // （2026-08-04 に iOS 実機で指摘された。hsh は「物理パスは見せない」と決めている）。
+    //
+    // ⚠️ 縮めるのは **buffer の種**であって描画ではない。buffer はそのまま編集されるので、
+    // カーソル位置がこの文字列の長さと一致していることまで主張する。
+    let _guard = crate::file_io::HOME_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let original = std::env::var_os("HOME");
+    // SAFETY: home_lock() で直列化済み。
+    unsafe { std::env::set_var("HOME", "/tmp/cozy-prompt-home") };
+
+    let mut editor = EditorState::new(Some("/tmp/cozy-prompt-home/notes.md".to_string()));
+    editor.enter_mode(EditorMode::Save);
+    assert_eq!(editor.save_filename_buffer, "~/notes.md");
+    assert_eq!(editor.filename_cursor, "~/notes.md".len());
+
+    // home の外は縮まらない（縮めすぎの否定 —— 片方だけだと「常に ~ を付ける」でも緑になる）。
+    let mut outside = EditorState::new(Some("/etc/hosts".to_string()));
+    outside.enter_mode(EditorMode::Save);
+    assert_eq!(outside.save_filename_buffer, "/etc/hosts");
+
+    unsafe {
+        match original {
+            Some(v) => std::env::set_var("HOME", v),
+            None => std::env::remove_var("HOME"),
+        }
+    }
+}
+
+#[test]
 fn test_save_default_name_counts_up_on_collision() {
     let dir = std::env::temp_dir().join(format!("cozy_untitled_collide_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
