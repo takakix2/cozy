@@ -1,5 +1,27 @@
 # Changelog
 
+## v0.2.15
+
+### Highlights
+
+- **A cramped footer now offers `^Q Quit` where it used to offer `^X Exit`.** The two
+  keys look like different answers and are almost the same one: `^X` and `^S` both
+  land in the identical `File:` prompt, and only diverge after you press Enter. So on
+  a narrow screen one of those two slots was spent saying the same thing twice, while
+  the key that does something genuinely different — leave *without* saving — was not
+  shown at all.
+
+  That matters most exactly where the room is smallest. cozy runs inside a phone
+  terminal, where dropping to a shell to sort it out is not the easy escape it is on
+  a desktop, so the way out belongs on screen.
+
+  Only the two cramped layouts changed: the single-row footer (three slots) and the
+  narrow two-row one (under 80 columns). At full width `^X Exit` stays — nano's
+  muscle memory is worth keeping where there is room for both — and the four-row
+  layout already showed both.
+
+  ⚠️ **No key was removed.** `^X` still exits; it is only off the sign.
+
 ## v0.2.14
 
 ### Highlights

@@ -541,13 +541,29 @@ fn render_glide_shortcuts(editor: &EditorState, f: &mut Frame, area: Rect) {
     }
 }
 
+/// 幅が足りない段で **`^X Exit` の枠を `^Q Quit` に譲る**かどうか。
+///
+/// `^X`(`EnterExit`) と `^S`(`EnterSave`) は**同じ `File:` プロンプトに着く**
+/// （`EditorState::enter_mode` が `Save | Quit` を同じ腕で処理する）。違うのは Enter を
+/// 押した後だけなので、狭い footer に両方載せると **1 枠が実質重複**する。
+/// 一方 `^Q`(`ForceQuit`) は**保存せず出る**＝ここでしか辿り着けない唯一の出口で、
+/// しかも**電話の中で一番要る**（シェルへ落ちるのが容易でない）。
+/// ∴ 枠が足りないときは `^X` ではなく `^Q` を見せる。
+///
+/// ⚠️ **鍵は消していない。** `^X` は今までどおり効く —— 案内から外れるだけ。
+/// ⚠️ 4 行入る段（幅 50 未満・高さ 2 行以上）は**両方載る**ので入れ替えない。
+fn quit_takes_the_exit_slot(area: Rect) -> bool {
+    area.width < 80
+}
+
 fn render_edit_shortcuts(editor: &EditorState, f: &mut Frame, area: Rect) {
     if area.width < 50 {
         if area.height <= 1 {
+            // 1 行しか無い ＝ 3 枠。`^X` を `^Q` に譲る（上の doc）。
             f.render_widget(
                 Paragraph::new(compact_line(
                     editor,
-                    &[("^S", "Save"), ("^X", "Exit"), ("^D", "Md")],
+                    &[("^S", "Save"), ("^Q", "Quit"), ("^D", "Md")],
                 )),
                 row(area, 0),
             );
@@ -585,6 +601,12 @@ fn render_edit_shortcuts(editor: &EditorState, f: &mut Frame, area: Rect) {
     } else {
         let narrow = area.width < 80;
         let layout = wide_layout(area);
+        // 狭いときは `Ctrl+X Exit` の枠を `Ctrl+Q Quit` に譲る（`quit_takes_the_exit_slot`）。
+        let third = if quit_takes_the_exit_slot(area) {
+            ("Ctrl+Q", "Quit")
+        } else {
+            ("Ctrl+X", "Exit")
+        };
         f.render_widget(
             Paragraph::new(shortcut_line(
                 editor,
@@ -592,7 +614,7 @@ fn render_edit_shortcuts(editor: &EditorState, f: &mut Frame, area: Rect) {
                 &[
                     ("Ctrl+S", "Save"),
                     ("Ctrl+B", "Browse"),
-                    ("Ctrl+X", "Exit"),
+                    third,
                     ("Ctrl+F", "Find"),
                     ("Ctrl+R", "Replace"),
                 ],
@@ -1355,6 +1377,47 @@ mod tests {
     }
 
     #[test]
+    fn a_cramped_footer_advertises_quit_instead_of_exit() {
+        // ⭐ `^X`(EnterExit) と `^S`(EnterSave) は**同じ `File:` プロンプト**に着く
+        // （`enter_mode` が `Save | Quit` を同じ腕で処理する）ので、枠が足りないときに
+        // 両方載せると 1 枠が実質重複する。`^Q`(ForceQuit) は保存せず出る唯一の道で、
+        // **電話の中で一番要る**（シェルへ落ちるのが容易でない）。
+        // 2026-08-04 に iOS 実機を使っていて指摘された。
+        let editor = EditorState::new(Some("smoke.txt".to_string()));
+
+        // 50–79 列（2 行）: `^X` の枠を `^Q` が取る。
+        let narrow = render_footer_lines(&editor, 79, 2).join("\n");
+        assert!(
+            narrow.contains("^Q"),
+            "narrow footer needs the quit key: {narrow:?}"
+        );
+        assert!(
+            !narrow.contains("^X"),
+            "narrow footer should not spend a slot on the near-duplicate: {narrow:?}"
+        );
+
+        // 1 行しか無い段（3 枠）も同じ。
+        let one_row = render_footer_lines(&editor, 40, 1).join("\n");
+        assert!(one_row.contains("^Q"), "{one_row:?}");
+        assert!(!one_row.contains("^X"), "{one_row:?}");
+
+        // ⭐ **対の主張**: 幅が足りれば `Ctrl+X` は戻る。片方だけだと
+        // 「どこでも Q に置き換える」実装でも緑になる。
+        let wide = render_footer_lines(&editor, 100, 2).join("\n");
+        assert!(
+            wide.contains("Ctrl+X"),
+            "wide footer keeps nano's exit: {wide:?}"
+        );
+
+        // 4 行入る段は元から両方載っているので入れ替えていない。
+        let four_rows = render_footer_lines(&editor, 40, 4).join("\n");
+        assert!(
+            four_rows.contains("^X") && four_rows.contains("^Q"),
+            "the four-row footer has room for both: {four_rows:?}"
+        );
+    }
+
+    #[test]
     fn narrow_edit_status_omits_cursor_position() {
         let editor = EditorState::new(Some("smoke.txt".to_string()));
         let (left, right) = match editor.mode {
@@ -1429,9 +1492,13 @@ mod tests {
     fn one_row_narrow_edit_shows_primary_actions() {
         let editor = editor_in_mode(EditorMode::Edit);
 
+        // ⚠️ 2026-08-04: 3 枠目が `^X Exit` から `^Q Quit` になった。理由は
+        // `quit_takes_the_exit_slot` の doc（`^X` は `^S` と同じプロンプトに着くので
+        // 狭いところでは枠の無駄・`^Q` は保存せず出る唯一の道）。
+        // ⭐ 幅は変わっていない（どちらも 7 桁）ので、iPhone 幅の主張は無傷。
         assert_eq!(
             render_footer_lines(&editor, 26, 1),
-            vec!["^S Save ^X Exit ^D Md".to_string()]
+            vec!["^S Save ^Q Quit ^D Md".to_string()]
         );
     }
 
