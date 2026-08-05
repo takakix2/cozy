@@ -1,5 +1,29 @@
 # Changelog
 
+## v0.2.16
+
+### Highlights
+
+- **Paths outside `$HOME` can be shown from the sandbox root now.** v0.2.14 shortened a
+  path under `$HOME` to `~/…`, which covers what people usually open. It did nothing for
+  anything above that: inside the phone app, `cozy /notes.md` still answered
+  `File: [/private/var/mobile/Containers/…/notes.md]` — the container path the shell
+  around it deliberately never shows, and one you cannot usefully type back.
+
+  A host that runs cozy inside a sandbox can now say where the root is by setting
+  `COZY_SANDBOX_ROOT` to the physical container path (the same shape as `COZY_COMPACT` —
+  cozy cannot work this out for itself). With that, a path under the root displays as
+  `/notes.md`, and typing `/notes.md` back resolves under the root, so the two directions
+  agree.
+
+  `$HOME` still wins where both apply, because it is the more specific of the two —
+  otherwise `~/notes.md` would come back as `/Documents/notes.md` on iOS. A path already
+  under the root is left alone rather than prefixed twice, since a host that translates
+  before handing the file over will pass one in.
+
+  ⚠️ With no `COZY_SANDBOX_ROOT` set, nothing changes at all — this is invisible on a
+  desktop.
+
 ## v0.2.15
 
 ### Highlights

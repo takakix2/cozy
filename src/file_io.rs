@@ -37,8 +37,46 @@ fn expand_tilde(path: &str) -> PathBuf {
             // `~/x` → `<home>/x`。home が分からなければ原文のまま（黙って別の場所に
             // 書くより、呼び出し側のエラーとして見えた方が良い）。
             Some(rest) => home().map_or_else(|| PathBuf::from(path), |h| h.join(rest)),
-            None => PathBuf::from(path),
+            None => expand_sandbox_root(path),
         },
+    }
+}
+
+/// ホストがサンドボックス根を宣言しているとき、**論理絶対パス** `/x` を `<root>/x` にする。
+///
+/// [`shorten_sandbox_root`] の逆で、対で往復する。宣言が無ければ何もしない。
+///
+/// ⚠️ **既に根の下にあるパスは触らない。** ホスト（argo）は cozy へ渡す前に自分で翻訳して
+/// いるので、`<root>/x` がそのまま届く。ここで無条件に前置すると `<root><root>/x` になる。
+/// ⚠️ **相対パスも触らない** —— cwd からの解決はプロセスに任せる。
+fn expand_sandbox_root(path: &str) -> PathBuf {
+    let Some(root) = crate::runtime_env::sandbox_root() else {
+        return PathBuf::from(path);
+    };
+    let p = PathBuf::from(path);
+    if !p.is_absolute() || p.starts_with(&root) {
+        return p;
+    }
+    // `/x` → `<root>/x`（先頭の `/` を剥がして join する）
+    root.join(path.trim_start_matches('/'))
+}
+
+/// [`expand_sandbox_root`] の逆。根の下のパスを `/…` の形にして**見せる**。
+///
+/// ⚠️ 呼ぶのは [`shorten_home`] が縮められなかったときだけ —— `$HOME` は根の**下**に
+/// 在るので（iOS は `<root>/Documents`）、先に `~` を試さないと `~/x` が `/Documents/x`
+/// として出てしまう。**より具体的な方を優先する。**
+fn shorten_sandbox_root(path: &str) -> Option<String> {
+    let root = crate::runtime_env::sandbox_root()?;
+    let root = root.to_str()?;
+    let root = root.strip_suffix('/').unwrap_or(root);
+    if path == root {
+        return Some("/".to_string());
+    }
+    match path.strip_prefix(root) {
+        // 区切りが続くときだけ ＝ 根がパス成分として一致したときだけ縮める。
+        Some(rest) if rest.starts_with('/') => Some(rest.to_string()),
+        _ => None,
     }
 }
 
@@ -65,19 +103,17 @@ pub(crate) static HOME_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 /// ⭐ 戻り値は [`expand_tilde`] が受け付ける形（`~` 単独 / `~/…`）だけ ＝ **往復する**。
 /// 画面に出す文字列と、保存時に解決される文字列が同じものである、というのがこの対の要件。
 pub(crate) fn shorten_home(path: &str) -> String {
-    let Some(home) = std::env::var_os("HOME")
+    let home = std::env::var_os("HOME")
         .map(PathBuf::from)
         .or_else(dirs::home_dir)
-    else {
-        return path.to_string();
+        .and_then(|h| h.to_str().map(str::to_string))
+        // 空や `/` を home とする環境では縮めない（縮めても情報が増えない）。
+        .filter(|h| !h.is_empty() && h != "/");
+    let Some(home) = home else {
+        // ⭐ home が無くても、根が宣言されていれば `/…` には縮められる。
+        return shorten_sandbox_root(path).unwrap_or_else(|| path.to_string());
     };
-    let Some(home) = home.to_str() else {
-        return path.to_string();
-    };
-    // 空や `/` を home とする環境では縮めない（縮めても情報が増えない）。
-    if home.is_empty() || home == "/" {
-        return path.to_string();
-    }
+    let home = home.as_str();
     let home = home.strip_suffix('/').unwrap_or(home);
     if path == home {
         return "~".to_string();
@@ -85,7 +121,9 @@ pub(crate) fn shorten_home(path: &str) -> String {
     match path.strip_prefix(home) {
         // 区切りが続くときだけ ＝ home がパス成分として一致したときだけ縮める。
         Some(rest) if rest.starts_with('/') => format!("~{rest}"),
-        _ => path.to_string(),
+        // ⭐ home の外なら、根の下かどうかを次に試す（`$HOME` は根の**下**に在るので、
+        // 順序は「具体的な方が先」）。宣言が無ければ原文のまま。
+        _ => shorten_sandbox_root(path).unwrap_or_else(|| path.to_string()),
     }
 }
 
@@ -488,6 +526,103 @@ mod tilde_tests {
             }
         }
         out
+    }
+
+    /// `HOME` と `COZY_SANDBOX_ROOT` を同時に敷いて `f` を走らせ、必ず元に戻す。
+    /// ⚠️ ロックは `HOME_LOCK` を共用する（どちらもプロセス全域の env なので）。
+    fn with_sandbox<T>(root: &str, home: &str, f: impl FnOnce() -> T) -> T {
+        let _guard = super::HOME_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let (oh, or_) = (
+            std::env::var_os("HOME"),
+            std::env::var_os("COZY_SANDBOX_ROOT"),
+        );
+        // SAFETY: HOME_LOCK で直列化済み。
+        unsafe {
+            std::env::set_var("HOME", home);
+            std::env::set_var("COZY_SANDBOX_ROOT", root);
+        }
+        let out = f();
+        unsafe {
+            match oh {
+                Some(v) => std::env::set_var("HOME", v),
+                None => std::env::remove_var("HOME"),
+            }
+            match or_ {
+                Some(v) => std::env::set_var("COZY_SANDBOX_ROOT", v),
+                None => std::env::remove_var("COZY_SANDBOX_ROOT"),
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn a_path_outside_home_is_shown_from_the_sandbox_root() {
+        // ⭐ **`cozy /notes.md` のための対**。`$HOME` の下は `~` で縮むが、その外側
+        // （コンテナ直下）は縮めようがなく、保存プロンプトに物理パスが出ていた。
+        // iOS の形をそのまま敷く: 根＝コンテナ、`$HOME` はその下の `Documents`。
+        with_sandbox("/private/container", "/private/container/Documents", || {
+            // home の外 ＝ 根からの論理パスで見せる
+            assert_eq!(shorten_home("/private/container/notes.md"), "/notes.md");
+            assert_eq!(shorten_home("/private/container/Library/x"), "/Library/x");
+            assert_eq!(shorten_home("/private/container"), "/");
+            // ⭐ **home の下は今までどおり `~`** —— 根より具体的な方を優先する。
+            // これが逆だと `~/notes.md` が `/Documents/notes.md` として出る。
+            assert_eq!(
+                shorten_home("/private/container/Documents/notes.md"),
+                "~/notes.md"
+            );
+            // 根の外は触らない（縮めすぎの否定）
+            assert_eq!(shorten_home("/etc/hosts"), "/etc/hosts");
+            // 成分単位でしか一致させない
+            assert_eq!(
+                shorten_home("/private/container-2/x"),
+                "/private/container-2/x"
+            );
+        });
+    }
+
+    #[test]
+    fn the_sandbox_root_round_trips() {
+        // ⭐ 画面に出す文字列は、保存時に解決される文字列と同じ場所を指す必要がある。
+        with_sandbox("/private/container", "/private/container/Documents", || {
+            for original in [
+                "/private/container/notes.md",
+                "/private/container/Library/x",
+                "/private/container/Documents/notes.md",
+            ] {
+                let shown = shorten_home(original);
+                assert_eq!(
+                    expand_tilde(&shown),
+                    PathBuf::from(original),
+                    "{shown} must resolve back to {original}"
+                );
+            }
+        });
+    }
+
+    #[test]
+    fn an_already_physical_path_is_not_prefixed_twice() {
+        // ⚠️ ホスト（argo）は cozy へ渡す前に自分で翻訳しているので `<root>/x` が届く。
+        // それを無条件に前置すると `<root><root>/x` になる。
+        with_sandbox("/private/container", "/private/container/Documents", || {
+            assert_eq!(
+                expand_tilde("/private/container/notes.md"),
+                PathBuf::from("/private/container/notes.md")
+            );
+            // 相対パスも触らない
+            assert_eq!(expand_tilde("notes.md"), PathBuf::from("notes.md"));
+        });
+    }
+
+    #[test]
+    fn without_a_declared_root_nothing_is_translated() {
+        // ⭐ **desktop のカナリア**。宣言が無ければ `/…` は `/…` のまま。
+        with_home("/tmp/cozy-home-test", || {
+            assert_eq!(shorten_home("/etc/hosts"), "/etc/hosts");
+            assert_eq!(expand_tilde("/etc/hosts"), PathBuf::from("/etc/hosts"));
+        });
     }
 
     #[test]
