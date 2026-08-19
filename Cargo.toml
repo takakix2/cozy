@@ -1,6 +1,6 @@
 [package]
 name = "cozy"
-version = "0.2.17"
+version = "0.2.18"
 edition = "2024"
 rust-version = "1.85"
 description = "A Comfort First terminal text editor: type like nano, navigate like vim"
@@ -66,3 +66,8 @@ treesitter = [
 [lib]
 name = "cozy"
 path = "src/lib.rs"
+
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"

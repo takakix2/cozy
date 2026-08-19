@@ -1,5 +1,32 @@
 # Changelog
 
+## v0.2.18
+
+### Highlights
+
+- **cozy can be installed without a Rust toolchain.** Until now there was exactly one
+  way in — `cargo install cozy` — which serves the half of the audience that already has
+  `cargo`. The pitch is *type like nano*, so the person who most wants cozy is the one
+  least likely to have a Rust toolchain at all.
+
+  This release publishes prebuilt binaries for macOS and Linux (Apple Silicon and Intel,
+  x86-64 and arm64) on the GitHub release, plus a Homebrew tap:
+
+  ```sh
+  brew install takakix2/tap/cozy
+  ```
+
+  Homebrew is the macOS answer specifically. A tarball dropped in `~/.local/bin` is on
+  `PATH` by default on current Debian/Ubuntu and Fedora, and **not** on macOS — so a
+  manual install "succeeds" and then `cozy` is command not found, which reads as *the
+  app is broken* rather than *my PATH is short*. Homebrew's prefix is always on `PATH`.
+  There is also a shell installer on the release, and it installs to `~/.local/bin`
+  rather than `$CARGO_HOME/bin` for the same reason.
+
+  ⚠️ **The code is unchanged from v0.2.17.** Nothing about the editor is different in
+  this release; what changed is how you can get it. The Linux binaries keep clipboard
+  support, and require glibc 2.35 or newer.
+
 ## v0.2.17
 
 ### Highlights
