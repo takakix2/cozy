@@ -1,5 +1,28 @@
 # Changelog
 
+## v0.2.17
+
+### Highlights
+
+- **cozy now answers where its config file lives.** An embedding host could already
+  *move* that file — `CozyConfig::config_dir` has always been public — but nothing
+  published where it lands when the host does not move it. Half a contract: you could
+  override the answer without being able to ask what you were overriding.
+
+  So argo wrote the rule out a second time, and the two copies drifted. One machine
+  ended up holding `~/Library/Application Support/cozy/config.toml` *and*
+  `~/.hsh/cozy/config.toml`, and editing either one changed only one of the two ways
+  of launching cozy — the same editor, the same machine, two settings.
+
+  `cozy::user_config_path(config_dir)` is now exported. Pass the host's override to get
+  the file under it; pass `None` to get the default cozy would have used
+  (`$XDG_CONFIG_HOME/cozy/config.toml`, falling back to `~/.cozy/config.toml`). The
+  override and its default are a pair, and only one side of the pair was reachable.
+
+  ⚠️ **Nothing about cozy's own behaviour changed.** This release adds an export, so a
+  desktop `cargo install cozy` sees no difference; it exists so a host can ask instead
+  of reimplement.
+
 ## v0.2.16
 
 ### Highlights

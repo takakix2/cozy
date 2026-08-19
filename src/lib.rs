@@ -16,6 +16,12 @@ mod swap;
 mod ui;
 mod utils;
 
+/// **設定ファイルの住所を答えるのは cozy 自身**。
+///
+/// ⚠️ 埋め込むホスト（argo）が同じ判定を書き写すと、**同じ問いに 2 つの答え**ができる。
+/// ⭐ 既に `CozyConfig::config_dir` で「上書きできる」ことは公開しているので、
+/// **「上書きしなければどこか」も公開する**のが対（片方だけ公開している状態だった）。
+pub use config_io::user_config_path;
 pub use host::{run_cli, run_cli_from_env, run_cli_with_config};
 pub use input::{CrosstermEventSource, EventSource};
 use ratatui::{Terminal, backend::CrosstermBackend};
