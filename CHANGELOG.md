@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.2.19
+
+### Highlights
+
+- **The crates.io page now says how to install cozy without `cargo`.** v0.2.18 shipped
+  prebuilt binaries and a Homebrew tap, and then told nobody: crates.io renders the
+  README **as it was at publish time**, so the crate page kept offering
+  `cargo install cozy` as the only way in — the exact gap v0.2.18 existed to close, left
+  standing in the first place most people look.
+
+  There is no way to correct that without publishing again, which is what this release
+  is. ⚠️ **No code changed** — v0.2.19 is byte-for-byte the same editor as v0.2.18. If
+  you already have it, there is nothing to update for.
+
 ## v0.2.18
 
 ### Highlights
