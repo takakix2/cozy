@@ -13,6 +13,25 @@ cozy is a small Rust terminal text editor for people who want direct, low-fricti
 
 ## Install
 
+**macOS — Homebrew.** This is the recommended way on a mac: Homebrew's prefix is always
+on `PATH`, so `cozy` is there the moment it finishes.
+
+```bash
+brew install takakix2/tap/cozy
+```
+
+**macOS / Linux — prebuilt binary.** Installs to `~/.local/bin`. No Rust toolchain
+needed.
+
+```bash
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/takakix2/cozy/releases/latest/download/cozy-installer.sh | sh
+```
+
+Archives for each platform are attached to every [release](https://github.com/takakix2/cozy/releases)
+if you would rather place the binary yourself. Linux binaries need glibc 2.35 or newer.
+
+**With a Rust toolchain.**
+
 ```bash
 cargo install cozy
 ```

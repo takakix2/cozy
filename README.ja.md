@@ -13,6 +13,25 @@ cozy は Rust 製の小さなターミナルテキストエディタです。普
 
 ## インストール
 
+**macOS — Homebrew.** mac ではこれを推奨します。Homebrew の prefix は常に `PATH` に
+在るので、入れ終わった時点で `cozy` が使えます。
+
+```bash
+brew install takakix2/tap/cozy
+```
+
+**macOS / Linux — ビルド済みバイナリ.** `~/.local/bin` に入ります。Rust ツールチェーンは
+要りません。
+
+```bash
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/takakix2/cozy/releases/latest/download/cozy-installer.sh | sh
+```
+
+自分で配置したい場合は、各[リリース](https://github.com/takakix2/cozy/releases)に
+プラットフォームごとのアーカイブが付いています。Linux バイナリは glibc 2.35 以上が必要です。
+
+**Rust ツールチェーンがある場合.**
+
 ```bash
 cargo install cozy
 ```
