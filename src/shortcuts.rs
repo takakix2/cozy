@@ -48,7 +48,29 @@ pub struct Shortcut {
     pub key: KeyCode,
     pub modifiers: KeyModifiers,
     pub action: EditorAction,
+    /// `"Ctrl+H Help"` のような、**画面に出すための一言**。
+    ///
+    /// ⚠️ **いまは誰も読んでいない。** 帯（footer）は `#2` 段③で
+    /// `key_for` からキー名を引く形になり、ラベルは呼び出し側が持つようになった。
+    /// ⭐ 残してあるのは **Help 画面の材料**だから —— あちらはまだ 40 行以上を
+    /// べた書きしており、`[keys]` の上書きに追随しない（`#2` と同じ形が残っている）。
+    /// 📌 Help を直すときにここから引く。それまでは読み手がいない。
+    #[allow(dead_code)]
     pub label: &'static str,
+    /// この鍵は「主」ではなく、**主の鍵が届かない環境のために置いた 2 本目**か。
+    ///
+    /// 🚨 これが構造に無かった間、`[keys]` の上書きは**そのアクションの割り当てを
+    /// 全部**消していた。∴ `enter_help = "f5"` と書いただけで、
+    /// **書いてもいない `F1` まで消えた** —— しかも `F1` は
+    /// 「`Ctrl+H` は端末によっては Backspace(0x08) として飲まれる」という
+    /// **理由つきで**置かれていた（`#2`）。⭐ 上書きは、書き留められた理由ごと
+    /// 消していたことになる。
+    ///
+    /// ⚠️ **印は理由と対で置く。** ここが `true` のものは、すぐ上のコメントに
+    /// 「なぜ主の鍵が届かないことがあるか」が書いてある。理由の無い 2 本目
+    /// （`Alt+\` と `Ctrl+Home` のような**別々の流儀**）は `false` のまま ——
+    /// あれは保険ではなく、どちらも主。
+    pub fallback: bool,
 }
 
 // Shortcut constructor helper - makes definitions more compact
@@ -63,6 +85,23 @@ fn sc(
         modifiers,
         action,
         label,
+        fallback: false,
+    }
+}
+
+/// **主の鍵が届かない環境のために置く 2 本目。**
+///
+/// ⭐ `[keys]` の上書きはこれを消さない —— 上書きした人が置き換えたいのは
+/// **主の鍵**であって、届かないときの逃げ道ではない（`Shortcut::fallback` を見よ）。
+fn sc_fallback(
+    key: KeyCode,
+    modifiers: KeyModifiers,
+    action: EditorAction,
+    label: &'static str,
+) -> Shortcut {
+    Shortcut {
+        fallback: true,
+        ..sc(key, modifiers, action, label)
     }
 }
 
@@ -96,7 +135,7 @@ fn file_shortcuts() -> Vec<Shortcut> {
         // F3 is a tmux-safe Browse fallback: tmux's default prefix is Ctrl+B,
         // which it swallows before cozy ever sees it. Same shape as the F1/Ctrl+H
         // and F2/Ctrl+D fallbacks for keys terminals or multiplexers intercept.
-        sc(
+        sc_fallback(
             KeyCode::F(3),
             KeyModifiers::NONE,
             EditorAction::EnterBrowse,
@@ -240,7 +279,7 @@ fn utility_shortcuts() -> Vec<Shortcut> {
         ),
         // F1 is an unambiguous Help fallback: Ctrl+H sends the Backspace byte
         // (0x08) on some terminals and can be swallowed there.
-        sc(
+        sc_fallback(
             KeyCode::F(1),
             KeyModifiers::NONE,
             EditorAction::EnterHelp,
@@ -282,7 +321,7 @@ fn utility_shortcuts() -> Vec<Shortcut> {
             EditorAction::EnterGlide,
             "Ctrl+G Glide",
         ),
-        sc(
+        sc_fallback(
             KeyCode::F(2),
             KeyModifiers::NONE,
             EditorAction::ToggleMarkdownPreview,
@@ -315,7 +354,7 @@ fn cancel_shortcuts() -> Vec<Shortcut> {
         // Ctrl+[ == Esc at the byte level: under the legacy protocol it already
         // arrives as Esc, but under the kitty keyboard protocol it splits off as
         // Ctrl+[. Bind it so the vim-style cancel keeps working either way.
-        sc(
+        sc_fallback(
             KeyCode::Char('['),
             KeyModifiers::CONTROL,
             EditorAction::Cancel,
@@ -381,11 +420,99 @@ pub fn shortcut_map() -> HashMap<(KeyCode, KeyModifiers), EditorAction> {
     map
 }
 
-pub fn footer_labels() -> Vec<String> {
-    get_shortcuts()
+/// 帯での綴り方。⚠️ 幅で変わる（広ければ `Ctrl+S`、狭ければ `^S`）。
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum KeyStyle {
+    /// `^S` —— 狭い帯。
+    Caret,
+    /// `Ctrl+S` —— 広い帯。
+    Spelled,
+}
+
+/// 鍵を**画面に出す綴り**にする（`^S` / `Ctrl+S` / `F1` / `Esc` / `Alt+\`）。
+///
+/// 📌 綴りは footer が元々べた書きしていた形に合わせてある —— 帯の見た目を変えずに、
+/// 出どころだけを「文字列リテラル」から「実際のキーマップ」へ移すため（`#2`）。
+pub fn display_key(key: KeyCode, mods: KeyModifiers, style: KeyStyle) -> String {
+    let ctrl = mods.contains(KeyModifiers::CONTROL);
+    let alt = mods.contains(KeyModifiers::ALT);
+    match key {
+        // ⚠️ 帯は幅で綴りを変える —— 広ければ `Ctrl+S`、狭ければ `^S`。
+        KeyCode::Char(c) if ctrl => match style {
+            KeyStyle::Caret => format!("^{}", c.to_ascii_uppercase()),
+            KeyStyle::Spelled => format!("Ctrl+{}", c.to_ascii_uppercase()),
+        },
+        KeyCode::Char(c) if alt => format!("Alt+{c}"),
+        KeyCode::Char(c) => c.to_string(),
+        KeyCode::F(n) => format!("F{n}"),
+        KeyCode::Esc => "Esc".to_string(),
+        KeyCode::Enter => "Enter".to_string(),
+        KeyCode::Tab => "Tab".to_string(),
+        KeyCode::Backspace => "BS".to_string(),
+        KeyCode::Delete => "Del".to_string(),
+        KeyCode::Home if ctrl => match style {
+            KeyStyle::Caret => "^Home".to_string(),
+            KeyStyle::Spelled => "Ctrl+Home".to_string(),
+        },
+        KeyCode::End if ctrl => match style {
+            KeyStyle::Caret => "^End".to_string(),
+            KeyStyle::Spelled => "Ctrl+End".to_string(),
+        },
+        KeyCode::Home => "Home".to_string(),
+        KeyCode::End => "End".to_string(),
+        KeyCode::PageUp => "PgUp".to_string(),
+        KeyCode::PageDown => "PgDn".to_string(),
+        KeyCode::Up => "Up".to_string(),
+        KeyCode::Down => "Down".to_string(),
+        KeyCode::Left => "Left".to_string(),
+        KeyCode::Right => "Right".to_string(),
+    }
+}
+
+/// そのアクションを**いま**呼び出す鍵の綴り。案内はここに訊く。
+///
+/// 🚨 footer はキー名を**文字列リテラルで持っていた**ので、`[keys]` で上書きしても
+/// `^H Help` と言い続け、その `^H` は効かなかった（`#2`）。
+/// ⭐ 電話ではこの帯が唯一の発見手段なので、嘘をつくと入口ごと失われる。
+///
+/// ⚠️ **主の鍵を出す。** 同じアクションに複数あるときは `fallback` でない方
+/// （`Ctrl+H` が生きているなら `F1` ではなくそちらを出す）。⭐ 順序は
+/// `get_shortcuts()` の並びで決めるので、`HashMap` の走査順に左右されない。
+pub fn key_for(
+    map: &HashMap<(KeyCode, KeyModifiers), EditorAction>,
+    action: EditorAction,
+    style: KeyStyle,
+) -> Option<String> {
+    let defaults = get_shortcuts();
+    let is_default =
+        |k: KeyCode, m: KeyModifiers| defaults.iter().any(|s| s.key == k && s.modifiers == m);
+
+    // ① 🚨 **利用者が `[keys]` で指定した鍵が最優先。** ここを後回しにすると、
+    // 守ったフォールバックの方を案内してしまう —— `enter_browse = "f6"` と書いたのに
+    // 帯が `F3 Browse` と言う状態になった（実測で踏んだ）。
+    // ⭐ 決定的にするため綴りで並べて先頭を取る（`HashMap` の順に左右されない）。
+    let mut chosen: Vec<String> = map
         .iter()
-        .map(|s| s.label.to_string())
-        .collect()
+        .filter(|(_, v)| **v == action)
+        .filter(|((k, m), _)| !is_default(*k, *m))
+        .map(|((k, m), _)| display_key(*k, *m, style))
+        .collect();
+    chosen.sort();
+    if let Some(first) = chosen.into_iter().next() {
+        return Some(first);
+    }
+
+    // ② 既定のまま生きている鍵。主 → フォールバックの順（`Ctrl+H` が生きているなら
+    // `F1` ではなくそちらを案内する）。
+    let live = |k: KeyCode, m: KeyModifiers| map.get(&(k, m)) == Some(&action);
+    for want_fallback in [false, true] {
+        for sc in defaults.iter() {
+            if sc.action == action && sc.fallback == want_fallback && live(sc.key, sc.modifiers) {
+                return Some(display_key(sc.key, sc.modifiers, style));
+            }
+        }
+    }
+    None
 }
 
 /// `"ctrl+s"` / `"alt+enter"` / `"pageup"` 等のキー文字列を (KeyCode, KeyModifiers) に変換する
@@ -481,6 +608,12 @@ pub fn build_shortcut_map(
 ) -> HashMap<(KeyCode, KeyModifiers), EditorAction> {
     let mut map = shortcut_map();
     let Some(ov) = overrides else { return map };
+    // 上書きが消してはいけない鍵（`Shortcut::fallback`）。
+    let fallback_keys: std::collections::HashSet<(KeyCode, KeyModifiers)> = get_shortcuts()
+        .iter()
+        .filter(|s| s.fallback)
+        .map(|s| (s.key, s.modifiers))
+        .collect();
     for (action_name, key_str) in ov {
         let Some(action) = action_from_name(action_name) else {
             eprintln!("warning: unknown action '{}' in [keys] config", action_name);
@@ -490,8 +623,15 @@ pub fn build_shortcut_map(
             eprintln!("warning: cannot parse key '{}' in [keys] config", key_str);
             continue;
         };
-        // 既存のこのアクションへの割り当てを除去してから上書き
-        map.retain(|_, v| v != &action);
+        // 🚨 **上書きは主の鍵だけを置き換える。** 以前はここが
+        // `map.retain(|_, v| v != &action)` で、そのアクションの割り当てを**全部**消していた。
+        // ∴ `enter_help = "f5"` と書いただけで、書いてもいない `F1` まで消えた ——
+        // しかも `F1` は「`Ctrl+H` は端末によっては Backspace として飲まれる」という
+        // **理由つきで**置かれていた（`#2`）。
+        //
+        // ⭐ 上書きした人が置き換えたいのは**主の鍵**であって、届かないときの逃げ道ではない。
+        // ∴ `fallback` の印が付いた割り当ては残す。
+        map.retain(|k, v| v != &action || fallback_keys.contains(k));
         map.insert(key, action);
     }
     map
@@ -550,5 +690,132 @@ mod tests {
             Some(&EditorAction::ToggleFooter)
         );
         assert_eq!(map.get(&(KeyCode::Char('u'), KeyModifiers::CONTROL)), None);
+    }
+}
+
+/// 🚨 **`[keys]` の上書きが、理由つきで置かれた 2 本目を殺していた**（`#2`）。
+///
+/// ⭐ 網は「消えないこと」だけでなく **消えるべきものは消えること**も見る ——
+/// 「何も消さない」実装なら前者だけでは緑で通る。
+#[cfg(test)]
+mod override_keeps_fallbacks {
+    use super::*;
+    use std::collections::HashMap;
+
+    fn overridden(action: &str, key: &str) -> HashMap<(KeyCode, KeyModifiers), EditorAction> {
+        let mut ov = HashMap::new();
+        ov.insert(action.to_string(), key.to_string());
+        build_shortcut_map(Some(&ov))
+    }
+
+    fn bound(
+        map: &HashMap<(KeyCode, KeyModifiers), EditorAction>,
+        key: KeyCode,
+        mods: KeyModifiers,
+    ) -> Option<EditorAction> {
+        map.get(&(key, mods)).copied()
+    }
+
+    /// 🚨 **本丸** —— `enter_help = "f5"` は `Ctrl+H` を置き換えるが、`F1` は残す。
+    /// ⚠️ `F1` は「`Ctrl+H` は端末によっては Backspace(0x08) として飲まれる」という
+    /// 理由で置かれている。上書きは、その理由ごと消してはいけない。
+    #[test]
+    fn overriding_help_keeps_the_f1_fallback() {
+        let map = overridden("enter_help", "f5");
+        assert_eq!(
+            bound(&map, KeyCode::F(5), KeyModifiers::NONE),
+            Some(EditorAction::EnterHelp),
+            "上書きした鍵が効いていない"
+        );
+        assert_eq!(
+            bound(&map, KeyCode::F(1), KeyModifiers::NONE),
+            Some(EditorAction::EnterHelp),
+            "書いてもいない F1 が消えた（端末が Ctrl+H を飲む環境で Help に入れなくなる）"
+        );
+        assert_eq!(
+            bound(&map, KeyCode::Char('h'), KeyModifiers::CONTROL),
+            None,
+            "主の鍵は置き換えられるべき"
+        );
+    }
+
+    /// ⭐ tmux では `Ctrl+B` が prefix なので、`F3` が唯一の入口になる。
+    #[test]
+    fn overriding_browse_keeps_the_f3_fallback() {
+        let map = overridden("enter_browse", "f6");
+        assert_eq!(
+            bound(&map, KeyCode::F(6), KeyModifiers::NONE),
+            Some(EditorAction::EnterBrowse)
+        );
+        assert_eq!(
+            bound(&map, KeyCode::F(3), KeyModifiers::NONE),
+            Some(EditorAction::EnterBrowse),
+            "tmux 越しの唯一の入口が消えた"
+        );
+        assert_eq!(bound(&map, KeyCode::Char('b'), KeyModifiers::CONTROL), None);
+    }
+
+    /// 🚨 **陽性対照。** 「何も消さない」実装をここで弾く ——
+    /// 主の鍵は**置き換えられなければならない**（上書きの意味が無くなる）。
+    #[test]
+    fn the_primary_key_is_still_replaced() {
+        let map = overridden("enter_save", "f9");
+        assert_eq!(
+            bound(&map, KeyCode::F(9), KeyModifiers::NONE),
+            Some(EditorAction::EnterSave)
+        );
+        assert_eq!(
+            bound(&map, KeyCode::Char('s'), KeyModifiers::CONTROL),
+            None,
+            "上書きしたのに元の Ctrl+S が残っている"
+        );
+    }
+
+    /// ⚠️ **理由の無い 2 本目は守らない。** `Alt+\` と `Ctrl+Home` は保険ではなく
+    /// **別々の流儀**（vim 風と一般的な綴り）で、どちらも主。
+    /// ⭐ 印は理由と対で置く、という線をここで固定する。
+    #[test]
+    fn two_primaries_are_both_replaced() {
+        let map = overridden("file_top", "f10");
+        assert_eq!(
+            bound(&map, KeyCode::F(10), KeyModifiers::NONE),
+            Some(EditorAction::FileTop)
+        );
+        assert_eq!(
+            bound(&map, KeyCode::Home, KeyModifiers::CONTROL),
+            None,
+            "理由の無い 2 本目まで守っている（印が広すぎる）"
+        );
+    }
+
+    /// ⭐ 上書きが無いときは、印は何にも影響しない。
+    #[test]
+    fn without_overrides_every_binding_stands() {
+        let map = build_shortcut_map(None);
+        assert_eq!(
+            bound(&map, KeyCode::Char('h'), KeyModifiers::CONTROL),
+            Some(EditorAction::EnterHelp)
+        );
+        assert_eq!(
+            bound(&map, KeyCode::F(1), KeyModifiers::NONE),
+            Some(EditorAction::EnterHelp)
+        );
+    }
+
+    /// 📌 **印が付いているのは、理由がソースに書いてあるものだけ**であること。
+    /// ⚠️ 数を固定すると増やすたびに落ちるので、**印と理由の対応**を見る。
+    #[test]
+    fn every_fallback_has_a_primary_to_fall_back_from() {
+        for s in get_shortcuts().iter().filter(|s| s.fallback) {
+            let primaries = get_shortcuts()
+                .iter()
+                .filter(|o| o.action == s.action && !o.fallback)
+                .count();
+            assert!(
+                primaries >= 1,
+                "{:?} は fallback だが、主の鍵が無い（印が間違っている）",
+                s.action
+            );
+        }
     }
 }

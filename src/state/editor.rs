@@ -8,6 +8,12 @@ use std::time::Instant;
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct Config {
+    /// 🚨 **`Option` でも `serde(default)` でもなかった。** ∴ この行を書いていない
+    /// `config.toml` は**丸ごと**パースに失敗し、`[keys]` も配色も**全部落ちた** ——
+    /// しかも落ちたことは `Using default configuration` という 1 行でしか出ない
+    /// （`#2` を測っている最中に踏んだ）。
+    /// ⭐ 設定は**書いた分だけ効く**べきなので、既定値を持たせる。
+    #[serde(default = "default_page_size")]
     pub page_size: usize,
     pub theme: Option<String>,
     pub show_line_numbers: Option<bool>,
@@ -24,6 +30,19 @@ pub struct Config {
     /// Which mode you rest in. "edit" (default) = type like nano. "glide" =
     /// navigate like vim. Affects every action's return target, not just startup.
     pub default_mode: Option<String>,
+
+    /// 設定を読むときに出た苦情。**画面に出すために持ち歩く**。
+    ///
+    /// 🚨 以前は `eprintln!` で吐いていた。⚠️ cozy は**その端末で TUI を描いている**ので、
+    /// 標準エラーはエディタの絵の上に混ざる —— 実際に 1 行目が
+    /// `ihelloailed to parse` のような読めない状態になった（`#2` を測っている最中に踏んだ）。
+    /// ⭐ `#8` と同じ家族（画面に勝手なものが出る）。
+    #[serde(skip)]
+    pub load_warnings: Vec<String>,
+}
+
+fn default_page_size() -> usize {
+    20
 }
 
 impl Config {
@@ -64,6 +83,7 @@ impl Config {
             cursor_blink: Some(true),
             keys: None,
             default_mode: None,
+            load_warnings: Vec::new(),
         }
     }
 }
@@ -135,7 +155,6 @@ pub struct EditorState {
     pub scroll_offset: usize,      // 新規: スクロール位置
     pub _startup_args: Vec<String>, // 新規: 将来用
     pub _startup_time: Instant,    // 新規: 将来用
-    pub _footer_shortcuts: Vec<String>, // 新規: 将来用
     pub shortcut_map: std::collections::HashMap<
         (crate::state::key::KeyCode, crate::state::key::KeyModifiers),
         crate::shortcuts::EditorAction,
@@ -300,6 +319,7 @@ impl EditorState {
 
     pub(crate) fn from_init(init: EditorStateInit) -> Self {
         let config = Config::load_from(init.config_dir.as_ref());
+        let config_warning = config.load_warnings.first().cloned();
         let startup_document = crate::file_io::load_startup_document(init.filename.as_deref());
         let (lines, format, path_buf, initial_mode, browse_tree, startup_error, read_only) =
             match startup_document {
@@ -373,7 +393,6 @@ impl EditorState {
             scroll_offset: 0,
             _startup_args: init.startup_args,
             _startup_time: init.startup_time,
-            _footer_shortcuts: crate::shortcuts::footer_labels(),
             shortcut_map: crate::shortcuts::build_shortcut_map(config.keys.as_ref()),
             search_buffer: String::new(),
             replace_buffer: String::new(),
@@ -419,7 +438,9 @@ impl EditorState {
             create_dir: None,
         }
         .with_recovery_offer()
-        .with_startup_error(startup_error)
+        // ⭐ 設定の苦情も**画面へ**（`eprintln!` は TUI の絵を壊す・`#2`）。
+        // ⚠️ 開けなかったファイルの理由があるならそちらが先 —— そちらの方が急ぎ。
+        .with_startup_error(startup_error.or(config_warning))
     }
 
     /// 起動引数のファイルを開けなかったことを、最初の画面で言う。

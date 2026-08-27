@@ -333,6 +333,50 @@ fn desc_span(editor: &EditorState, desc: &str) -> Span<'static> {
     )
 }
 
+/// **アクションと名前の組**から帯の 1 行を作る。キー名は**いま効いている鍵**から引く。
+///
+/// 🚨 帯はキー名を文字列リテラルで持っていたので、`[keys]` で上書きしても
+/// `^H Help` と言い続け、その `^H` は効かなかった（`#2`）。
+/// ⭐ 電話ではこの帯が唯一の発見手段なので、嘘をつくと入口ごと失われる。
+///
+/// ⚠️ **鍵を失ったアクションは黙って落とす** —— 上書きで消えた（あるいは
+/// パースに失敗した）ものを名前だけ出すと、押せない案内が残る。
+fn action_keys(
+    editor: &EditorState,
+    items: &[(crate::shortcuts::EditorAction, &'static str)],
+    style: crate::shortcuts::KeyStyle,
+) -> Vec<(String, &'static str)> {
+    items
+        .iter()
+        .filter_map(|(action, label)| {
+            crate::shortcuts::key_for(&editor.shortcut_map, *action, style).map(|k| (k, *label))
+        })
+        .collect()
+}
+
+fn borrow_pairs<'a>(v: &'a [(String, &'static str)]) -> Vec<(&'a str, &'a str)> {
+    v.iter().map(|(k, l)| (k.as_str(), *l)).collect()
+}
+
+/// 狭い帯（`^S` 綴り）を、アクションから作る。
+fn compact_actions(
+    editor: &EditorState,
+    items: &[(crate::shortcuts::EditorAction, &'static str)],
+) -> Line<'static> {
+    let owned = action_keys(editor, items, crate::shortcuts::KeyStyle::Caret);
+    compact_line(editor, &borrow_pairs(&owned))
+}
+
+/// 広い帯（`Ctrl+S` 綴り）を、アクションから作る。
+fn wide_actions(
+    editor: &EditorState,
+    narrow: bool,
+    items: &[(crate::shortcuts::EditorAction, &'static str)],
+) -> Line<'static> {
+    let owned = action_keys(editor, items, crate::shortcuts::KeyStyle::Spelled);
+    shortcut_line(editor, narrow, &borrow_pairs(&owned))
+}
+
 fn shortcut_line(editor: &EditorState, narrow: bool, pairs: &[(&str, &str)]) -> Line<'static> {
     let mut spans: Vec<Span<'static>> = Vec::new();
     for (i, (key, desc)) in pairs.iter().enumerate() {
@@ -564,9 +608,13 @@ fn render_edit_shortcuts(editor: &EditorState, f: &mut Frame, area: Rect) {
         if area.height <= 1 {
             // 1 行しか無い ＝ 3 枠。`^X` を `^Q` に譲る（上の doc）。
             f.render_widget(
-                Paragraph::new(compact_line(
+                Paragraph::new(compact_actions(
                     editor,
-                    &[("^S", "Save"), ("^Q", "Quit"), ("^D", "Md")],
+                    &[
+                        (crate::shortcuts::EditorAction::EnterSave, "Save"),
+                        (crate::shortcuts::EditorAction::ForceQuit, "Quit"),
+                        (crate::shortcuts::EditorAction::ToggleMarkdownPreview, "Md"),
+                    ],
                 )),
                 row(area, 0),
             );
@@ -574,30 +622,46 @@ fn render_edit_shortcuts(editor: &EditorState, f: &mut Frame, area: Rect) {
         }
         let layout = narrow_layout(area);
         f.render_widget(
-            Paragraph::new(compact_line(
+            Paragraph::new(compact_actions(
                 editor,
-                &[("^S", "Save"), ("^B", "Browse"), ("^X", "Exit")],
+                &[
+                    (crate::shortcuts::EditorAction::EnterSave, "Save"),
+                    (crate::shortcuts::EditorAction::EnterBrowse, "Browse"),
+                    (crate::shortcuts::EditorAction::EnterExit, "Exit"),
+                ],
             )),
             layout[0],
         );
         f.render_widget(
-            Paragraph::new(compact_line(
+            Paragraph::new(compact_actions(
                 editor,
-                &[("^F", "Find"), ("^R", "Repl"), ("^H", "Help")],
+                &[
+                    (crate::shortcuts::EditorAction::EnterSearch, "Find"),
+                    (crate::shortcuts::EditorAction::EnterReplace, "Repl"),
+                    (crate::shortcuts::EditorAction::EnterHelp, "Help"),
+                ],
             )),
             layout[1],
         );
         f.render_widget(
-            Paragraph::new(compact_line(
+            Paragraph::new(compact_actions(
                 editor,
-                &[("^K", "Cut"), ("^J", "Jump"), ("^G", "Glide")],
+                &[
+                    (crate::shortcuts::EditorAction::DeleteLine, "Cut"),
+                    (crate::shortcuts::EditorAction::EnterGoto, "Jump"),
+                    (crate::shortcuts::EditorAction::EnterGlide, "Glide"),
+                ],
             )),
             layout[2],
         );
         f.render_widget(
-            Paragraph::new(compact_line(
+            Paragraph::new(compact_actions(
                 editor,
-                &[("^Z", "Undo"), ("^Q", "Quit"), ("^D", "Md")],
+                &[
+                    (crate::shortcuts::EditorAction::Undo, "Undo"),
+                    (crate::shortcuts::EditorAction::ForceQuit, "Quit"),
+                    (crate::shortcuts::EditorAction::ToggleMarkdownPreview, "Md"),
+                ],
             )),
             layout[3],
         );
@@ -606,34 +670,34 @@ fn render_edit_shortcuts(editor: &EditorState, f: &mut Frame, area: Rect) {
         let layout = wide_layout(area);
         // 狭いときは `Ctrl+X Exit` の枠を `Ctrl+Q Quit` に譲る（`quit_takes_the_exit_slot`）。
         let third = if quit_takes_the_exit_slot(area) {
-            ("Ctrl+Q", "Quit")
+            (crate::shortcuts::EditorAction::ForceQuit, "Quit")
         } else {
-            ("Ctrl+X", "Exit")
+            (crate::shortcuts::EditorAction::EnterExit, "Exit")
         };
         f.render_widget(
-            Paragraph::new(shortcut_line(
+            Paragraph::new(wide_actions(
                 editor,
                 narrow,
                 &[
-                    ("Ctrl+S", "Save"),
-                    ("Ctrl+B", "Browse"),
+                    (crate::shortcuts::EditorAction::EnterSave, "Save"),
+                    (crate::shortcuts::EditorAction::EnterBrowse, "Browse"),
                     third,
-                    ("Ctrl+F", "Find"),
-                    ("Ctrl+R", "Replace"),
+                    (crate::shortcuts::EditorAction::EnterSearch, "Find"),
+                    (crate::shortcuts::EditorAction::EnterReplace, "Replace"),
                 ],
             )),
             layout[0],
         );
         f.render_widget(
-            Paragraph::new(shortcut_line(
+            Paragraph::new(wide_actions(
                 editor,
                 narrow,
                 &[
-                    ("Ctrl+H", "Help"),
-                    ("Ctrl+K", "Cut Line"),
-                    ("Ctrl+J", "Jump"),
-                    ("Ctrl+G", "Glide"),
-                    ("Ctrl+Z", "Undo"),
+                    (crate::shortcuts::EditorAction::EnterHelp, "Help"),
+                    (crate::shortcuts::EditorAction::DeleteLine, "Cut Line"),
+                    (crate::shortcuts::EditorAction::EnterGoto, "Jump"),
+                    (crate::shortcuts::EditorAction::EnterGlide, "Glide"),
+                    (crate::shortcuts::EditorAction::Undo, "Undo"),
                 ],
             )),
             layout[1],
@@ -1394,6 +1458,75 @@ mod tests {
         let mut editor = EditorState::new(Some("smoke.txt".to_string()));
         editor.enter_mode(mode);
         editor
+    }
+
+    /// 🚨 **帯は、いま効いている鍵を言わなければならない**（`#2`）。
+    ///
+    /// ⚠️ キー名が文字列リテラルだった間、`[keys]` で上書きしても帯は `Ctrl+H Help` と
+    /// 言い続け、その `Ctrl+H` は効かなかった。⭐ 電話ではこの帯が唯一の発見手段なので、
+    /// 嘘をつくと**入口ごと失われる**。
+    fn config_with_keys(pairs: &[(&str, &str)]) -> crate::state::Config {
+        let mut config = crate::state::Config::default_values();
+        config.keys = Some(
+            pairs
+                .iter()
+                .map(|(a, k)| (a.to_string(), k.to_string()))
+                .collect(),
+        );
+        config
+    }
+
+    fn editor_with_keys(pairs: &[(&str, &str)]) -> EditorState {
+        let mut editor = editor_in_mode(EditorMode::Edit);
+        let config = config_with_keys(pairs);
+        editor.shortcut_map = crate::shortcuts::build_shortcut_map(config.keys.as_ref());
+        editor.config = config;
+        editor
+    }
+
+    #[test]
+    fn the_footer_follows_a_key_override() {
+        let plain = render_footer_lines(&editor_in_mode(EditorMode::Edit), 100, 3).join(" ");
+        assert!(plain.contains("Ctrl+S Save"), "既定の帯が違う: {plain:?}");
+
+        let overridden =
+            render_footer_lines(&editor_with_keys(&[("enter_save", "f9")]), 100, 3).join(" ");
+        assert!(
+            overridden.contains("F9 Save"),
+            "上書きしたのに帯が追随していない: {overridden:?}"
+        );
+        assert!(
+            !overridden.contains("Ctrl+S Save"),
+            "効かない鍵を案内し続けている: {overridden:?}"
+        );
+    }
+
+    /// 🚨 **守ったフォールバックを案内してはいけない。**
+    /// ⚠️ 一度これで踏んだ —— `enter_browse = "f6"` と書いたのに、帯が
+    /// （上書きで消されずに残った）`F3 Browse` を出していた。
+    /// ⭐ 利用者が指定した鍵が最優先。
+    #[test]
+    fn the_footer_shows_the_users_key_not_the_kept_fallback() {
+        let line =
+            render_footer_lines(&editor_with_keys(&[("enter_browse", "f6")]), 100, 3).join(" ");
+        assert!(
+            line.contains("F6 Browse"),
+            "利用者が書いた鍵を案内していない: {line:?}"
+        );
+        assert!(
+            !line.contains("F3 Browse"),
+            "守ったフォールバックの方を案内している: {line:?}"
+        );
+    }
+
+    /// ⭐ 陽性対照 —— 上書きが無ければ帯は今までどおり。
+    /// これが無いと「全部 F1 と出す」ような実装が緑で通る。
+    #[test]
+    fn without_overrides_the_footer_is_unchanged() {
+        let line = render_footer_lines(&editor_in_mode(EditorMode::Edit), 100, 3).join(" ");
+        for want in ["Ctrl+S Save", "Ctrl+B Browse", "Ctrl+H Help", "Ctrl+Z Undo"] {
+            assert!(line.contains(want), "{want} が消えた: {line:?}");
+        }
     }
 
     /// 🚨 **書けないことは、保存を押す前に見えていなければならない。**

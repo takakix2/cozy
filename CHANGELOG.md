@@ -1,5 +1,36 @@
 # Changelog
 
+## v0.2.27
+
+### Fixes
+
+- **The shortcut bar now names the keys that actually work.** Key names in the footer
+  were written as string literals, so rebinding an action in `[keys]` changed what the
+  key did without changing what the bar said — it kept advertising `Ctrl+H Help` while
+  `Ctrl+H` did nothing. On a phone that bar is the only way to discover a binding, so a
+  stale name costs the entrance itself. The bar is now built from the live key map.
+
+- **Rebinding an action no longer removes its fallback key.** Four actions carry a second
+  binding for a stated reason: `F1` for Help because `Ctrl+H` arrives as Backspace (0x08)
+  on some terminals, `F3` for Browse because `Ctrl+B` is tmux's prefix, `F2` for the
+  Markdown preview, and `Ctrl+[` for Cancel because the kitty keyboard protocol splits it
+  from `Esc`. Writing `enter_help = "f5"` used to delete `F1` as well — the reason had
+  been written down next to the binding, and the override erased it along with the key.
+
+  ⚠️ Second bindings that exist as a matter of *style* rather than reach — `Alt+\` and
+  `Ctrl+Home` for the top of the file — are still replaced by an override. Both are
+  primary; neither is a fallback for the other.
+
+- **A config file is now read for what it contains.** `page_size` was a required field,
+  so a `config.toml` that did not mention it failed to parse **as a whole** — `[keys]`,
+  colours and all — leaving the editor on its defaults. Every field now has one, so a
+  file that sets only what it cares about works.
+
+- **Configuration complaints no longer land on top of the editor.** They were printed to
+  standard error, which is the same terminal cozy is drawing in: a bad config could leave
+  the first line of the file overwritten by half a warning. Complaints now appear on the
+  status line, like every other message.
+
 ## v0.2.26
 
 ### Fixes
