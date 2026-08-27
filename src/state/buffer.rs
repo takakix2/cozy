@@ -1,22 +1,40 @@
-use crate::state::Cursor;
+use crate::state::{Cursor, FileFormat};
 
 #[derive(Clone)]
 pub struct TextBuffer {
     pub lines: Vec<String>,
+    /// 開いたファイルの形。書くときにここから戻す（`FileFormat` を見よ）。
+    pub format: FileFormat,
+}
+
+impl Default for TextBuffer {
+    /// 何も開いていない状態＝空行 1 つ。形は新規ファイルの既定。
+    fn default() -> Self {
+        Self {
+            lines: vec![String::new()],
+            format: FileFormat::default(),
+        }
+    }
 }
 
 impl TextBuffer {
-    pub fn new() -> Self {
-        Self {
-            lines: vec![String::new()],
-        }
+    pub fn from_lines(lines: Vec<String>) -> Self {
+        Self::from_lines_with_format(lines, FileFormat::default())
     }
 
-    pub fn from_lines(lines: Vec<String>) -> Self {
+    /// 読んだファイルからバッファを作る。
+    ///
+    /// ⚠️ ファイルを**開いた**経路は必ずこちらを通す。`from_lines` は形を既定
+    /// （新規ファイル＝末尾に改行あり）で埋めるので、開いたファイルに使うと
+    /// 末尾改行の無いファイルに改行が生える。
+    pub fn from_lines_with_format(lines: Vec<String>, format: FileFormat) -> Self {
         if lines.is_empty() {
-            Self::new()
+            Self {
+                lines: vec![String::new()],
+                format,
+            }
         } else {
-            Self { lines }
+            Self { lines, format }
         }
     }
 

@@ -1,4 +1,5 @@
 use crate::state::Cursor;
+use crate::state::FileFormat;
 use crate::state::TextBuffer;
 use serde::Deserialize;
 use std::io;
@@ -293,33 +294,50 @@ impl EditorState {
     pub(crate) fn from_init(init: EditorStateInit) -> Self {
         let config = Config::load_from(init.config_dir.as_ref());
         let startup_document = crate::file_io::load_startup_document(init.filename.as_deref());
-        let (lines, path_buf, initial_mode, browse_tree, startup_error) = match startup_document {
-            crate::file_io::StartupDocument::Empty => {
-                (vec![String::new()], None, EditorMode::Welcome, None, None)
-            }
-            crate::file_io::StartupDocument::File { path, lines } => {
-                (lines, Some(path), Self::resolve_home(&config), None, None)
-            }
-            crate::file_io::StartupDocument::Directory { tree } => (
-                vec![String::new()],
-                None,
-                EditorMode::Browse,
-                Some(tree),
-                None,
-            ),
-            // 🚨 **ファイル名を引き受けない**のが肝。空バッファ自体は無害だが、そこに
-            // 読めなかったファイルの名前が結びつくと `Ctrl+S` が破壊になる。
-            crate::file_io::StartupDocument::Unreadable { message } => (
-                vec![String::new()],
-                None,
-                EditorMode::Welcome,
-                None,
-                Some(message),
-            ),
-        };
+        let (lines, format, path_buf, initial_mode, browse_tree, startup_error) =
+            match startup_document {
+                crate::file_io::StartupDocument::Empty => (
+                    vec![String::new()],
+                    FileFormat::default(),
+                    None,
+                    EditorMode::Welcome,
+                    None,
+                    None,
+                ),
+                crate::file_io::StartupDocument::File {
+                    path,
+                    lines,
+                    format,
+                } => (
+                    lines,
+                    format,
+                    Some(path),
+                    Self::resolve_home(&config),
+                    None,
+                    None,
+                ),
+                crate::file_io::StartupDocument::Directory { tree } => (
+                    vec![String::new()],
+                    FileFormat::default(),
+                    None,
+                    EditorMode::Browse,
+                    Some(tree),
+                    None,
+                ),
+                // 🚨 **ファイル名を引き受けない**のが肝。空バッファ自体は無害だが、そこに
+                // 読めなかったファイルの名前が結びつくと `Ctrl+S` が破壊になる。
+                crate::file_io::StartupDocument::Unreadable { message } => (
+                    vec![String::new()],
+                    FileFormat::default(),
+                    None,
+                    EditorMode::Welcome,
+                    None,
+                    Some(message),
+                ),
+            };
 
         Self {
-            buffer: TextBuffer::from_lines(lines),
+            buffer: TextBuffer::from_lines_with_format(lines, format),
             cursor: Cursor::default(),
             highlighter: {
                 let mut h = crate::utils::highlight::Highlighter::new();

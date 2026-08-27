@@ -1,5 +1,5 @@
 use crate::browse::BrowseTree;
-use crate::state::{Cursor, EditorState, TextBuffer};
+use crate::state::{Cursor, EditorState, FileFormat, LineEnding, TextBuffer};
 use atomicwrites::{AllowOverwrite, AtomicFile};
 use std::fs::File;
 use std::io::{self, BufWriter, Write};
@@ -10,6 +10,8 @@ pub(crate) enum StartupDocument {
     File {
         path: PathBuf,
         lines: Vec<String>,
+        /// 開いたときのファイルの形。保存でこれを戻す（`FileFormat` を見よ）。
+        format: FileFormat,
     },
     Directory {
         tree: BrowseTree,
@@ -171,10 +173,14 @@ pub(crate) fn load_startup_document(filename: Option<&str>) -> StartupDocument {
     // 以前は両方まとめて空バッファに落としていたので、`cozy sjis.txt` が
     // **新規ファイルを開いたのと画面上まったく同じ**に見え、そのまま保存すると
     // 43 バイトが 6 バイトになった（警告は一度も出ない）。
-    let lines = match std::fs::read_to_string(path_ref) {
-        Ok(content) => lines_from_content(&content),
+    let (lines, format) = match std::fs::read_to_string(path_ref) {
+        Ok(content) => parse_content(&content),
         // ⭐ 新規ファイルは空で開くのが正しい。cozy の書き味の芯なので変えない。
-        Err(e) if e.kind() == io::ErrorKind::NotFound => vec![String::new()],
+        // 形は既定（末尾に改行あり）—— 不変条件は「開いたファイル」の話で、
+        // まだ存在しないファイルには言うことが無い（`FileFormat::default` を見よ）。
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {
+            (vec![String::new()], FileFormat::default())
+        }
         // 🚨 中身を知らないまま名前だけ引き受けると、保存が破壊になる。**引き受けない。**
         Err(e) => {
             return StartupDocument::Unreadable {
@@ -188,6 +194,7 @@ pub(crate) fn load_startup_document(filename: Option<&str>) -> StartupDocument {
     StartupDocument::File {
         path: expanded,
         lines,
+        format,
     }
 }
 
@@ -265,8 +272,8 @@ pub fn open_file(editor: &mut EditorState, path: &str) -> io::Result<()> {
     let content = std::fs::read_to_string(&target)
         .map_err(|e| io::Error::new(e.kind(), cannot_open_message(path, &e)))?;
 
-    let lines = lines_from_content(&content);
-    editor.buffer = TextBuffer::from_lines(lines);
+    let (lines, format) = parse_content(&content);
+    editor.buffer = TextBuffer::from_lines_with_format(lines, format);
     editor.filename = Some(path_buf);
     editor.cursor = Cursor::default();
     editor.modified = false;
@@ -384,6 +391,29 @@ fn replaceable(_existing: Option<&std::fs::Metadata>) -> bool {
     true
 }
 
+/// バッファを**バイト列として**書き下す。行の区切りと、末尾の終端はここでだけ決まる。
+///
+/// 🚨 **書き出しの経路は 2 つある**（`write_atomically` と `write_in_place`）。以前は
+/// どちらも `writeln!` のループを各自に持っていたので、**片方だけ直すと、書込権の都合で
+/// もう片方へ落ちた人にだけ古い挙動が残る**（しかも本人には保存が成功して見える）。
+/// ∴ 綴りはここ 1 箇所に置く。
+///
+/// ⚠️ `writeln!` を使わないのは、それが**常に**終端するから。終端するかどうかは
+/// バッファではなく**開いたファイル**が決める（`FileFormat::final_newline`）。
+fn write_lines<W: io::Write>(out: &mut W, editor: &EditorState) -> io::Result<()> {
+    let sep = editor.buffer.format.line_ending.as_bytes();
+    for (i, line) in editor.buffer.lines.iter().enumerate() {
+        if i > 0 {
+            out.write_all(sep)?;
+        }
+        out.write_all(line.as_bytes())?;
+    }
+    if editor.buffer.format.final_newline {
+        out.write_all(sep)?;
+    }
+    Ok(())
+}
+
 /// tmp → fsync → 親ディレクトリ fsync → rename。読み手には保存前か保存後しか見えない。
 fn write_atomically(
     editor: &EditorState,
@@ -404,9 +434,7 @@ fn write_atomically(
         .write(|file| {
             {
                 let mut out = BufWriter::new(&mut *file);
-                for line in &editor.buffer.lines {
-                    writeln!(out, "{}", line)?;
-                }
+                write_lines(&mut out, editor)?;
                 out.flush()?;
             }
             // rename の**前に** mode を移す。後から chmod すると、その一瞬だけ
@@ -429,9 +457,7 @@ fn write_in_place(editor: &EditorState, real: &Path) -> io::Result<()> {
     let mut file = File::create(real)?;
     {
         let mut out = BufWriter::new(&mut file);
-        for line in &editor.buffer.lines {
-            writeln!(out, "{}", line)?;
-        }
+        write_lines(&mut out, editor)?;
         out.flush()?;
     }
     // 書いたバイトをディスクに載せる。cozy にはこれすら無かった。
@@ -522,12 +548,39 @@ fn existing_browse_root(filename: Option<&PathBuf>, working_dir: &Path) -> PathB
     current
 }
 
-fn lines_from_content(content: &str) -> Vec<String> {
-    let mut lines: Vec<String> = content.lines().map(|s| s.to_string()).collect();
+/// 読んだ内容を、**行**と**形**に分ける。
+///
+/// ⚠️ 2 つを一緒に返すのは意図的。別々の関数にすると、片方だけ呼ぶ経路が生まれる
+/// （実際、開く入口は起動引数と `Ctrl+O` の 2 つある）。**内容を読んだ場所では、
+/// 必ず両方が手に入る**形にしておく。
+fn parse_content(content: &str) -> (Vec<String>, FileFormat) {
+    let format = FileFormat::detect(content);
+
+    // 🚨 `str::lines()` は使えない。あれは**行末の `\r` を必ず 1 つ剥がす**ので、
+    // 行末が混在したファイルでは `\r` が本文の一部だったのか区切りの片割れだったのかを
+    // **問わずに**剥がす（`a\r\nb\nc\r\n` の `a\r` が `a` になり、保存で消える）。
+    // ∴ 割るのは `\n` だけにして、剥がすかどうかは測った形に従わせる。
+    let mut lines: Vec<String> = content.split('\n').map(|s| s.to_string()).collect();
+
+    // `split` は終端の**後ろ**にも空の要素を残す。終端が在るなら、それは行ではない。
+    if format.final_newline {
+        lines.pop();
+    }
+
+    // 全行 CRLF だったときだけ、区切りの片割れを剥がして覚える。⚠️ それ以外では
+    // `\r` は**本文の文字**なので触らない —— 触ると混在ファイルが寄る。
+    if format.line_ending == LineEnding::CrLf {
+        for line in &mut lines {
+            if line.ends_with('\r') {
+                line.pop();
+            }
+        }
+    }
+
     if lines.is_empty() {
         lines.push(String::new());
     }
-    lines
+    (lines, format)
 }
 
 #[cfg(test)]
@@ -1020,9 +1073,17 @@ mod refusing_unreadable_files {
         let dir = scratch("new_file");
         let path = dir.join("does-not-exist-yet.md");
         match load_startup_document(path.to_str()) {
-            StartupDocument::File { path: p, lines } => {
+            StartupDocument::File {
+                path: p,
+                lines,
+                format,
+            } => {
                 assert_eq!(lines, vec![String::new()]);
                 assert_eq!(p, path, "新規は**名前を引き受ける**（保存先になる）");
+                assert!(
+                    format.final_newline,
+                    "新規ファイルは改行で終わる（Unix の慣習・`FileFormat::default`）"
+                );
             }
             _ => panic!("新規ファイルは File で開かれなければならない"),
         }
@@ -1130,5 +1191,141 @@ mod refusing_unreadable_files {
 
         open_file(&mut editor, "note.md").expect("working_dir の下に在る");
         assert_eq!(editor.buffer.lines, &["hello".to_string()]);
+    }
+}
+
+/// 🚨 **不変条件の網** —— *開いたファイルは、編集した分を除いてバイト単位でそのまま返る*
+/// （`ROADMAP.md`「The line cozy holds」）。
+///
+/// ⭐ 測るのは**バイト列**であって、画面でも行数でもない。事故の顔は「開くと空に見える」
+/// ではなく「**保存したらファイルが変わっていた**」だった。
+///
+/// ⚠️ **陽性対照が要る。** 「終端を足さない」だけの実装は下の 4 検体を通してしまうが、
+/// `\n` で終わるファイルから終端を**奪う**。∴ 奪われないことを見る検体を同じ表に並べる。
+/// 表を 1 本にしているのは、片側だけ足して満足する経路を作らないため。
+#[cfg(all(test, unix))]
+mod byte_for_byte_round_trip {
+    use super::*;
+    use crate::state::{EditorState, TextBuffer};
+    use std::fs;
+
+    fn scratch(name: &str) -> PathBuf {
+        let base =
+            std::env::temp_dir().join(format!("cozy_roundtrip_{}_{}", std::process::id(), name));
+        let _ = fs::remove_dir_all(&base);
+        fs::create_dir_all(&base).unwrap();
+        base
+    }
+
+    /// ⚠️ `expand_tilde` が `HOME` / `COZY_SANDBOX_ROOT` を読むので、それを差し替える
+    /// テストと直列化する（`refusing_unreadable_files` と同じ理由・同じロック）。
+    fn env_guard() -> std::sync::MutexGuard<'static, ()> {
+        HOME_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// 開いて、**何も編集せず**保存し、ファイルのバイト列を返す。
+    fn open_then_save(name: &str, original: &[u8]) -> Vec<u8> {
+        let _guard = env_guard();
+        let dir = scratch(name);
+        let path = dir.join("subject.txt");
+        fs::write(&path, original).unwrap();
+
+        let (lines, format) = match load_startup_document(path.to_str()) {
+            StartupDocument::File { lines, format, .. } => (lines, format),
+            _ => panic!("検体 {name} は File として開かれなければならない"),
+        };
+        let mut editor = EditorState::new(None);
+        editor.buffer = TextBuffer::from_lines_with_format(lines, format);
+        write_buffer(&editor, &path, "test").unwrap();
+        fs::read(&path).unwrap()
+    }
+
+    #[test]
+    fn the_bytes_come_back_unchanged() {
+        // (名前, 元のバイト列, なぜこの検体が要るか)
+        let cases: &[(&str, &[u8], &str)] = &[
+            // ── 直った側（0.2.23 では全部ここが壊れていた）──
+            (
+                "nonl",
+                b"no final newline",
+                "終端が無いのに生えていた（16 → 17）",
+            ),
+            ("one_line_no_nl", b"x", "1 行・終端なし（1 → 2）"),
+            ("empty", b"", "0 バイトに改行が生えていた（0 → 1）"),
+            (
+                "cr_only",
+                b"a\rb\rc",
+                "CR のみで改行する古い Mac のファイル。cozy は `\\r` を行の区切りとして \
+                 読まないので**本文の文字として素通りする** —— 終端さえ足さなければ返る（5 → 6）",
+            ),
+            // ── 段②で直った側（行末の綴り）──
+            (
+                "crlf",
+                b"a\r\nb\r\n",
+                "Windows の綴り。`str::lines()` が `\\r` を剥がしていた（6 → 4）",
+            ),
+            (
+                "mixed",
+                b"a\r\nb\nc\r\n",
+                "⭐ 行末が**混在**したファイル。全か無かの判定で `Lf` に落ちるので、\
+                 残った `\\r` は本文の文字として在った場所に在ったまま返る —— \
+                 **寄せない**。多数決で判定するとここが壊れる（GNU nano は 8 → 9）",
+            ),
+            // ── 陽性対照。「終端を足さない」だけの実装はここで落ちる ──
+            ("lf", b"a\nb\n", "陽性対照: 終端を**奪わない**"),
+            (
+                "bare_newline",
+                b"\n",
+                "陽性対照: 空行 1 つ（1 B）。⭐ `empty` と `lines` では区別が付かない \
+                 （どちらも `[\"\"]`）ので、分けているのは `final_newline` だけ",
+            ),
+        ];
+
+        // ⚠️ 最初の失敗で止めない —— どれが落ちたかを一覧で見せる。
+        let mut broken = Vec::new();
+        for (name, original, why) in cases {
+            let after = open_then_save(name, original);
+            if after != *original {
+                broken.push(format!(
+                    "  {name}: {} B -> {} B  ({:?} -> {:?})  ← {why}",
+                    original.len(),
+                    after.len(),
+                    String::from_utf8_lossy(original),
+                    String::from_utf8_lossy(&after),
+                ));
+            }
+        }
+        assert!(
+            broken.is_empty(),
+            "開いて保存しただけでバイトが変わった検体:\n{}",
+            broken.join("\n")
+        );
+    }
+
+    /// ⭐ **判定が「全か無か」であることを、判定そのものとして固定する。**
+    ///
+    /// 上の往復表は結果（バイトが返る）を見るが、**なぜ返るか**は見ていない。多数決で
+    /// 判定する実装でも `crlf` の検体は通ってしまう（全行 CRLF なので多数決も CRLF）。
+    /// 🚨 割れるのは**混在**のときだけなので、そこを名指しで撃つ。
+    #[test]
+    fn a_single_bare_lf_makes_the_whole_file_lf() {
+        use crate::state::LineEnding;
+        // 全行 CRLF —— ここだけが CrLf。
+        assert_eq!(
+            FileFormat::detect("a\r\nb\r\n").line_ending,
+            LineEnding::CrLf
+        );
+        // `\n` が 1 つでも裸なら、ファイル全体が Lf に落ちる（残りの `\r` は本文）。
+        assert_eq!(
+            FileFormat::detect("a\r\nb\nc\r\n").line_ending,
+            LineEnding::Lf,
+            "多数決だとここが CrLf になり、少数派の行を書き換えることになる"
+        );
+        // 綴りを名乗る証拠が無いものは既定へ。
+        assert_eq!(FileFormat::detect("a\rb\rc").line_ending, LineEnding::Lf);
+        assert_eq!(FileFormat::detect("").line_ending, LineEnding::Lf);
+        assert_eq!(FileFormat::detect("one line").line_ending, LineEnding::Lf);
     }
 }

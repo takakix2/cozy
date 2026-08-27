@@ -1,5 +1,37 @@
 # Changelog
 
+## v0.2.24
+
+### Fixes
+
+- **A file cozy opens now comes back with the same bytes.** Opening a file and pressing
+  save — with no edits — used to rewrite it in two ways, both of them inside perfectly
+  valid UTF-8. Every `\r` was dropped, so a CRLF file shrank (`a\r\nb\r\n`, 6 bytes,
+  came back as 4); and a newline was appended to any file that did not already end with
+  one (`no final newline`, 16 bytes, came back as 17). Between them, that is where *"I
+  changed one line and the diff is the whole file"* came from.
+
+  The buffer only ever recorded *what the lines said*, never *how the file wrote them
+  down*, so both facts were lost at open and invented at save. cozy now measures them
+  when it reads and restores them when it writes. Seven shapes were verified in the real
+  binary, not just in tests: CRLF, **mixed endings**, a file whose only line break is a
+  lone `\r`, no trailing newline, a 0-byte file, LF, and a one-line CRLF file — all
+  byte-identical after open-and-save.
+
+  ⭐ **Files with mixed line endings are not normalised.** A file counts as CRLF only if
+  *every* `\n` in it is preceded by `\r`; a single bare `\n` puts the whole file in LF,
+  where the remaining `\r`s are ordinary characters and get written back exactly where
+  they were. Editing such a file keeps each line's own ending: typing into
+  `a\r\nb\nc\r\n` leaves the `b\n` line alone.
+
+  ⚠️ **Two deliberate departures from other editors.** cozy does not add a trailing
+  newline to a file that lacked one — vim adds it (`fixendofline`), nano adds it, and
+  cozy chooses to return the file rather than tidy it. And a lone `\r` is not read as a
+  line break, so a Classic Mac file opens as one line rather than three; nano reads it
+  as three and appends a `\r` of its own. Both are consequences of the same rule: a file
+  cozy opens is a file it gives back. New files are unaffected and still end with a
+  newline.
+
 ## v0.2.23
 
 ### Fixes
