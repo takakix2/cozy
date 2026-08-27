@@ -1,5 +1,27 @@
 # Changelog
 
+## v0.2.22
+
+### Fixes
+
+- **The in-app help now names every function key — including one that was nowhere.**
+  On a narrow terminal the help listed **no** function key at all: not `F1`, not `F2`,
+  not `F3`. And `F4` appeared in neither layout, even though `F4` is the **only** key
+  bound to the diff review — a feature with no discoverable way in and no line in the
+  help describing it.
+
+  This matters most for `F1`. It exists because `Ctrl+H` does not always arrive: some
+  terminals deliver it as the Backspace byte and swallow it, and a tmux configured to
+  select panes with `Ctrl+H` consumes it before cozy ever sees it. In both cases `F1` is
+  the only remaining way into the help — which is not much use if the help is the only
+  place it is written down. The wide layout now says why it is there, the way the Browse
+  row already says `(F3 for tmux)`.
+
+- **The file top/bottom row looks like the rest of the table.** Shipped in 0.2.21, it
+  wrote `M-\` and `^Home` where every neighbouring row spells `Ctrl+…` in full, put an
+  alternate key in the parentheses this table reserves for explanations, and started its
+  description one column late. The keys and what they do are unchanged.
+
 ## v0.2.21
 
 ### Highlights
