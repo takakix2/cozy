@@ -114,6 +114,8 @@ The source of truth for key bindings is `src/shortcuts.rs` (`get_shortcuts()`). 
 - `Up` / `Down` / `Left` / `Right`: Move cursor
 - `Ctrl+A`: Line start
 - `Ctrl+E`: Line end
+- `Alt+\` / `Ctrl+Home`: File top
+- `Alt+/` / `Ctrl+End`: File bottom
 - `PageUp` / `PageDown`: Scroll page
 - `Ctrl+J`: Jump to line number
 - `Ctrl+G`: Enter Glide mode

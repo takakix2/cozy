@@ -43,7 +43,7 @@ default_mode = "edit"
 #   enter_save, enter_save_as, enter_open, enter_exit, force_quit
 #   enter_search, enter_replace, replace_all
 #   undo, redo, paste, delete_line
-#   page_up, page_down, page_top, page_bottom, home, end
+#   page_up, page_down, page_top, page_bottom, file_top, file_bottom, home, end
 #   toggle_line_numbers, toggle_wrap, toggle_footer, toggle_markdown, reload_config
 #   enter_help, enter_goto, enter_glide, cancel
 #

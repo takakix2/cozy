@@ -114,6 +114,8 @@ Markdown プレビューは現在の文書を折り返し、コードブロッ�
 - `Up` / `Down` / `Left` / `Right`: カーソル移動
 - `Ctrl+A`: 行頭
 - `Ctrl+E`: 行末
+- `Alt+\` / `Ctrl+Home`: ファイル先頭
+- `Alt+/` / `Ctrl+End`: ファイル末尾
 - `PageUp` / `PageDown`: ページ移動
 - `Ctrl+J`: 行番号へジャンプ
 - `Ctrl+G`: Glide モードへ

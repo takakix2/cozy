@@ -1,5 +1,42 @@
 # Changelog
 
+## v0.2.21
+
+### Highlights
+
+- **The file's top and bottom finally have keys: `Alt+\` / `Alt+/`, or `Ctrl+Home` /
+  `Ctrl+End`.** Those are nano's own spellings — it carries both, so cozy carries both.
+
+  This is not a new capability so much as a missing wire. `Motion::FileTop` and
+  `Motion::FileBottom` have always existed; Glide's `gg` and `G` use them. What was
+  missing was any way to reach them from Edit mode, which is where cozy rests by
+  default. The README documented `Ctrl+Home` / `Ctrl+End` for exactly this until a
+  documentation cleanup removed the line in June — the line described a key that had
+  never been written, and deleting it took away the last record that the gap existed.
+
+  ⚠️ Neither spelling can be typed on a phone's software keyboard. That is what Glide's
+  `gg` / `G` are for, and they are unchanged. With a hardware keyboard attached, both
+  work.
+
+### Fixes
+
+- **`Ctrl+A` and `Ctrl+E` move within the line again, as the README has always said.**
+  Both READMEs — and therefore the crates.io page — document them as *Line start* and
+  *Line end*, and cozy's pitch is that you type like nano, where that is exactly what
+  they are. What they actually did was jump to the **start and end of the whole
+  document**: pressing `Ctrl+E` anywhere in a file landed you on the last line.
+
+  The line meaning had no other key, either. Bare `Home`/`End` are unbound by default,
+  the in-app help never mentioned `Ctrl+A`/`Ctrl+E` at all, and the command palette has
+  no entry for them — so in Edit mode, the default resting mode, there was **no way to
+  reach the end of the current line** except by holding the arrow key. That is a
+  keyboard's worth of work on a desktop and a real cost on a phone, which is where cozy
+  mostly runs.
+
+  Reading views are unaffected: in the help screen and the Markdown preview, `Ctrl+A`
+  and `Ctrl+E` still go to the top and bottom of the document, which is what a pager
+  should do. The in-app help now lists the pair in both its wide and narrow layouts.
+
 ## v0.2.20
 
 ### Fixes

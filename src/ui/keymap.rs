@@ -68,6 +68,8 @@ impl Keymap {
                 EditorAction::PageDown => return Some(Action::PageDown),
                 EditorAction::PageTop => return Some(Action::PageTop),
                 EditorAction::PageBottom => return Some(Action::PageBottom),
+                EditorAction::FileTop => return Some(Action::FileTop),
+                EditorAction::FileBottom => return Some(Action::FileBottom),
                 EditorAction::ToggleSearchMode => return Some(Action::ToggleSearchMode),
                 EditorAction::Home => return Some(Action::Home),
                 EditorAction::End => return Some(Action::End),

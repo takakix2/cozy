@@ -515,6 +515,32 @@ pub fn reduce(editor: &mut EditorState, action: Action) -> EventResult {
                 }
             }
         },
+        // `Motion::FileTop`/`FileBottom` already existed for Glide's `gg`/`G`; only the
+        // keys were missing. ⚠️ Read views answer here, before the edit buffer, so
+        // `Ctrl+Home` in Help means the same as `Ctrl+A` there — a pager's top.
+        Action::FileTop => match editor.mode {
+            crate::state::EditorMode::Browse => browse::goto_top(editor),
+            _ => {
+                if let Some(view) = read_view(&editor.mode) {
+                    set_read_cursor(editor, view, 0);
+                    EventResult::Continue
+                } else {
+                    editor::apply_editor_event(editor, &action)
+                }
+            }
+        },
+        Action::FileBottom => match editor.mode {
+            crate::state::EditorMode::Browse => browse::goto_bottom(editor),
+            _ => {
+                if let Some(view) = read_view(&editor.mode) {
+                    let last = rv_line_count(editor, view).saturating_sub(1);
+                    set_read_cursor(editor, view, last);
+                    EventResult::Continue
+                } else {
+                    editor::apply_editor_event(editor, &action)
+                }
+            }
+        },
         Action::GlideMove(motion) => {
             if let Some(view) = read_view(&editor.mode) {
                 read_screen_motion(editor, view, motion)

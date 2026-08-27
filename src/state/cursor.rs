@@ -170,15 +170,26 @@ impl Cursor {
         }
     }
 
+    /// `Ctrl+A` — the start of the **current line**.
+    ///
+    /// 🚨 This was `x = 0; y = 0` — the start of the *document* — while both READMEs
+    /// (and therefore the crates.io page) documented "Line start", and while cozy's
+    /// pitch is that you type like nano, where `Ctrl+A` is the line start. The row
+    /// the cursor is on does not change.
     pub fn move_home(&mut self) {
         self.x = 0;
-        self.y = 0;
+        self.goal = Some(0); // subsequent j/k stay in column 0, like vim's `0`
+        self.stamp();
     }
 
+    /// `Ctrl+E` — the end of the **current line**. See `move_home` for why this moved.
+    ///
+    /// ⚠️ Read views (Help / Markdown) never reach here: `Action::End` is answered by
+    /// the pager branch in `reducer::mod`, where "the last line of the document" is the
+    /// right meaning. Only the edit buffer falls through to this.
     pub fn move_end(&mut self, lines: &[String]) {
-        if !lines.is_empty() {
-            self.y = lines.len() - 1;
-            self.x = lines[self.y].len();
+        if let Some(line) = lines.get(self.y) {
+            self.x = line.len();
             self.goal = Some(EOL); // stick to line ends on subsequent vertical moves
             self.stamp();
         }

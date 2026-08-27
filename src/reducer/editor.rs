@@ -272,6 +272,9 @@ pub fn apply_editor_event(editor: &mut EditorState, action: &Action) -> EventRes
         // PageTop/PageBottom remain as config-bindable ([keys]) aliases.
         Action::PageTop => apply_glide_move(editor, crate::glide::Motion::ScreenTop),
         Action::PageBottom => apply_glide_move(editor, crate::glide::Motion::ScreenBottom),
+        // ⚠️ Not the same as PageTop/PageBottom above: those are the *screen's* ends.
+        Action::FileTop => apply_glide_move(editor, crate::glide::Motion::FileTop),
+        Action::FileBottom => apply_glide_move(editor, crate::glide::Motion::FileBottom),
         Action::Home => {
             editor.glide_prefix = None;
             crate::reducer::cursor::move_home(&mut editor.cursor)

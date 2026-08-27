@@ -21,6 +21,8 @@ pub enum EditorAction {
     PageDown,
     PageTop,
     PageBottom,
+    FileTop,
+    FileBottom,
     Home,
     End,
     ToggleSearchMode,
@@ -147,6 +149,34 @@ fn navigation_shortcuts() -> Vec<Shortcut> {
             KeyModifiers::CONTROL,
             EditorAction::Home,
             "Ctrl+A Home",
+        ),
+        // File top / bottom, spelled the way nano spells them: `M-\` and `M-/`, with
+        // `Ctrl+Home` / `Ctrl+End` as the alternate. ⭐ nano itself carries both, so
+        // carrying both is the faithful thing rather than a belt-and-braces choice.
+        // ⚠️ Neither is producible on a phone; Glide's `gg`/`G` is that side's answer.
+        sc(
+            KeyCode::Char('\\'),
+            KeyModifiers::ALT,
+            EditorAction::FileTop,
+            "Alt+\\ FileTop",
+        ),
+        sc(
+            KeyCode::Home,
+            KeyModifiers::CONTROL,
+            EditorAction::FileTop,
+            "Ctrl+Home FileTop",
+        ),
+        sc(
+            KeyCode::Char('/'),
+            KeyModifiers::ALT,
+            EditorAction::FileBottom,
+            "Alt+/ FileBottom",
+        ),
+        sc(
+            KeyCode::End,
+            KeyModifiers::CONTROL,
+            EditorAction::FileBottom,
+            "Ctrl+End FileBottom",
         ),
         sc(
             KeyCode::Char('e'),
@@ -425,6 +455,8 @@ pub fn action_from_name(name: &str) -> Option<EditorAction> {
         "page_up" => Some(EditorAction::PageUp),
         "page_down" => Some(EditorAction::PageDown),
         "page_top" => Some(EditorAction::PageTop),
+        "file_top" => Some(EditorAction::FileTop),
+        "file_bottom" => Some(EditorAction::FileBottom),
         "page_bottom" => Some(EditorAction::PageBottom),
         "home" => Some(EditorAction::Home),
         "end" => Some(EditorAction::End),

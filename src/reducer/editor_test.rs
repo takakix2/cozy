@@ -351,6 +351,148 @@ fn test_read_view_shortcut_keys_clear_a_pending_glide_prefix() {
 }
 
 #[test]
+fn test_ctrl_a_and_ctrl_e_move_within_the_line_not_the_document() {
+    // 🚨 `move_home` was `x = 0; y = 0` and `move_end` jumped to the last line, while
+    // both READMEs — and so the crates.io page — say "Line start" / "Line end", and
+    // cozy's whole pitch is that you type like nano, where they are exactly that.
+    //
+    // ⭐ Nothing caught it. No test drove `Action::Home` at all, and the only test that
+    // drove `Action::End` (directly below) runs in the Markdown pager, where "the last
+    // line of the document" is the *correct* meaning — so the one green assertion was
+    // confirming the other branch.
+    //
+    // ⚠️ The assertion that matters is `y`, not `x`: "the cursor is at column 0" is also
+    // true of a cursor that never moved, and was true of the old behaviour too.
+    use crate::state::key::{KeyCode, KeyModifiers};
+    use crate::ui::Keymap;
+
+    let lines = vec![
+        "first line".to_string(),
+        "second".to_string(),
+        "third line is the longest".to_string(),
+        "日本語の行".to_string(),
+        "last".to_string(),
+    ];
+
+    for (key, expect_x) in [
+        (KeyCode::Char('a'), 0),
+        (KeyCode::Char('e'), lines[2].len()),
+    ] {
+        let mut editor = EditorState::new(None);
+        editor.enter_mode(EditorMode::Edit);
+        editor.buffer = TextBuffer::from_lines(lines.clone());
+        editor.cursor.y = 2;
+        editor.cursor.x = 6; // mid-line, so both directions are a real move
+
+        let action = Keymap::map_key_to_action(&editor, key, KeyModifiers::CONTROL).unwrap();
+        reduce(&mut editor, action);
+
+        assert_eq!(editor.cursor.x, expect_x, "{key:?}: wrong column");
+        // The regression itself: the old code left the line entirely.
+        assert_eq!(editor.cursor.y, 2, "{key:?}: left the current line");
+        // Positive control — column 6 must not survive, or the key did nothing.
+        assert_ne!(editor.cursor.x, 6, "{key:?}: did not move");
+    }
+}
+
+#[test]
+fn test_file_top_and_bottom_are_reachable_from_edit_mode() {
+    // ⭐ `Motion::FileTop`/`FileBottom` already existed — Glide's `gg`/`G` use them.
+    // What was missing was a key, for the whole life of the repo: the README promised
+    // `Ctrl+Home`/`Ctrl+End` until 2026-06-05, `src/` never contained either, and the
+    // doc cleanup that day removed the promise instead of implementing it.
+    //
+    // 📌 So this test is about the *wiring*, not the motion — hence going through
+    // `map_key_to_action`. All four spellings are nano's: `M-\` / `M-/` with
+    // `Ctrl+Home` / `Ctrl+End` as the alternate, and nano itself carries both.
+    use crate::state::key::{KeyCode, KeyModifiers};
+    use crate::ui::Keymap;
+
+    // ⚠️ Long buffer, cursor parked in the middle: if these keys are ever repointed at
+    // `Motion::ScreenTop`/`ScreenBottom` (which `PageTop`/`PageBottom` use, and which
+    // sit two lines away in the same match) the cursor lands near 100, not at an end.
+    let lines: Vec<String> = (0..200).map(|n| format!("line {n}")).collect();
+    let last = lines.len() - 1;
+
+    for (key, mods, expect_y) in [
+        (KeyCode::Char('\\'), KeyModifiers::ALT, 0),
+        (KeyCode::Home, KeyModifiers::CONTROL, 0),
+        (KeyCode::Char('/'), KeyModifiers::ALT, last),
+        (KeyCode::End, KeyModifiers::CONTROL, last),
+    ] {
+        let mut editor = EditorState::new(None);
+        editor.enter_mode(EditorMode::Edit);
+        editor.buffer = TextBuffer::from_lines(lines.clone());
+        editor.cursor.y = 100;
+        editor.cursor.x = 3;
+
+        let action = Keymap::map_key_to_action(&editor, key, mods)
+            .unwrap_or_else(|| panic!("{key:?}+{mods:?}: not bound"));
+        reduce(&mut editor, action);
+
+        assert_eq!(editor.cursor.y, expect_y, "{key:?}+{mods:?}: wrong line");
+        // Positive control — line 100 must not survive, or the key did nothing.
+        assert_ne!(editor.cursor.y, 100, "{key:?}+{mods:?}: did not move");
+    }
+}
+
+#[test]
+fn test_file_top_and_bottom_keep_the_pager_meaning_in_read_views() {
+    // ⚠️ The read views answer before the edit buffer, so these keys mean in Help and
+    // the Markdown preview exactly what `Ctrl+A`/`Ctrl+E` mean there — a pager's ends.
+    // Without this, "file top" could quietly start moving the hidden edit cursor while
+    // the help screen sat still.
+    use crate::state::key::{KeyCode, KeyModifiers};
+    use crate::ui::Keymap;
+
+    for (key, mods, expect) in [
+        (KeyCode::Home, KeyModifiers::CONTROL, 0usize),
+        (KeyCode::End, KeyModifiers::CONTROL, 49usize),
+    ] {
+        let mut editor = EditorState::new(None);
+        editor.enter_mode(EditorMode::Help);
+        editor.help_rendered_line_count = 50;
+        editor.help_view_height = 10;
+        editor.help_cursor_line = 25;
+
+        let action = Keymap::map_key_to_action(&editor, key, mods).unwrap();
+        reduce(&mut editor, action);
+
+        assert_eq!(editor.help_cursor_line, expect, "{key:?}: wrong pager line");
+        assert_ne!(editor.help_cursor_line, 25, "{key:?}: did not move");
+    }
+}
+
+#[test]
+fn test_ctrl_e_then_down_sticks_to_the_next_line_end() {
+    // `move_end` sets the goal column to EOL so a following j/k stays at each line's
+    // end, the way vim's `$` does. ⚠️ The next line is deliberately shorter *and*
+    // multi-byte: landing on a stale byte offset would panic rather than fail.
+    use crate::state::key::{KeyCode, KeyModifiers};
+    use crate::ui::Keymap;
+
+    let mut editor = EditorState::new(None);
+    editor.enter_mode(EditorMode::Edit);
+    editor.buffer = TextBuffer::from_lines(vec![
+        "third line is the longest".to_string(),
+        "日本語".to_string(),
+    ]);
+
+    let end =
+        Keymap::map_key_to_action(&editor, KeyCode::Char('e'), KeyModifiers::CONTROL).unwrap();
+    reduce(&mut editor, end);
+    assert_eq!(editor.cursor.x, "third line is the longest".len());
+
+    apply_editor_event(&mut editor, &Action::MoveDown);
+    assert_eq!(editor.cursor.y, 1);
+    assert_eq!(
+        editor.cursor.x,
+        "日本語".len(),
+        "did not stick to the line end"
+    );
+}
+
+#[test]
 fn test_markdown_preview_handles_long_documents() {
     let mut editor = EditorState::new(None);
     editor.enter_mode(EditorMode::Markdown);

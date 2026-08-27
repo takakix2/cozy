@@ -12,6 +12,8 @@ pub enum Action {
     PageDown,
     PageTop,
     PageBottom,
+    FileTop,
+    FileBottom,
     Home,
     End,
 
