@@ -1547,7 +1547,7 @@ mod tests {
     #[test]
     fn a_legacy_encoding_is_named_in_the_status_bar() {
         let sjis: &[u8] = &[0x82, 0xb1, 0x0a]; // 「こ」+ 改行
-        let (_, enc) = crate::utils::encoding::decode(sjis).expect("開けるはず");
+        let (_, enc) = crate::utils::encoding::decode(sjis);
         let mut editor = editor_in_mode(EditorMode::Edit);
         editor.buffer.format.encoding = enc;
         let line = render_status_bar_line(&editor, 70);

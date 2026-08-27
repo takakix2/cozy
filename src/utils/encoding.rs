@@ -33,6 +33,13 @@ pub enum FileEncoding {
     Utf8,
     /// UTF-8 では読めず、往復検査を通った符号化。
     Legacy(&'static Encoding),
+    /// **読み方が決まらなかった** —— バイナリか、cozy の知らない符号化。
+    ///
+    /// ⭐ latin-1 として見せる（**1 バイト = 1 文字**）。`ui::render::body` が制御文字を
+    /// `^X` に変えるので、**画面の 1 桁が原文の 1 バイト**に対応する ——
+    /// バイナリを覗く道具として、これが正しい見え方。
+    /// 🚨 保存は**拒む**（`file_io::write_buffer`）。∴ 開けても壊しようがない。
+    ViewOnly,
 }
 
 impl FileEncoding {
@@ -42,7 +49,19 @@ impl FileEncoding {
         match self {
             Self::Utf8 => None,
             Self::Legacy(enc) => Some(enc.name()),
+            // ⚠️ **理由（バイナリ / 未知の符号化）は言わない。** 状態行は狭く、
+            // 利用者が知りたいのは**何ができないか**。⭐ なぜかは Help と CHANGELOG に。
+            Self::ViewOnly => Some("view only"),
         }
+    }
+
+    /// このファイルは保存してよいか。
+    ///
+    /// 🚨 `ViewOnly` は**読み方が確定していない** ＝ 書き戻す先が無い。
+    /// ⭐ `#3` が守っていたのは「読めないファイルを**開かない**」ではなく
+    /// 「読めないファイルを**保存させない**」の方だった。∴ 開く方は許し、ここで止める。
+    pub fn is_writable(self) -> bool {
+        !matches!(self, Self::ViewOnly)
     }
 
     /// バッファの文字列を、読んだときと同じ符号化のバイト列へ戻す。
@@ -61,6 +80,9 @@ impl FileEncoding {
                     Some(bytes.into_owned())
                 }
             }
+            // 🚨 **書かない。** 呼び出し側が `is_writable` で先に止めるが、
+            // ここでも `None` を返す —— 止め忘れても壊れない側に倒す。
+            Self::ViewOnly => None,
         }
     }
 }
@@ -71,127 +93,169 @@ impl FileEncoding {
 /// 1. UTF-8 として妥当ならそれ（今までどおり・大多数はここ）
 /// 2. 候補で decode → encode し、**元のバイトと一致**したもの
 /// 3. どれも通らなければ `None` ＝ **開かない**（`#3` のまま）
-pub fn decode(bytes: &[u8]) -> Option<(String, FileEncoding)> {
-    if let Ok(text) = std::str::from_utf8(bytes) {
-        return Some((text.to_string(), FileEncoding::Utf8));
-    }
-    for enc in CANDIDATES {
-        let (text, _, had_errors) = enc.decode(bytes);
-        if had_errors {
-            continue;
+pub fn decode(bytes: &[u8]) -> (String, FileEncoding) {
+    // 🚨 **NUL があればテキストではない。** ⭐ `grep` や `git` がバイナリを判定するのに
+    // 使う線と同じ —— **利用者が既に知っている**線を使う。
+    // ⚠️ 往復するかどうかは利用者から見えないので、そちらを表の判定にはしない
+    // （PNG の magic は Shift_JIS として往復してしまい、`臼NG` と化けて開けていた）。
+    if !bytes.contains(&0) {
+        if let Ok(text) = std::str::from_utf8(bytes) {
+            return (text.to_string(), FileEncoding::Utf8);
         }
-        // 🚨 **ここが判定**。decode が通っただけでは足りない —— 戻して同じバイトに
-        // ならなければ、保存でファイルが変わる。
-        let (round, _, enc_errors) = enc.encode(&text);
-        if !enc_errors && round.as_ref() == bytes {
-            return Some((text.into_owned(), FileEncoding::Legacy(enc)));
+        for enc in CANDIDATES {
+            let (text, _, had_errors) = enc.decode(bytes);
+            if had_errors {
+                continue;
+            }
+            // 🚨 **ここが判定**。decode が通っただけでは足りない —— 戻して同じバイトに
+            // ならなければ、保存でファイルが変わる。
+            let (round, _, enc_errors) = enc.encode(&text);
+            if !enc_errors && round.as_ref() == bytes {
+                return (text.into_owned(), FileEncoding::Legacy(enc));
+            }
         }
     }
-    None
+    // ⭐ **ここに来たものも開く。** latin-1 は全バイト列が妥当なので、
+    // **必ず読める**（1 バイト = 1 文字）。⚠️ 保存は `is_writable` が止める。
+    let (text, _, _) = encoding_rs::WINDOWS_1252.decode(bytes);
+    (text.into_owned(), FileEncoding::ViewOnly)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// 実物のバイト列（Python の `cp932` / `euc_jp` で作ったものと同じ）。
     const SJIS: &[u8] = &[
         0x82, 0xb1, 0x82, 0xea, 0x82, 0xcd, 0x53, 0x4a, 0x49, 0x53, 0x0a,
     ]; // "これはSJIS\n"
     const EUCJP: &[u8] = &[0xa4, 0xb3, 0xa4, 0xec, 0xa4, 0xcf, 0x45, 0x55, 0x43, 0x0a]; // "これはEUC\n"
+    /// PNG の magic。⭐ **NUL を含み、かつ Shift_JIS として往復してしまう** ——
+    /// `#10` の前はこれが `臼NG` と化けて**編集可能なテキストとして**開けていた。
+    const PNG: &[u8] = &[
+        0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d,
+    ];
+    /// latin-1 の "café naïve"。NUL は無いが、どの候補でも往復しない。
+    const LATIN1: &[u8] = &[
+        0x63, 0x61, 0x66, 0xe9, 0x20, 0x6e, 0x61, 0xef, 0x76, 0x65, 0x0a,
+    ];
 
     #[test]
     fn utf8_stays_utf8() {
-        let (text, enc) = decode("これは UTF-8\n".as_bytes()).unwrap();
+        let (text, enc) = decode("これは UTF-8\n".as_bytes());
         assert_eq!(enc, FileEncoding::Utf8);
         assert_eq!(text, "これは UTF-8\n");
         assert_eq!(enc.label(), None, "既定は名乗らない");
+        assert!(enc.is_writable());
     }
 
     #[test]
-    fn shift_jis_is_recognised_and_named() {
-        let (text, enc) = decode(SJIS).expect("Shift_JIS が開けない");
-        assert!(text.contains("これは"), "読めていない: {text:?}");
-        assert_eq!(enc.label(), Some("Shift_JIS"));
-    }
-
-    #[test]
-    fn euc_jp_is_recognised() {
-        let (_, enc) = decode(EUCJP).expect("EUC-JP が開けない");
-        assert_eq!(enc.label(), Some("EUC-JP"));
-    }
-
-    /// 🚨 **本丸** —— 開けたものは必ず往復する。
-    #[test]
-    fn whatever_opens_round_trips() {
-        for bytes in [SJIS, EUCJP, "utf8 ok\n".as_bytes()] {
-            let (text, enc) = decode(bytes).expect("開けるはず");
+    fn legacy_encodings_are_recognised_and_writable() {
+        for (bytes, want) in [(SJIS, "Shift_JIS"), (EUCJP, "EUC-JP")] {
+            let (text, enc) = decode(bytes);
+            assert_eq!(enc.label(), Some(want));
+            assert!(enc.is_writable(), "{want} は編集できるべき");
             assert_eq!(
                 enc.encode(&text).as_deref(),
                 Some(bytes),
-                "開けたのに往復しない ＝ 保存でファイルが変わる"
+                "{want}: 往復しない"
             );
         }
     }
 
-    /// 🚨 **これがこの設計の全部** —— *開けたものは、必ず往復する*。
-    ///
-    /// ⭐ 検体を手で選ぶのをやめ、**2 バイトの全組み合わせ（65,536 通り）**を回す。
-    /// ⚠️ 手で選んだ検体だと「decode は通るが往復しない」並びを取り逃がす ——
-    /// 実際に一度取り逃がし、往復検査を外した実装が緑で通った。
+    /// 🚨 **本丸** —— **何でも開く。ただし読み方が決まらないものは書かない。**
     #[test]
-    fn anything_that_opens_round_trips_for_every_two_byte_sequence() {
-        let mut opened = 0usize;
+    fn everything_opens_but_only_some_of_it_is_writable() {
+        for (name, bytes, writable) in [
+            ("utf8", "ok\n".as_bytes(), true),
+            ("sjis", SJIS, true),
+            ("eucjp", EUCJP, true),
+            ("png", PNG, false),
+            ("latin1", LATIN1, false),
+        ] {
+            let (text, enc) = decode(bytes);
+            assert!(!text.is_empty(), "{name}: 開けていない");
+            assert_eq!(enc.is_writable(), writable, "{name}: 書ける/書けないが逆");
+        }
+    }
+
+    /// 🚨 **NUL を含むものは、往復しても view only。**
+    /// ⚠️ PNG の magic は Shift_JIS として往復する ——
+    /// `#10` の前はそれで**編集可能なテキストとして開けていた**（`臼NG` と化けて）。
+    /// ⭐ 往復するかどうかは利用者から見えないので、判定の表には出さない。
+    #[test]
+    fn a_nul_byte_wins_over_a_successful_round_trip() {
+        let (_, sjis_view) = decode(PNG);
+        assert_eq!(
+            sjis_view,
+            FileEncoding::ViewOnly,
+            "NUL があるのに編集可にした"
+        );
+        // 対照 —— NUL を抜くと Shift_JIS として開ける（往復自体は成立している）。
+        let without_nul: Vec<u8> = PNG.iter().copied().filter(|b| *b != 0).collect();
+        let (_, enc) = decode(&without_nul);
+        assert_eq!(
+            enc.label(),
+            Some("Shift_JIS"),
+            "NUL 以外の理由で view only になっている ＝ 線引きが別物"
+        );
+    }
+
+    /// ⭐ view only は **1 バイト = 1 文字**で見せる。
+    /// これが崩れると、バイナリを覗く道具として意味が無い。
+    #[test]
+    fn view_only_shows_one_character_per_byte() {
+        let (text, enc) = decode(PNG);
+        assert_eq!(enc, FileEncoding::ViewOnly);
+        assert_eq!(
+            text.chars().count(),
+            PNG.len(),
+            "バイト数と文字数が合わない ＝ 画面の桁と原文のバイトが対応しない"
+        );
+    }
+
+    /// 🚨 **view only は書かない。** 呼び出し側が止め忘れても壊れない側に倒す。
+    #[test]
+    fn view_only_refuses_to_encode() {
+        let (text, enc) = decode(PNG);
+        assert!(!enc.is_writable());
+        assert!(enc.encode(&text).is_none(), "view only なのに書けてしまう");
+    }
+
+    /// 🚨 **開けて編集できるものは、必ず往復する。**
+    /// ⭐ 2 バイトの全組み合わせを回す —— 手で選んだ検体では
+    /// 「decode は通るが往復しない」並びを取り逃がす（実際に一度取り逃がした）。
+    #[test]
+    fn anything_writable_round_trips_for_every_two_byte_sequence() {
+        let mut writable = 0usize;
         for a in 0..=255u8 {
             for b in 0..=255u8 {
                 let bytes = [a, b, 0x0a];
-                if let Some((text, enc)) = decode(&bytes) {
-                    opened += 1;
+                let (text, enc) = decode(&bytes);
+                if enc.is_writable() {
+                    writable += 1;
                     assert_eq!(
                         enc.encode(&text).as_deref(),
                         Some(&bytes[..]),
-                        "開けたのに往復しない: {bytes:02x?} を {:?} として読んだ",
-                        enc.label().unwrap_or("UTF-8")
+                        "編集可なのに往復しない: {bytes:02x?}"
                     );
                 }
             }
         }
-        // ⭐ 「1 つも開けていない」なら網が何も測っていない。
-        assert!(opened > 1000, "開けた検体が少なすぎる: {opened}");
+        assert!(writable > 1000, "編集可の検体が少なすぎる: {writable}");
     }
 
-    /// 🚨 **latin-1 系を候補に入れていないこと。**
-    /// ⚠️ あれは全バイト列が妥当なので、入れると**何でも開けるが日本語が化ける**。
-    /// ⭐ この検体は latin-1 としては読めるが、Shift_JIS / EUC-JP としては読めない。
+    /// 🚨 **latin-1 は候補に入れない。** 入れると何でも「編集可」になり、
+    /// 日本語が化けたまま保存できてしまう。⭐ view only で見せるのとは別の話。
     #[test]
-    fn latin1_text_is_not_opened() {
-        // "café naïve\n" を latin-1 で書いたもの。
-        let latin1: &[u8] = &[
-            0x63, 0x61, 0x66, 0xe9, 0x20, 0x6e, 0x61, 0xef, 0x76, 0x65, 0x0a,
-        ];
-        assert!(
-            decode(latin1).is_none(),
-            "latin-1 を開いている ＝ 候補に入っている（何でも開けるようになる）"
-        );
+    fn latin1_is_viewable_but_not_editable() {
+        let (text, enc) = decode(LATIN1);
+        assert_eq!(enc, FileEncoding::ViewOnly, "latin-1 を編集可にしている");
+        assert!(text.contains("caf"), "見せられていない: {text:?}");
     }
 
-    /// 🚨 **陽性対照。** `#3` が緩んでいないこと —— どの候補でも往復しないバイト列は
-    /// **開かない**。⭐ これが無いと「latin-1 を足して何でも開く」実装が緑で通る。
-    #[test]
-    fn bytes_that_do_not_round_trip_are_refused() {
-        // Shift_JIS としても EUC-JP としても妥当でない並び。
-        let junk: &[u8] = &[0xff, 0xfe, 0x80, 0x81, 0x0a];
-        assert!(
-            decode(junk).is_none(),
-            "往復しないバイト列を開いている（#3 が緩んでいる）"
-        );
-    }
-
-    /// ⚠️ **その符号化で書けない字は、保存を断る。**
-    /// 🚨 黙って `?` に落とすと「保存できた」と言いながら中身が変わる。
     #[test]
     fn a_character_the_encoding_cannot_hold_is_refused() {
-        let (_, enc) = decode(SJIS).unwrap();
+        let (_, enc) = decode(SJIS);
         assert!(enc.encode("これはSJIS\n").is_some(), "元の字は書けるはず");
         assert!(
             enc.encode("絵文字 🐚\n").is_none(),

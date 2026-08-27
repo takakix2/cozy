@@ -1,5 +1,35 @@
 # Changelog
 
+## v0.2.30
+
+### Changed
+
+- **Every file opens now. What changes is whether it can be saved.** Until this release
+  cozy declined anything it could not read as text, which protected those files but also
+  meant you could not look at one. Opening a file was never what damaged it — saving over
+  it was. So the refusal moved to where the damage happens.
+
+  A file cozy cannot read as text opens as **`[view only]`**: shown through latin-1, so
+  **one column on screen is one byte of the original**, with control characters drawn as
+  `^X` and NUL as `^@`. Binary is legible this way — the `IHDR` in a PNG header and the
+  `ELF` in an ELF header read as themselves. Saving is refused and the file is untouched.
+
+  ⭐ **Which files those are is now something you can predict.** The line is whether the
+  file contains a NUL byte — the same test `grep` and `git` use. Before this, it was
+  whether the bytes happened to survive a decode-and-re-encode round trip, which is not
+  something anyone can see: a PNG header round-trips as Shift_JIS, so cozy opened it as
+  **editable text** and drew its magic number as `臼NG`. A gzip header does not, so cozy
+  refused it. Same kind of file, opposite treatment, no way to tell in advance.
+
+  ⚠️ Typing into a view-only buffer is allowed and the save is what stops — the same
+  shape as a read-only file, so there is one rule to learn rather than two.
+
+  ⚠️ **This is deliberately not what nano does.** Measured against GNU nano 7.2: opening
+  a PNG and pressing write-out, with no edits, takes it from 12 bytes to 14 (nano reports
+  `Converted from DOS format` and rewrites the line endings); an ELF grows by one byte;
+  64 random bytes grow by one. nano opens anything and will quietly damage it. cozy opens
+  anything and will not.
+
 ## v0.2.29
 
 ### Added

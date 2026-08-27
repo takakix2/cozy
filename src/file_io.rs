@@ -183,18 +183,12 @@ pub(crate) fn load_startup_document(filename: Option<&str>) -> StartupDocument {
     // ⚠️ **バイトで読む。** `read_to_string` は UTF-8 でなければ `InvalidData` を返すが、
     // ⭐ `#4` 以降は「UTF-8 でない ＝ 開けない」ではない —— 往復するなら開ける。
     let (lines, format) = match std::fs::read(path_ref) {
-        Ok(bytes) => match crate::utils::encoding::decode(&bytes) {
-            Some((content, encoding)) => parse_content_with(&content, encoding),
-            // 🚨 どの候補でも往復しない ＝ **返せない形**。`#3` のまま開かない。
-            None => {
-                return StartupDocument::Unreadable {
-                    message: cannot_open_message(
-                        path,
-                        &io::Error::new(io::ErrorKind::InvalidData, "unsupported encoding"),
-                    ),
-                };
-            }
-        },
+        // ⭐ **読み方が決まらなくても開く**（`#10`）。latin-1 として見せ、保存は拒む ——
+        // `#3` が守っていたのは「開かない」ではなく「**保存させない**」の方だった。
+        Ok(bytes) => {
+            let (content, encoding) = crate::utils::encoding::decode(&bytes);
+            parse_content_with(&content, encoding)
+        }
         // ⭐ 新規ファイルは空で開くのが正しい。cozy の書き味の芯なので変えない。
         // 形は既定（末尾に改行あり）—— 不変条件は「開いたファイル」の話で、
         // まだ存在しないファイルには言うことが無い（`FileFormat::default` を見よ）。
@@ -304,15 +298,7 @@ pub fn open_file(editor: &mut EditorState, path: &str) -> io::Result<()> {
     // 結びつき、次の保存で中身が消える（起動引数側と同じ事故）。文言も起動側と共有する。
     let bytes = std::fs::read(&target)
         .map_err(|e| io::Error::new(e.kind(), cannot_open_message(path, &e)))?;
-    let (content, encoding) = crate::utils::encoding::decode(&bytes).ok_or_else(|| {
-        io::Error::new(
-            io::ErrorKind::InvalidData,
-            cannot_open_message(
-                path,
-                &io::Error::new(io::ErrorKind::InvalidData, "unsupported encoding"),
-            ),
-        )
-    })?;
+    let (content, encoding) = crate::utils::encoding::decode(&bytes);
 
     let (lines, format) = parse_content_with(&content, encoding);
     editor.buffer = TextBuffer::from_lines_with_format(lines, format);
@@ -378,6 +364,18 @@ fn write_buffer(editor: &EditorState, target: &std::path::Path, context: &str) -
     //
     // ⭐ どちらの経路も**それ自体は正しい**（不可分性とリンク保存のための設計）。
     // 直すべきは「検査がどこにも無い」ことなので、**分岐の手前**に置く。
+    // 🚨 **読み方が決まっていないものは書かない**（`#10`）。latin-1 で見せてはいるが、
+    // それは「読めた」ということではない —— 書き戻す先が無い。
+    if !editor.buffer.format.encoding.is_writable() {
+        return Err(annotate(
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "view only — cozy could not determine this file's encoding",
+            ),
+            context,
+        ));
+    }
+
     if let Some(meta) = existing.as_ref() {
         if write_is_refused(&real, meta) {
             return Err(annotate(
@@ -1157,7 +1155,13 @@ mod write_buffer_tests {
     }
 }
 
-/// 「読めないファイルを開かない」ことの網。
+/// 🚨 **「読めないファイルを保存させない」ことの網**（旧: 開かないことの網）。
+///
+/// ⚠️ **主語が変わった**（`#10`・2026-08-27）。`#3` は「読めないファイルは開かない」
+/// と書いていたが、⭐ **本当に守っていたのは「保存させない」の方**だった ——
+/// 壊す経路は保存であって、開くことではない。
+/// ∴ いまは **latin-1 として見せて開き、保存で拒む**（`[view only]`）。
+/// 📌 この網が測るのも「開かない」から「**書けない**」へ移した。
 ///
 /// 🚨 **陽性対照が要る。** 「空バッファで開いた」は**正しい新規ファイルの場合も真**なので、
 /// 空かどうかを見るだけでは何も固定できない。∴ `NotFound` と `InvalidData` を**両方**撃ち、
@@ -1168,7 +1172,7 @@ mod write_buffer_tests {
 #[cfg(test)]
 mod refusing_unreadable_files {
     use super::*;
-    use crate::state::{EditorMode, EditorState};
+    use crate::state::EditorState;
     use std::fs;
 
     /// **どの候補でも往復しない**バイト列。∴ cozy はこれを開かない。
@@ -1239,59 +1243,52 @@ mod refusing_unreadable_files {
 
     /// 事故の本体。**読めないファイルは開かない**（＝ `File` にならない）。
     #[test]
-    fn a_file_in_no_supported_encoding_is_refused_at_startup() {
+    fn a_file_in_no_supported_encoding_opens_as_view_only() {
         let _guard = env_guard();
-        let dir = scratch("startup_refuse");
+        let dir = scratch("startup_view");
         let path = sjis_file(&dir);
         match load_startup_document(path.to_str()) {
-            StartupDocument::Unreadable { message } => {
+            StartupDocument::File { format, lines, .. } => {
                 assert!(
-                    message.contains("Unsupported encoding"),
-                    "理由を名乗らないと利用者はタイプミスを疑う: {message}"
+                    !format.encoding.is_writable(),
+                    "読み方が決まらないのに編集可にしている"
                 );
+                assert_eq!(format.encoding.label(), Some("view only"));
+                assert!(!lines.is_empty(), "中身を見せていない");
             }
-            _ => panic!("非 UTF-8 は Unreadable でなければならない"),
+            _ => panic!("`#10` 以降は開く（保存で止める）"),
         }
+        assert_eq!(
+            fs::read(&path).unwrap(),
+            UNREADABLE,
+            "開いただけで触っている"
+        );
     }
-
-    /// ⭐ **これが本命** —— 開いて打って保存しても、**元のバイト列が 1 バイトも動かない**。
-    /// 以前はここで 43 バイトが 6 バイトになっていた。
     #[test]
-    fn typing_and_saving_after_a_refusal_cannot_touch_the_file() {
+    fn typing_and_saving_a_view_only_file_cannot_touch_it() {
         let _guard = env_guard();
-        let dir = scratch("startup_bytes");
+        let dir = scratch("view_save");
         let path = sjis_file(&dir);
-
-        let mut editor = EditorState::new(Some(path.to_string_lossy().to_string()));
-
-        // 名前を引き受けていないこと ＝ 保存先が存在しないこと。
+        let mut editor = EditorState::new(path.to_str().map(str::to_string));
+        // ⭐ 開けてはいる（`#10`）。⚠️ しかし保存は通らない。
+        assert!(!editor.buffer.format.encoding.is_writable());
+        editor.buffer.lines[0].push_str("ZZZ");
+        let err =
+            write_buffer(&editor, &path, "test").expect_err("view only なのに保存できてしまった");
+        // ⚠️ **入口の検査が効いていることまで測る。** `encode` 側の `None` でも
+        // 保存は止まるので、「止まった」だけでは**どちらが効いたか分からない** ——
+        // 入口を外しても緑のままになる（実際に陰性対照で通ってしまった）。
+        // ⭐ 入口だけが言う文言で確かめる。
         assert!(
-            editor.filename.is_none(),
-            "読めなかったファイルの名前を持つと Ctrl+S が破壊になる"
+            err.to_string().contains("could not determine"),
+            "入口の検査が効いていない（`encode` 側の防御だけで止まっている）: {err}"
         );
-        assert_eq!(editor.mode, EditorMode::Welcome, "編集に入ってはいけない");
-        assert!(
-            editor.status_message.is_some(),
-            "黙って空で立ち上がるのが元の事故だった"
-        );
-
-        // 利用者が気づかず打って保存した場合を、そのまま撃つ。
-        editor.buffer = crate::state::TextBuffer::from_lines(vec!["hello".to_string()]);
-        assert!(
-            save(&mut editor).is_err(),
-            "保存先が無いので保存は成立しない"
-        );
-
         assert_eq!(
             fs::read(&path).unwrap(),
             UNREADABLE,
             "元のバイト列が変わっている"
         );
     }
-
-    // ── `Ctrl+O`（アプリ内）──────────────────────────────────────────────
-
-    /// 陽性対照。**無いファイルは今までどおり「無い」と言う**（文言を混ぜない）。
     #[test]
     fn ctrl_o_still_calls_a_missing_file_missing() {
         let _guard = env_guard();
@@ -1307,31 +1304,23 @@ mod refusing_unreadable_files {
     /// 読めない理由を **UTF-8 の話として**言う。
     /// ⚠️ 以前は `stream did not contain valid UTF-8` という Rust の言い回しが出ていた。
     #[test]
-    fn ctrl_o_refuses_an_unsupported_file_and_says_why() {
+    fn ctrl_o_opens_an_unsupported_file_as_view_only() {
         let _guard = env_guard();
-        let dir = scratch("open_refuse");
+        let dir = scratch("open_view");
         let path = sjis_file(&dir);
         let mut editor = EditorState::new(None);
         editor._working_dir = dir.clone();
-        editor.buffer = crate::state::TextBuffer::from_lines(vec!["keep me".to_string()]);
 
-        let err = open_file(&mut editor, "unreadable.txt").unwrap_err();
-        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
-        assert!(err.to_string().contains("Unsupported encoding"), "{err}");
+        open_file(&mut editor, "unreadable.txt").expect("`#10` 以降は開く");
         assert!(
-            !err.to_string().contains("stream"),
-            "Rust の内部事情を利用者に見せない: {err}"
+            !editor.buffer.format.encoding.is_writable(),
+            "編集可で開いている"
         );
-
-        // 手元のバッファも、向こうのファイルも、どちらも無傷。
-        assert_eq!(editor.buffer.lines, &["keep me".to_string()]);
-        assert!(editor.filename.is_none());
+        // 保存しようとすると止まる。
+        let err = write_buffer(&editor, &path, "test").unwrap_err();
+        assert!(err.to_string().contains("could not determine"), "{err}");
         assert_eq!(fs::read(&path).unwrap(), UNREADABLE);
     }
-
-    /// 相対名の住所の解き方を `save` と揃える。
-    /// ⚠️ desktop では `_working_dir` はプロセスの cwd と同じなので、これが効くのは
-    /// **ホストが working_dir を宣言する経路**（argo に埋め込まれた cozy）。
     #[test]
     fn ctrl_o_resolves_a_relative_name_against_working_dir() {
         let _guard = env_guard();
@@ -1780,7 +1769,7 @@ mod legacy_encodings {
         let after = fs::read(&path).unwrap();
         assert_ne!(after, SJIS, "編集が書かれていない");
         // 書かれたものを Shift_JIS として読み直すと、打った字が入っている。
-        let (text, enc) = crate::utils::encoding::decode(&after).expect("読み直せない");
+        let (text, enc) = crate::utils::encoding::decode(&after);
         assert_eq!(enc.label(), Some("Shift_JIS"), "UTF-8 に化けている");
         assert!(text.contains('あ'), "打った字が入っていない: {text:?}");
     }
@@ -1788,23 +1777,19 @@ mod legacy_encodings {
     /// 🚨 **陽性対照。** `#3` が緩んでいないこと ——
     /// どの候補でも往復しないバイト列は**開かない**。
     #[test]
-    fn a_file_in_no_supported_encoding_is_still_refused() {
+    fn a_file_in_no_supported_encoding_opens_but_cannot_be_saved() {
         let _g = guard();
         let dir = scratch("refused");
         let path = dir.join("subject.txt");
         let junk: &[u8] = &[0xff, 0xfe, 0x80, 0x81, 0x0a];
         fs::write(&path, junk).unwrap();
-        match load_startup_document(path.to_str()) {
-            StartupDocument::Unreadable { message } => {
-                assert!(message.contains("Unsupported encoding"), "{message}")
-            }
-            _ => panic!("往復しないファイルを開いている（#3 が緩んでいる）"),
-        }
+        let format = match load_startup_document(path.to_str()) {
+            StartupDocument::File { format, .. } => format,
+            _ => panic!("`#10` 以降は開く"),
+        };
+        assert!(!format.encoding.is_writable(), "編集可で開いている");
         assert_eq!(fs::read(&path).unwrap(), junk, "触っている");
     }
-
-    /// ⚠️ **`#6` の検体が壊れていないこと。** 符号化の層を足したときに、
-    /// 行末と終端の層を踏んでいないか。
     #[test]
     fn the_shape_work_did_not_regress() {
         for (name, bytes) in [
