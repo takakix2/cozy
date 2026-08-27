@@ -1,5 +1,21 @@
 # Changelog
 
+## v0.2.20
+
+### Fixes
+
+- **A half-typed `gg` no longer sticks in the read view.** In the help screen and the
+  Markdown preview, pressing `g` — the first half of `gg` — shows `[g]` in the footer
+  while cozy waits for the second key. Any arrow or page key left that `[g]` sitting
+  there for the rest of the session: the keys that clear it are the ones handled by the
+  per-mode branch, and arrows resolve in the global shortcut table and return before
+  that branch is ever reached.
+
+  The display has been there since July, but `[g]` normally lives for the few tens of
+  milliseconds between two `g` presses, and the only way to strand it was to reach for
+  an arrow key mid-motion. It became an everyday sight on a phone, where a finger pan
+  arrives as a run of arrow keys.
+
 ## v0.2.19
 
 ### Highlights

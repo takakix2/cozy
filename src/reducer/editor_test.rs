@@ -299,6 +299,58 @@ fn test_markdown_preview_counted_vertical_move() {
 }
 
 #[test]
+fn test_read_view_shortcut_keys_clear_a_pending_glide_prefix() {
+    // `g` opens a two-key motion, and `glide_count` / `glide_prefix` are two
+    // halves of the *same* pending input — a move abandons both. A plain key
+    // clears the prefix in the per-mode branch (`_ => SetGlidePrefix(None)`),
+    // but arrows and page keys resolve in the global shortcut table and return
+    // before that branch is ever reached, so the footer kept showing `[g]`.
+    // ⚠️ Only reachable by hand until argo turned a finger pan into a wheel
+    // event, which xterm hands to the app as a run of arrow keys.
+    use crate::state::key::{KeyCode, KeyModifiers};
+    use crate::ui::Keymap;
+
+    for mode in [EditorMode::Markdown, EditorMode::Help] {
+        // ⚠️ Home/End are Ctrl+A / Ctrl+E here; bare Home/End are unbound by
+        // default, so they would fall through to the per-mode branch and prove
+        // nothing about the shortcut path.
+        for (key, mods) in [
+            (KeyCode::Down, KeyModifiers::NONE),
+            (KeyCode::Up, KeyModifiers::NONE),
+            (KeyCode::PageDown, KeyModifiers::NONE),
+            (KeyCode::PageUp, KeyModifiers::NONE),
+            (KeyCode::Char('a'), KeyModifiers::CONTROL),
+            (KeyCode::Char('e'), KeyModifiers::CONTROL),
+        ] {
+            let mut editor = EditorState::new(None);
+            editor.enter_mode(mode);
+            editor.buffer = TextBuffer::from_lines((1..=50).map(|n| n.to_string()).collect());
+            editor.help_rendered_line_count = 50;
+            editor.markdown_view_height = 10;
+            editor.help_view_height = 10;
+            editor.markdown_cursor_line = 25;
+            editor.help_cursor_line = 25;
+            let cursor = |e: &EditorState| match mode {
+                EditorMode::Help => e.help_cursor_line,
+                _ => e.markdown_cursor_line,
+            };
+
+            let g =
+                Keymap::map_key_to_action(&editor, KeyCode::Char('g'), KeyModifiers::NONE).unwrap();
+            reduce(&mut editor, g);
+            assert_eq!(editor.glide_prefix, Some('g'), "{mode:?}/{key:?}: setup");
+
+            let action = Keymap::map_key_to_action(&editor, key, mods).unwrap();
+            reduce(&mut editor, action);
+
+            // Positive control: "no prefix" must not be reached by doing nothing.
+            assert_ne!(cursor(&editor), 25, "{mode:?}/{key:?}: did not move");
+            assert_eq!(editor.glide_prefix, None, "{mode:?}/{key:?}: prefix stuck");
+        }
+    }
+}
+
+#[test]
 fn test_markdown_preview_handles_long_documents() {
     let mut editor = EditorState::new(None);
     editor.enter_mode(EditorMode::Markdown);
@@ -1479,4 +1531,40 @@ fn enter_answers_the_question_even_from_the_save_prompt() {
 
     assert!(editor.create_dir.is_none(), "the question is still open");
     assert_eq!(std::fs::read_to_string(&target).unwrap(), "hello\n");
+}
+#[test]
+fn test_ctrl_h_opens_help_from_edit_mode() {
+    // ★ **iPhone からヘルプへ入る唯一の道**（あの端末に F1 は無い）。
+    //
+    // 🚨 切れても症状は「何も起きない」＝ 画面が変わらないので気づけない。
+    // 実機で「`Ctrl+H` が効かない」と出たので、**cozy 側だけ**を切り離して固定する
+    // （host 側の経路は argo の `tests/frontend/editorCtrlKey.test.ts` が見ている）。
+    // ⭐ 2 つに分けてあるので、どちらが緑かで疑いの向き先が決まる。
+    use crate::state::key::{KeyCode, KeyModifiers};
+    use crate::ui::Keymap;
+
+    // ⚠️ **起動直後は `Welcome`**（`Edit` ではない）。実機で最初に見えるのがこの画面なので、
+    // ここから入れないと「ヘルプが無い」と同じことになる。両方から測る。
+    for mode in [EditorMode::Welcome, EditorMode::Edit] {
+        let mut editor = EditorState::new(None);
+        editor.enter_mode(mode);
+        assert_eq!(
+            Keymap::map_key_to_action(&editor, KeyCode::Char('h'), KeyModifiers::CONTROL),
+            Some(Action::EnterMode(EditorMode::Help)),
+            "{mode:?} から Ctrl+H がヘルプを開かない"
+        );
+
+        // ⚠️ **F1 も同じ答え**（端末が 0x08 を飲む場合の逃げ道として在る）。
+        assert_eq!(
+            Keymap::map_key_to_action(&editor, KeyCode::F(1), KeyModifiers::NONE),
+            Some(Action::EnterMode(EditorMode::Help)),
+            "{mode:?} から F1 がヘルプを開かない"
+        );
+
+        // ★ 対照: 素の `h` はヘルプを開かない（修飾を見ずに拾っていないこと）。
+        assert_ne!(
+            Keymap::map_key_to_action(&editor, KeyCode::Char('h'), KeyModifiers::NONE),
+            Some(Action::EnterMode(EditorMode::Help)),
+        );
+    }
 }

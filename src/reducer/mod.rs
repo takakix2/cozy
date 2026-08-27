@@ -105,6 +105,13 @@ fn rv_store(editor: &mut EditorState, view: ReadView, cursor: usize, scroll: usi
 }
 
 fn set_read_cursor(editor: &mut EditorState, view: ReadView, line: usize) {
+    // Moving abandons a pending two-key motion. `take_read_count_opt` clears the
+    // count half at each call site, but the prefix has no such owner — and the
+    // keys that reach here most often (arrows, page keys) resolve in the global
+    // shortcut table and return before the per-mode `_ => SetGlidePrefix(None)`
+    // arm that clears it for a plain key. Clearing it at the one place every
+    // read-view move funnels through keeps the two halves from drifting apart.
+    editor.glide_prefix = None;
     let last = rv_line_count(editor, view).saturating_sub(1);
     let y = line.min(last);
     let mut scroll = rv_scroll(editor, view);
