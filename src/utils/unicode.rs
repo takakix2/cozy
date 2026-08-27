@@ -11,19 +11,28 @@ use unicode_width::UnicodeWidthChar;
 /// ⚠️ **描き方と数え方は同じ規則から出さなければならない。** 制御文字を `^X` の
 /// 2 桁で描くなら、幅も 2 でなければカーソルが文字の上に乗らない
 /// （`ui::render::body` の可視化と対になっている）。
-pub fn char_display_width(ch: char) -> usize {
+/// タブ幅。端末の既定と同じ 8。
+///
+/// 📌 **cozy 自身が空白へ展開する**ので、この数は cozy が決めてよい ——
+/// 端末に TAB バイトを渡さないから、端末の設定と食い違いようがない。
+pub const TAB_WIDTH: usize = 8;
+
+/// 桁 `col`（**論理行の先頭から 0 始まり**）に置かれた 1 文字が占める桁数。
+///
+/// 🚨 **TAB は位置で幅が変わる。** ∴ 幅は「1 文字」では決まらず、
+/// **そこまでに何桁使ったか**を知らなければ答えられない。
+/// ⚠️ これが `char_display_width(ch)` を消した理由 —— 1 文字だけ渡せる形を残すと、
+/// TAB を渡されたときに**黙って嘘の幅**を返す。
+pub fn char_display_width_at(ch: char, col: usize) -> usize {
+    // ⭐ 次のタブストップまで。`col` が既にタブストップ上なら丸ごと 1 つ分。
+    if ch == '\t' {
+        return TAB_WIDTH - (col % TAB_WIDTH);
+    }
     // ⭐ **描く側と同じ関数に訊く。** `^X` として描かれる字だけが 2 桁。
     // ここを `is_control()` で判定すると、`^` 表記を持たない字まで 2 桁になり、
     // **幅だけがずれる**（描画は 1 文字のまま）。
     if caret_notation(ch).is_some() {
         return 2;
-    }
-    // ⚠️ TAB だけは別扱い。他の制御文字と違い**普通のテキストに入っている**ので、
-    // `^I` として 2 桁で描くと既存のファイルの見た目が変わる。⭐ 桁を合わせて
-    // 展開するのか `^I` と描くのかは `#8` の外で決める。ここでは
-    // **`wrap_chunks` が元から使っていた 1** を保つ（挙動を変えない側に倒す）。
-    if ch == '\t' {
-        return 1;
     }
     // ⚠️ ここでの `None` は「幅が未定義」＝ 結合文字など。0 でよい。
     UnicodeWidthChar::width(ch).unwrap_or(0)
@@ -65,7 +74,14 @@ pub fn caret_notation(ch: char) -> Option<char> {
 /// 🚨 **他人のバイトを端末へ渡す唯一の関門。** 行を描く側は必ずここを通す ——
 /// 通さないと、ファイルの中身が端末制御を奪える（`ROADMAP.md`「Stop handing the
 /// terminal whatever the file says」）。
-pub fn visible_char(ch: char) -> String {
+pub fn visible_char_at(ch: char, col: usize) -> String {
+    // 🚨 **TAB も端末に渡さない。** 渡すと端末が自分のタブストップで桁を進め、
+    // cozy が数えた桁と食い違う —— `/etc/hosts` の 12 行目で **7 桁**ずれた
+    // （行番号の欄があるぶん、端末の絶対桁と行内の桁が別物になるため）。
+    // ⭐ 自分で空白に展開すれば、桁は cozy が決めるので**定義上ずれない**。
+    if ch == '\t' {
+        return " ".repeat(char_display_width_at('\t', col));
+    }
     match caret_notation(ch) {
         Some(c) => {
             let mut s = String::with_capacity(2);
@@ -77,9 +93,24 @@ pub fn visible_char(ch: char) -> String {
     }
 }
 
-/// 文字列が画面で占める桁数。
+/// 文字列が画面で占める桁数。**行頭から数える**。
+///
+/// ⚠️ TAB があるので `map(..).sum()` にはできない —— 各文字の幅が
+/// **それまでの桁**に依存する。
 pub fn str_display_width(s: &str) -> usize {
-    s.chars().map(char_display_width).sum()
+    width_from(s, 0)
+}
+
+/// 桁 `start_col` から書き始めたときに、`s` が使う桁数。
+///
+/// ⭐ 折り返した先や、行の途中から測るときに使う。TAB のタブストップは
+/// **論理行の先頭**から数えるので、そこまでの桁を渡す必要がある。
+pub fn width_from(s: &str, start_col: usize) -> usize {
+    let mut col = start_col;
+    for ch in s.chars() {
+        col += char_display_width_at(ch, col);
+    }
+    col - start_col
 }
 
 /// Returns the display column width of the substring `s[..byte_pos]`.
@@ -104,16 +135,16 @@ mod tests {
             if ch == '\t' {
                 continue; // ⚠️ TAB は `#8` の外（端末が桁を送るので別の話）
             }
-            let drawn = visible_char(ch);
+            let drawn = visible_char_at(ch, 0);
             let drawn_cols: usize = drawn
                 .chars()
                 .map(|c| UnicodeWidthChar::width(c).unwrap_or(0))
                 .sum();
             assert_eq!(
                 drawn_cols,
-                char_display_width(ch),
+                char_display_width_at(ch, 0),
                 "U+{code:04X}: 描いた字は {drawn_cols} 桁なのに、幅は {} と数えている",
-                char_display_width(ch)
+                char_display_width_at(ch, 0)
             );
         }
     }
@@ -130,41 +161,89 @@ mod tests {
 
     #[test]
     fn visible_char_draws_caret_notation() {
-        assert_eq!(visible_char('\r'), "^M");
-        assert_eq!(visible_char('\u{1b}'), "^[");
-        assert_eq!(visible_char('\u{7f}'), "^?");
+        assert_eq!(visible_char_at('\r', 0), "^M");
+        assert_eq!(visible_char_at('\u{1b}', 0), "^[");
+        assert_eq!(visible_char_at('\u{7f}', 0), "^?");
     }
 
     /// 陽性対照 —— 普通の字は**何も変えない**。
     /// ⭐ これが無いと「全部 `^X` にする」実装が緑で通る。
     #[test]
     fn ordinary_chars_pass_through_untouched() {
-        assert_eq!(visible_char('a'), "a");
-        assert_eq!(visible_char('あ'), "あ");
-        assert_eq!(visible_char('\t'), "\t");
+        assert_eq!(visible_char_at('a', 0), "a");
+        assert_eq!(visible_char_at('あ', 0), "あ");
         assert_eq!(caret_notation('a'), None);
-        assert_eq!(caret_notation('\t'), None, "TAB は `#8` の外");
+        assert_eq!(
+            caret_notation('\t'),
+            None,
+            "TAB は `^I` ではなく空白へ展開する"
+        );
     }
 
     #[test]
     fn control_chars_are_two_columns() {
         // `^M` / `^[` / `^H` として描かれるので 2 桁。
-        assert_eq!(char_display_width('\r'), 2);
-        assert_eq!(char_display_width('\u{1b}'), 2);
-        assert_eq!(char_display_width('\u{8}'), 2);
-        assert_eq!(char_display_width('\u{7f}'), 2); // DEL → `^?`
+        assert_eq!(char_display_width_at('\r', 0), 2);
+        assert_eq!(char_display_width_at('\u{1b}', 0), 2);
+        assert_eq!(char_display_width_at('\u{8}', 0), 2);
+        assert_eq!(char_display_width_at('\u{7f}', 0), 2); // DEL → `^?`
     }
 
+    /// 🚨 **TAB の幅は位置で変わる** —— これを 1 文字だけで答えようとしたのが
+    /// `/etc/hosts` のずれの原因だった。
     #[test]
-    fn tab_keeps_its_old_width() {
-        // ⚠️ `#8` の外。ここを変えると既存ファイルの見た目が動く。
-        assert_eq!(char_display_width('\t'), 1);
+    fn a_tab_reaches_the_next_stop() {
+        assert_eq!(
+            char_display_width_at('\t', 0),
+            8,
+            "タブストップ上なら丸ごと 1 つ分"
+        );
+        assert_eq!(char_display_width_at('\t', 1), 7);
+        assert_eq!(
+            char_display_width_at('\t', 7),
+            1,
+            "次の桁がちょうどタブストップ"
+        );
+        assert_eq!(char_display_width_at('\t', 8), 8);
+        assert_eq!(char_display_width_at('\t', 15), 1);
+    }
+
+    /// ⭐ **展開した空白の数と、数えた幅が一致すること。**
+    /// 🚨 これが割れると、端末に渡さないようにした意味が無くなる。
+    #[test]
+    fn a_tab_is_drawn_as_exactly_as_many_spaces_as_it_is_wide() {
+        for col in 0..24 {
+            let drawn = visible_char_at('\t', col);
+            assert!(
+                drawn.chars().all(|c| c == ' '),
+                "col={col}: TAB が空白以外で描かれている: {drawn:?}"
+            );
+            assert_eq!(
+                drawn.chars().count(),
+                char_display_width_at('\t', col),
+                "col={col}: 描いた空白の数と幅が食い違う"
+            );
+        }
+    }
+
+    /// 📏 **報告された `/etc/hosts` の形をそのまま固定する。**
+    /// 行番号の欄は含めない（タブストップは論理行の先頭から数える）。
+    #[test]
+    fn the_etc_hosts_shape_lines_up() {
+        // `255.255.255.255` は 15 桁 → 次のタブストップは 16 → TAB は 1 桁。
+        assert_eq!(char_display_width_at('\t', 15), 1);
+        assert_eq!(
+            str_display_width("255.255.255.255\tbroadcasthost"),
+            15 + 1 + 13
+        );
+        // `127.0.0.1` は 9 桁 → 次は 16 → TAB は 7 桁。
+        assert_eq!(str_display_width("127.0.0.1\tlocalhost"), 9 + 7 + 9);
     }
 
     #[test]
     fn ordinary_and_wide_chars_are_unchanged() {
-        assert_eq!(char_display_width('a'), 1);
-        assert_eq!(char_display_width('あ'), 2);
+        assert_eq!(char_display_width_at('a', 0), 1);
+        assert_eq!(char_display_width_at('あ', 0), 2);
         assert_eq!(str_display_width("abあ"), 4);
     }
 
@@ -173,8 +252,12 @@ mod tests {
     #[test]
     fn one_rule_for_every_counter() {
         let line = "a\rb";
-        // 1 文字ずつ足した和と、文字列まるごとの幅が一致する。
-        let by_char: usize = line.chars().map(char_display_width).sum();
+        // 1 文字ずつ桁を進めた和と、文字列まるごとの幅が一致する。
+        let mut col = 0usize;
+        for ch in line.chars() {
+            col += char_display_width_at(ch, col);
+        }
+        let by_char = col;
         assert_eq!(by_char, str_display_width(line));
         assert_eq!(
             str_display_width(line),

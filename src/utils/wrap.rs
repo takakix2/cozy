@@ -1,4 +1,4 @@
-use crate::utils::unicode::{char_display_width, str_display_width};
+use crate::utils::unicode::{char_display_width_at, str_display_width, width_from};
 
 /// Split `line` into byte ranges that each fit within `width` display columns.
 /// Always returns at least one element.
@@ -11,7 +11,7 @@ pub fn wrap_chunks(line: &str, width: usize) -> Vec<(usize, usize)> {
     let mut col = 0usize;
 
     for (i, ch) in line.char_indices() {
-        let w = char_display_width(ch);
+        let w = char_display_width_at(ch, col);
         if col + w > width && col > 0 {
             chunks.push((chunk_start, i));
             chunk_start = i;
@@ -47,10 +47,13 @@ pub fn byte_at_visual_col(
     if chunk.is_empty() {
         return cs;
     }
+    // ⚠️ **TAB の幅は論理行の先頭からの桁で決まる。** ∴ chunk 内だけを見ても
+    // 答えられない —— まず chunk がどの桁から始まるかを測る。
+    let chunk_start_col = str_display_width(&line[..cs]);
     let mut w = 0usize;
     let mut last_char_start = cs;
     for (i, ch) in chunk.char_indices() {
-        let cw = char_display_width(ch);
+        let cw = char_display_width_at(ch, chunk_start_col + w);
         let byte = cs + i;
         if target_vcol < w + cw {
             return byte;
@@ -84,7 +87,8 @@ pub fn cursor_visual_pos(line: &str, cx: usize, width: usize) -> (usize, usize) 
         if in_chunk {
             let end = cx.min(line.len());
             let before = if s <= end { &line[s..end] } else { "" };
-            return (idx, str_display_width(before));
+            // ⚠️ chunk の途中の桁も、TAB があるので**行頭からの桁**を起点に測る。
+            return (idx, width_from(before, str_display_width(&line[..s])));
         }
     }
     (0, 0)

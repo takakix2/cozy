@@ -1,5 +1,42 @@
 # Changelog
 
+## v0.2.26
+
+### Fixes
+
+- **The cursor lands on the right column in files with tabs.** cozy counted a tab as one
+  column and handed the byte to the terminal, which advances to its own next tab stop —
+  and counts from the absolute screen column, so the line-number gutter shifted every
+  stop. On `/etc/hosts` this put the end of one line seven columns off: the cursor
+  stopped short of the end of the line, and another line wrapped early.
+
+  Tabs are now expanded to spaces by cozy itself, so the columns are cozy's to decide and
+  cannot disagree with the terminal's. Tab stops are measured from the start of the
+  logical line, so a wrapped continuation row still lines up.
+
+  ⭐ This is the same rule as the control characters in 0.2.25 — *do not give the terminal
+  bytes it will act on* — with the exception removed. Tabs had been left as a deliberate
+  carve-out because they appear in ordinary text; that carve-out was where the damage was.
+
+- **A read-only file is no longer overwritten without warning, and says so on open.**
+  Whether a `444` file could be written depended on something invisible: with no hard
+  link cozy replaced it by renaming a temporary file into place — which needs write
+  permission on the *directory*, not the file — and reported `Saved:`. With a hard link
+  it took the other path, opened the file directly, and failed. Two files that look
+  identical unless you read the second column of `ls -l` behaved in opposite ways, and
+  the one that "worked" was the wrong one.
+
+  The permission check now happens before that fork, so both paths answer the same way,
+  and the status line carries `[read-only]` from the moment the file is opened rather
+  than waiting for a failed save — the save message ends with the reason, and a long path
+  pushes it off a narrow screen.
+
+  ⚠️ **Whether the file can be written is asked of the operating system, not guessed from
+  the permission bits.** Running as root, or holding write access through an ACL, means
+  the save goes through; the `[read-only]` badge still appears, because the file is
+  marked read-only even when you happen to be able to write it. This matches how vim
+  treats its `readonly` flag.
+
 ## v0.2.25
 
 ### Fixes

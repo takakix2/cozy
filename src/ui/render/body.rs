@@ -291,6 +291,9 @@ fn render_line_range(
         .map(|&(_, s, e)| (s, e));
 
     let mut has_content = false;
+    // ⚠️ **描く範囲の外も桁を進める。** TAB の幅は論理行の先頭から数えるので、
+    // 折り返した 2 行目だけを描くときも、そこまでに何桁使ったかを知っている必要がある。
+    let mut col = 0usize;
 
     for (byte_pos, ch) in line_text.char_indices() {
         let in_range = if byte_end > byte_start {
@@ -332,11 +335,12 @@ fn render_line_range(
             // ⭐ 幅を数える `char_display_width` と**同じ関数**に訊いているので、
             // カーソルの列と描かれた字がずれない。
             spans.push(Span::styled(
-                crate::utils::unicode::visible_char(ch),
+                crate::utils::unicode::visible_char_at(ch, col),
                 final_style,
             ));
             has_content = true;
         }
+        col += crate::utils::unicode::char_display_width_at(ch, col);
     }
 
     if !has_content {
@@ -430,19 +434,35 @@ mod control_char_rendering_tests {
     fn ordinary_lines_are_drawn_unchanged() {
         assert_eq!(rendered("abc"), "abc");
         assert_eq!(rendered("あい"), "あい");
-        assert_eq!(rendered("a\tb"), "a\tb", "TAB は `#8` の外（素通し）");
+        // ⚠️ TAB だけは「変わらない」の例外 —— **cozy が空白へ展開する**。
+        // 🚨 素通しすると端末が自分のタブストップで桁を進め、cozy の計算とずれる。
+        assert_eq!(
+            rendered("a\tb"),
+            "a       b",
+            "TAB は次のタブストップまでの空白に展開される（`a` が 1 桁 → 7 つ）"
+        );
     }
 
     /// ⭐ 描いた桁数と、幅の計算が一致すること。**この 2 つを繋ぐ網**が無いと、
     /// 片方だけ直した状態が緑で通る（実際に一度そうなった）。
     #[test]
     fn drawn_columns_match_the_counted_width() {
-        for line in ["a\rb", "a\u{1b}[31mX", "abc", "あい"] {
+        for line in [
+            "a\rb",
+            "a\u{1b}[31mX",
+            "abc",
+            "あい",
+            "a\tb",
+            "\tx",
+            "12345678\ty",
+        ] {
             let drawn = rendered(line);
+            // ⭐ 描いた結果は TAB を含まない（空白に展開済み）ので、単純に足せる。
             let drawn_cols: usize = drawn
                 .chars()
                 .map(|c| unicode_width::UnicodeWidthChar::width(c).unwrap_or(0))
                 .sum();
+            assert!(!drawn.contains('\t'), "端末に TAB を渡している: {drawn:?}");
             assert_eq!(
                 drawn_cols,
                 crate::utils::unicode::str_display_width(line),

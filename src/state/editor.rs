@@ -114,8 +114,15 @@ pub struct EditorState {
     pub highlighter: crate::utils::highlight::Highlighter, // syntax highlight cache
     pub filename: Option<PathBuf>,                         // PathBufに変更
     pub _working_dir: PathBuf,                             // 新規: カレントディレクトリ
-    pub modified: bool,                                    // 新規: 変更フラグ
-    pub mode: EditorMode,                                  // 新規: モード管理
+    pub modified: bool,
+    /// 開いているファイルが書き込みを禁じられているか。
+    ///
+    /// ⭐ **開いた時点で名乗るために持つ。** 保存を押すまで黙っていると、
+    /// `Ctrl+S` の失敗が唯一の知らせになり、しかもそのメッセージは狭い端末で切られる
+    /// （`#7`）。∴ フッタに常時出す。⚠️ ここは**表示のための事実**で、
+    /// 保存を止めているのは `file_io::write_buffer` 側の検査（そちらが正本）。
+    pub read_only: bool, // 新規: 変更フラグ
+    pub mode: EditorMode, // 新規: モード管理
     pub diff_review: Option<crate::state::diff::DiffReviewState>, // 新規: セッション diff レビュー状態
     pub commit_msg_buffer: String, // 新規: diff レビューからのコミットメッセージ入力
     pub save_filename_buffer: String, // 新規: 保存時の入力バッファ
@@ -294,7 +301,7 @@ impl EditorState {
     pub(crate) fn from_init(init: EditorStateInit) -> Self {
         let config = Config::load_from(init.config_dir.as_ref());
         let startup_document = crate::file_io::load_startup_document(init.filename.as_deref());
-        let (lines, format, path_buf, initial_mode, browse_tree, startup_error) =
+        let (lines, format, path_buf, initial_mode, browse_tree, startup_error, read_only) =
             match startup_document {
                 crate::file_io::StartupDocument::Empty => (
                     vec![String::new()],
@@ -303,11 +310,13 @@ impl EditorState {
                     EditorMode::Welcome,
                     None,
                     None,
+                    false,
                 ),
                 crate::file_io::StartupDocument::File {
                     path,
                     lines,
                     format,
+                    read_only,
                 } => (
                     lines,
                     format,
@@ -315,6 +324,7 @@ impl EditorState {
                     Self::resolve_home(&config),
                     None,
                     None,
+                    read_only,
                 ),
                 crate::file_io::StartupDocument::Directory { tree } => (
                     vec![String::new()],
@@ -323,6 +333,7 @@ impl EditorState {
                     EditorMode::Browse,
                     Some(tree),
                     None,
+                    false,
                 ),
                 // 🚨 **ファイル名を引き受けない**のが肝。空バッファ自体は無害だが、そこに
                 // 読めなかったファイルの名前が結びつくと `Ctrl+S` が破壊になる。
@@ -333,6 +344,7 @@ impl EditorState {
                     EditorMode::Welcome,
                     None,
                     Some(message),
+                    false,
                 ),
             };
 
@@ -347,6 +359,7 @@ impl EditorState {
             filename: path_buf,
             _working_dir: init.working_dir,
             modified: false,
+            read_only,
             mode: initial_mode,
             diff_review: None,
             commit_msg_buffer: String::new(),

@@ -121,8 +121,11 @@ pub fn render_status_bar(editor: &EditorState, f: &mut Frame, area: Rect) {
                 .and_then(|n| n.to_str())
                 .unwrap_or("[No Name]")
                 .to_string();
+            // ⭐ **書けないことは常時出す**（vim の `[readonly]` 相当）。保存時の
+            // メッセージは文の末尾に理由が来るので、狭い端末では切られて消える（`#7`）。
+            let ro = if editor.read_only { " [read-only]" } else { "" };
             (
-                format!(" Edit: {}{}", name, status),
+                format!(" Edit: {}{}{}", name, ro, status),
                 if narrow {
                     String::new()
                 } else {
@@ -1370,10 +1373,55 @@ mod tests {
             .collect()
     }
 
+    /// ⚠️ **`render_shortcuts` ではなく `render_status_bar` を描く。**
+    /// `Edit: …` の行はこちらで、ショートカットの行とは別物 ——
+    /// 測る先を間違えると、実機では出ているものが「出ていない」と読める（実際に踏んだ）。
+    fn render_status_bar_line(editor: &EditorState, width: u16) -> String {
+        let backend = TestBackend::new(width, 1);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|f| render_status_bar(editor, f, Rect::new(0, 0, width, 1)))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        (0..width)
+            .map(|x| buffer.cell((x, 0)).unwrap().symbol())
+            .collect::<String>()
+            .trim_end()
+            .to_string()
+    }
+
     fn editor_in_mode(mode: EditorMode) -> EditorState {
         let mut editor = EditorState::new(Some("smoke.txt".to_string()));
         editor.enter_mode(mode);
         editor
+    }
+
+    /// 🚨 **書けないことは、保存を押す前に見えていなければならない。**
+    ///
+    /// ⚠️ 保存時のメッセージは `Failed to save '<path>': <理由>` の形で、**理由が末尾**に
+    /// 来る。∴ パスが長い／端末が狭いと**理由だけが切れて消える**（`#7`・実測で 44 桁では
+    /// パスの途中で切れた）。⭐ フッタに常時出しておけば、切られても事実は残る。
+    #[test]
+    fn a_read_only_file_says_so_in_the_footer() {
+        let mut editor = editor_in_mode(EditorMode::Edit);
+        editor.read_only = true;
+        let line = render_status_bar_line(&editor, 70);
+        assert!(
+            line.contains("[read-only]"),
+            "状態行が読み取り専用だと言っていない: {line:?}"
+        );
+    }
+
+    /// 🚨 **陽性対照。** これが無いと「常に `[read-only]` と出す」実装が緑で通る。
+    #[test]
+    fn a_writable_file_says_nothing_extra() {
+        let editor = editor_in_mode(EditorMode::Edit);
+        assert!(!editor.read_only, "既定は書ける側");
+        let line = render_status_bar_line(&editor, 70);
+        assert!(
+            !line.contains("read-only"),
+            "書けるファイルに read-only が出ている: {line:?}"
+        );
     }
 
     #[test]

@@ -12,6 +12,9 @@ pub(crate) enum StartupDocument {
         lines: Vec<String>,
         /// 開いたときのファイルの形。保存でこれを戻す（`FileFormat` を見よ）。
         format: FileFormat,
+        /// 書き込みを禁じられているか。⭐ **開いた時点で名乗る**ためにここで測る ——
+        /// 保存を押すまで黙っていると、`Ctrl+S` の失敗が唯一の知らせになる（`#7`）。
+        read_only: bool,
     },
     Directory {
         tree: BrowseTree,
@@ -191,10 +194,17 @@ pub(crate) fn load_startup_document(filename: Option<&str>) -> StartupDocument {
 
     // ⚠️ 保持するのは**展開後**のパス。原文（`~/x`）を持つと、後の `save` が
     // また `~` から解き直すことになり、開いた先と保存先がずれうる。
+    // ⚠️ 新規ファイル（まだ無い）は読み取り専用ではない。`metadata` が無い側に倒す。
+    // ⚠️ `expanded` を move する前に測る。
+    let read_only = std::fs::metadata(path_ref)
+        .map(|m| is_read_only(&m))
+        .unwrap_or(false);
+
     StartupDocument::File {
         path: expanded,
         lines,
         format,
+        read_only,
     }
 }
 
@@ -218,7 +228,13 @@ pub fn save(editor: &mut EditorState) -> io::Result<()> {
     write_buffer(
         editor,
         &target,
-        &format!("Failed to save '{}'", target.display()),
+        // ⚠️ **`~` に縮めてから出す。** 理由（`: …`）は文の**末尾**に来るので、
+        // パスが長いと画面幅で切られて**理由だけが消える** —— 何が起きたか分からない
+        // まま「保存できなかった」だけが残る。⭐ 既に在る `shorten_home` を通す。
+        &format!(
+            "Failed to save '{}'",
+            shorten_home(&target.display().to_string())
+        ),
     )?;
     mark_saved(editor);
     Ok(())
@@ -274,6 +290,9 @@ pub fn open_file(editor: &mut EditorState, path: &str) -> io::Result<()> {
 
     let (lines, format) = parse_content(&content);
     editor.buffer = TextBuffer::from_lines_with_format(lines, format);
+    editor.read_only = std::fs::metadata(&target)
+        .map(|m| is_read_only(&m))
+        .unwrap_or(false);
     editor.filename = Some(path_buf);
     editor.cursor = Cursor::default();
     editor.modified = false;
@@ -321,6 +340,26 @@ fn write_buffer(editor: &EditorState, target: &std::path::Path, context: &str) -
         ensure_parent_dir(&real)?;
     }
     let existing = std::fs::metadata(&real).ok();
+
+    // 🚨 **権限は、経路を選ぶ前に見る。**
+    //
+    // ⚠️ 以前はここに検査が無く、書けるかどうかが**経路の副作用**で決まっていた:
+    // `write_atomically` は tmp を **rename** するので、要るのは**親ディレクトリの**
+    // 書込権であって**ファイルの**権限ではない ＝ `444` が素通しされた。
+    // 一方 `write_in_place` は `File::create` でファイルの権限を通るので `EACCES` で落ちた。
+    // ∴ **同じ 444 のファイルが、ハードリンクの有無で書けたり書けなかったりした**
+    // （`replaceable()` が `nlink` で経路を選ぶため）。しかも書けた側は `Saved:` と表示した。
+    //
+    // ⭐ どちらの経路も**それ自体は正しい**（不可分性とリンク保存のための設計）。
+    // 直すべきは「検査がどこにも無い」ことなので、**分岐の手前**に置く。
+    if let Some(meta) = existing.as_ref() {
+        if write_is_refused(&real, meta) {
+            return Err(annotate(
+                io::Error::new(io::ErrorKind::PermissionDenied, "read-only file (chmod +w)"),
+                context,
+            ));
+        }
+    }
 
     if replaceable(existing.as_ref()) {
         match write_atomically(editor, &real, existing.as_ref()) {
@@ -379,6 +418,52 @@ fn resolve_symlink(target: &Path) -> PathBuf {
 }
 
 /// rename で置き換えてよいか（ハードリンクの共有先を切り離さないか）。
+/// **いま実際に書けないか** —— 推測せず OS に訊く。
+///
+/// 🚨 以前は mode の write ビットだけで拒んでいた。⭐ それだと **root が `444` のファイルを
+/// 開いたときに、書けるのに拒まれる** —— cozy が「書けない」と言う根拠を持っていないのに
+/// 言っていたことになる。vim も nano も、そこは OS に任せて書かせる。
+///
+/// ⭐ **`O_WRONLY` で開いてみるだけ**（`O_TRUNC` は付けないので中身は動かない）。
+/// これで root も、ACL も、読み取り専用マウントも、**cozy が数え上げずに**正しく出る。
+///
+/// ⚠️ **`PermissionDenied` のときだけ拒む。** 開けない理由は他にもあり（ファイル数の上限など）、
+/// それを「読み取り専用」と名乗ると**嘘の理由**になる。∴ 判断できないものは**下の経路に渡す**
+/// —— そこで本当のエラーが出る。
+///
+/// ⚠️ **通常ファイル以外は見ない。** FIFO を `O_WRONLY` で開くと**読み手が来るまで止まる**
+/// ＝ エディタが固まる。
+fn write_is_refused(path: &Path, meta: &std::fs::Metadata) -> bool {
+    if !meta.is_file() {
+        return false;
+    }
+    match std::fs::OpenOptions::new().write(true).open(path) {
+        Ok(_) => false,
+        Err(e) => e.kind() == io::ErrorKind::PermissionDenied,
+    }
+}
+
+/// **書くなと印が付いている**ファイルか。⭐ これは**名乗る**ための判定で、
+/// 保存を止めるための判定ではない（そちらは [`write_is_refused`]）。
+///
+/// 📌 見るのは **mode の write ビット**（`0o222`）。∴ **root で開いても `[read-only]` と
+/// 名乗る** —— 実際には書けるとしても、そのファイルには印が付いているから。
+/// ⚠️ vim の `'readonly'` と同じ立場（名乗るが、権限があるなら書ける）。
+///
+/// ⚠️ 逆に「他人が所有する 644 で自分には書けない」は**印が無いので名乗らない**。
+/// ⭐ それでも保存は [`write_is_refused`] が止める ＝ **名乗りと拒否は別の基準**で、
+/// 揃える必要は無い。名乗りは「ファイルの性質」、拒否は「いま書けるか」。
+#[cfg(unix)]
+pub(crate) fn is_read_only(meta: &std::fs::Metadata) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    meta.permissions().mode() & 0o222 == 0
+}
+
+#[cfg(not(unix))]
+pub(crate) fn is_read_only(meta: &std::fs::Metadata) -> bool {
+    meta.permissions().readonly()
+}
+
 #[cfg(unix)]
 fn replaceable(existing: Option<&std::fs::Metadata>) -> bool {
     use std::os::unix::fs::MetadataExt;
@@ -1077,12 +1162,17 @@ mod refusing_unreadable_files {
                 path: p,
                 lines,
                 format,
+                read_only,
             } => {
                 assert_eq!(lines, vec![String::new()]);
                 assert_eq!(p, path, "新規は**名前を引き受ける**（保存先になる）");
                 assert!(
                     format.final_newline,
                     "新規ファイルは改行で終わる（Unix の慣習・`FileFormat::default`）"
+                );
+                assert!(
+                    !read_only,
+                    "まだ無いファイルは読み取り専用ではない（`metadata` が無い側に倒す）"
                 );
             }
             _ => panic!("新規ファイルは File で開かれなければならない"),
@@ -1327,5 +1417,212 @@ mod byte_for_byte_round_trip {
         assert_eq!(FileFormat::detect("a\rb\rc").line_ending, LineEnding::Lf);
         assert_eq!(FileFormat::detect("").line_ending, LineEnding::Lf);
         assert_eq!(FileFormat::detect("one line").line_ending, LineEnding::Lf);
+    }
+}
+
+/// 🚨 **読み取り専用のファイルを、経路によらず拒む。**
+///
+/// ⚠️ 以前は書けるかどうかが**経路の副作用**だった —— `nlink <= 1` なら
+/// tmp→rename（親ディレクトリの権限しか要らない）で `444` を素通しし、
+/// ハードリンクが在れば `File::create` が `EACCES` で落ちた。∴ **同じ 444 のファイルが、
+/// `ls -l` の 2 列目を見ないと区別できない理由で、書けたり書けなかったりした**。
+/// しかも書けた側は `Saved:` と表示した ＝ **画面が事実と違うことを言っていた**。
+///
+/// ⭐ この網は**値ではなく「2 つが一致すること」**を見る。経路を選ぶ条件（`replaceable`）を
+/// 変えても、権限の検査がその手前に在る限り緑のままになる。
+#[cfg(all(test, unix))]
+mod read_only_files {
+    use super::*;
+    use crate::state::{EditorState, TextBuffer};
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
+
+    fn scratch(name: &str) -> PathBuf {
+        let base =
+            std::env::temp_dir().join(format!("cozy_ro_test_{}_{}", std::process::id(), name));
+        let _ = fs::remove_dir_all(&base);
+        fs::create_dir_all(&base).unwrap();
+        base
+    }
+
+    fn editor_with(lines: &[&str]) -> EditorState {
+        let mut editor = EditorState::new(None);
+        editor.buffer = TextBuffer::from_lines(lines.iter().map(|s| s.to_string()).collect());
+        editor
+    }
+
+    /// `mode` のファイルを作り、`linked` なら追加のハードリンクを張る。
+    /// 返すのは (書き込み対象のパス, 元の中身)。
+    fn subject(dir: &Path, name: &str, mode: u32, linked: bool) -> (PathBuf, String) {
+        let path = dir.join(name);
+        fs::write(&path, "original\n").unwrap();
+        if linked {
+            fs::hard_link(&path, dir.join(format!("{name}.hard"))).unwrap();
+        }
+        // ⚠️ mode はリンクを張った**後**に落とす（読み取り専用のままでは link できる環境と
+        // できない環境がある）。
+        fs::set_permissions(&path, fs::Permissions::from_mode(mode)).unwrap();
+        (path, "original\n".to_string())
+    }
+
+    fn try_save(path: &Path) -> io::Result<()> {
+        write_buffer(&editor_with(&["edited"]), path, "test")
+    }
+
+    /// 🚨 **本丸** —— 読み取り専用は、ハードリンクの有無によらず**同じ結果**になる。
+    #[test]
+    fn read_only_is_refused_the_same_way_on_both_paths() {
+        let dir = scratch("refused");
+        for (name, linked) in [("single", false), ("linked", true)] {
+            let (path, before) = subject(&dir, name, 0o444, linked);
+            let err = try_save(&path).expect_err(&format!("{name}: 444 なのに保存できてしまった"));
+            assert_eq!(
+                err.kind(),
+                io::ErrorKind::PermissionDenied,
+                "{name}: 拒み方が違う"
+            );
+            assert!(
+                err.to_string().contains("read-only"),
+                "{name}: 理由を名乗っていない: {err}"
+            );
+            assert_eq!(
+                fs::read_to_string(&path).unwrap(),
+                before,
+                "{name}: 中身が変わっている"
+            );
+        }
+    }
+
+    /// 🚨 **陽性対照。** これが無いと「常に拒む」実装が緑で通る。
+    /// ⭐ ハードリンクの有無を**両方**撃つ —— 経路が 2 本あるのはここでも同じ。
+    #[test]
+    fn writable_files_still_save_on_both_paths() {
+        let dir = scratch("writable");
+        for (name, linked) in [("single", false), ("linked", true)] {
+            let (path, _) = subject(&dir, name, 0o644, linked);
+            try_save(&path).unwrap_or_else(|e| panic!("{name}: 644 なのに保存できない: {e}"));
+            assert_eq!(fs::read_to_string(&path).unwrap(), "edited\n", "{name}");
+        }
+    }
+
+    /// ⭐ 新規ファイル（まだ無い）は読み取り専用ではない ——
+    /// `metadata` が無いので検査を素通りすること。
+    #[test]
+    fn a_new_file_is_not_read_only() {
+        let dir = scratch("new");
+        let path = dir.join("fresh.txt");
+        try_save(&path).unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), "edited\n");
+    }
+
+    /// 🚨 **開いた時点の判定** —— これが無いと、`read_only` を常に `false` にしても
+    /// フッタの網は緑のまま通る（実際に陰性対照で漏れた）。
+    /// ⭐ 保存を止める検査（`write_buffer`）とは**別の事実**なので、別に固定する。
+    #[test]
+    fn opening_a_read_only_file_reports_it() {
+        let _guard = HOME_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let dir = scratch("startup");
+        let (ro, _) = subject(&dir, "ro.txt", 0o444, false);
+        match load_startup_document(ro.to_str()) {
+            StartupDocument::File { read_only, .. } => {
+                assert!(read_only, "444 のファイルを開いて read_only が false")
+            }
+            _ => panic!("File として開かれなかった"),
+        }
+        // 陽性対照 —— 書けるファイルは名乗らない。
+        let (rw, _) = subject(&dir, "rw.txt", 0o644, false);
+        match load_startup_document(rw.to_str()) {
+            StartupDocument::File { read_only, .. } => {
+                assert!(!read_only, "644 のファイルが read_only と報告された")
+            }
+            _ => panic!("File として開かれなかった"),
+        }
+    }
+
+    /// ⭐ **拒否は OS に訊く。** `PermissionDenied` **以外**の理由で開けないものを
+    /// 「読み取り専用」と名乗ると**嘘の理由**になるので、そこは下の経路へ渡す。
+    #[test]
+    fn only_a_permission_error_counts_as_refused() {
+        let dir = scratch("refused_kind");
+        let (ro, _) = subject(&dir, "ro.txt", 0o444, false);
+        let meta = fs::metadata(&ro).unwrap();
+        assert!(
+            write_is_refused(&ro, &meta),
+            "444 は（root でない限り）開けないので拒む"
+        );
+
+        let (rw, _) = subject(&dir, "rw.txt", 0o644, false);
+        let meta = fs::metadata(&rw).unwrap();
+        assert!(!write_is_refused(&rw, &meta), "644 は開けるので拒まない");
+
+        // 🚨 **`PermissionDenied` 以外を「読み取り専用」と呼んではいけない。**
+        // ⭐ 実在するファイルの `Metadata` を、既に消えたパスに添えて渡す ——
+        // `open` は `NotFound` で失敗するが、これは権限の話ではない。
+        let meta = fs::metadata(&rw).unwrap();
+        assert!(
+            !write_is_refused(&dir.join("gone.txt"), &meta),
+            "NotFound を read-only と呼んでいる（理由が嘘になる）"
+        );
+
+        // ⚠️ 通常ファイル以外は見ない。
+        // 🚨 **本当に守りたいのは FIFO** —— `O_WRONLY` で開くと読み手が来るまで止まり、
+        // エディタが固まる。⭐ **そこはテストにできない**（門番を外すとこのテスト自身が
+        // 固まる）ので、ここではディレクトリで「通常ファイル以外は素通しする」ことだけを
+        // 固定する。⚠️ ∴ `is_file()` の門番を外しても**この網は緑のまま**通る。
+        let d = fs::metadata(&dir).unwrap();
+        assert!(
+            !write_is_refused(&dir, &d),
+            "ディレクトリをここで判定してはいけない"
+        );
+    }
+
+    /// ⭐ **開いてみるだけで、中身は動かさない。**
+    /// `O_TRUNC` を付けると、検査そのものがファイルを空にする。
+    #[test]
+    fn probing_does_not_touch_the_contents() {
+        let dir = scratch("probe");
+        let (rw, before) = subject(&dir, "rw.txt", 0o644, false);
+        let meta = fs::metadata(&rw).unwrap();
+        assert!(!write_is_refused(&rw, &meta));
+        assert_eq!(
+            fs::read_to_string(&rw).unwrap(),
+            before,
+            "検査がファイルを書き換えている"
+        );
+    }
+
+    /// ⚠️ **root の挙動はここでは測れない**（テストは非 root で走る）。
+    /// 🚨 実装上、root なら `O_WRONLY` の open が通るので**拒まない** ＝ vim と同じで
+    /// 「`[read-only]` と名乗るが書ける」。⭐ 名乗りの側（`is_read_only`）は mode を見るので、
+    /// **root でも印は出る**。この 2 つが別基準であることをここで固定しておく。
+    #[test]
+    fn the_badge_and_the_refusal_are_different_questions() {
+        let dir = scratch("two_questions");
+        let (ro, _) = subject(&dir, "ro.txt", 0o444, false);
+        let meta = fs::metadata(&ro).unwrap();
+        // 印は mode を見る ＝ 誰が走らせていても出る。
+        assert!(is_read_only(&meta), "444 に印が出ていない");
+        // 拒否は OS に訊く ＝ 非 root のここでは拒まれる。
+        assert!(write_is_refused(&ro, &meta));
+
+        // ⭐ 印が無くても拒まれることがある（他人所有の 644 など）。逆向きは
+        // 非 root では作れないので、ここでは「別の関数である」ことだけを固定する。
+        let (rw, _) = subject(&dir, "rw.txt", 0o644, false);
+        let meta = fs::metadata(&rw).unwrap();
+        assert!(!is_read_only(&meta));
+        assert!(!write_is_refused(&rw, &meta));
+    }
+
+    /// ⚠️ 見ているのは **write ビットが 1 つも無いこと**。
+    /// グループにだけ書ける（`0o464`）ようなファイルは、ここでは拒まない。
+    #[test]
+    fn only_a_file_with_no_write_bit_at_all_counts() {
+        let dir = scratch("bits");
+        let (ro, _) = subject(&dir, "none", 0o444, false);
+        assert!(is_read_only(&fs::metadata(&ro).unwrap()));
+        let (group, _) = subject(&dir, "group", 0o464, false);
+        assert!(!is_read_only(&fs::metadata(&group).unwrap()));
     }
 }
