@@ -1,3 +1,4 @@
+pub mod encoding;
 pub mod file;
 pub mod highlight;
 // Regex highlighter: the fallback engine when the `treesitter` feature is off.

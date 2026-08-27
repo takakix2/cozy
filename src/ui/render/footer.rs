@@ -124,8 +124,20 @@ pub fn render_status_bar(editor: &EditorState, f: &mut Frame, area: Rect) {
             // ⭐ **書けないことは常時出す**（vim の `[readonly]` 相当）。保存時の
             // メッセージは文の末尾に理由が来るので、狭い端末では切られて消える（`#7`）。
             let ro = if editor.read_only { " [read-only]" } else { "" };
+            // ⭐ **UTF-8 でないなら名乗る**（vim の `fenc=[sjis]` 相当・`#4`）。
+            // 🚨 符号化は**往復で決めている**ので保存は安全だが、**表示が正しいことまでは
+            // 保証していない** —— 短いバイト列は複数の候補で往復しうる。
+            // ∴ 何と解釈したかは言う。⚠️ 既定（UTF-8）は言わない ——
+            // **いつもと違うときだけ**言うから意味がある。
+            let enc = editor
+                .buffer
+                .format
+                .encoding
+                .label()
+                .map(|l| format!(" [{l}]"))
+                .unwrap_or_default();
             (
-                format!(" Edit: {}{}{}", name, ro, status),
+                format!(" Edit: {}{}{}{}", name, ro, enc, status),
                 if narrow {
                     String::new()
                 } else {
@@ -1527,6 +1539,32 @@ mod tests {
         for want in ["Ctrl+S Save", "Ctrl+B Browse", "Ctrl+H Help", "Ctrl+Z Undo"] {
             assert!(line.contains(want), "{want} が消えた: {line:?}");
         }
+    }
+
+    /// ⭐ **UTF-8 でないなら名乗る**（`#4`）。符号化は往復で決めているので保存は安全だが、
+    /// **表示が正しいことまでは保証していない** —— 短いバイト列は複数の候補で往復しうる。
+    /// ∴ 何と解釈したかは言う。
+    #[test]
+    fn a_legacy_encoding_is_named_in_the_status_bar() {
+        let sjis: &[u8] = &[0x82, 0xb1, 0x0a]; // 「こ」+ 改行
+        let (_, enc) = crate::utils::encoding::decode(sjis).expect("開けるはず");
+        let mut editor = editor_in_mode(EditorMode::Edit);
+        editor.buffer.format.encoding = enc;
+        let line = render_status_bar_line(&editor, 70);
+        assert!(
+            line.contains("[Shift_JIS]"),
+            "何で読んだかを名乗っていない: {line:?}"
+        );
+    }
+
+    /// 🚨 **陽性対照。** 既定（UTF-8）は名乗らない ——
+    /// **いつもと違うときだけ**言うから意味がある。
+    /// これが無いと「常に何か出す」実装が緑で通る。
+    #[test]
+    fn utf8_says_nothing_about_encoding() {
+        let editor = editor_in_mode(EditorMode::Edit);
+        let line = render_status_bar_line(&editor, 70);
+        assert!(!line.contains('['), "既定なのに何か名乗っている: {line:?}");
     }
 
     /// 🚨 **書けないことは、保存を押す前に見えていなければならない。**

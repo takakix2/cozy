@@ -1,5 +1,40 @@
 # Changelog
 
+## v0.2.29
+
+### Added
+
+- **Shift_JIS and EUC-JP files open, edit and save back unchanged.** Until now cozy
+  declined anything that was not UTF-8 — correct, in that it never damaged those files,
+  but it could not hold them either.
+
+  ⭐ **The encoding is not guessed.** A candidate is accepted only if decoding the file
+  and re-encoding the result reproduces the original bytes exactly. So whatever cozy
+  opens is, by construction, something it can give back. A file that round-trips under no
+  candidate is still declined, and still left untouched.
+
+  ⚠️ This is deliberately narrower than what other editors do. `latin-1` is not among the
+  candidates, because every possible byte sequence is valid in it — adding it would let
+  cozy open *anything*, with Japanese text rendered as mojibake. A vim without a locale
+  behaves that way: it does not damage the file, but it does not show it either. cozy
+  declines instead.
+
+  ⚠️ Round-tripping guarantees the bytes, not the reading: a short byte sequence can be
+  valid under more than one encoding. The status line therefore names what was assumed —
+  `Edit: notes.txt [Shift_JIS]` — the way vim shows `fileencoding`. UTF-8 says nothing,
+  since it is the default.
+
+  This completes the shape work started in 0.2.24: the encoding, the line endings and the
+  final newline are now all remembered when a file is opened and restored when it is
+  saved. A Shift_JIS file with CRLF line endings comes back byte-for-byte.
+
+### Fixes
+
+- **The message for a file cozy cannot open now says what it means.** It read `Not UTF-8
+  text`, which stopped being true once other encodings opened; it now reads `Unsupported
+  encoding`. The important half was already right and is unchanged: the file was not
+  opened, and nothing was written to it.
+
 ## v0.2.28
 
 ### Fixes

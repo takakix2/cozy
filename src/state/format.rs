@@ -11,7 +11,8 @@
 /// |---|---|
 /// | `final_newline` | ✅ ここ（`#6` 段①） |
 /// | `line_ending` | ✅ ここ（`#6` 段②） |
-/// | 符号化・BOM | ⏸ `#4` —— `encoding_rs` と判定の設計が要る |
+/// | `encoding` | ✅ ここ（`#4`）—— 往復検査で決める（`utils::encoding`）|
+/// | BOM | ⏸ 今は**本文の文字として素通ししており、往復している**。触ると「剥がしたことを覚えて戻す」が増えるので動かさない |
 ///
 /// ⚠️ **欄を増やすときは 2 箇所を同時に直す**: 測る側（`detect`）と戻す側
 /// （`file_io::write_lines`）。片方だけでは、覚えているのに戻さない／戻すのに覚えていない
@@ -31,16 +32,6 @@ pub enum LineEnding {
     CrLf,
 }
 
-impl LineEnding {
-    /// 書き出すときの綴り。
-    pub fn as_bytes(self) -> &'static [u8] {
-        match self {
-            Self::Lf => b"\n",
-            Self::CrLf => b"\r\n",
-        }
-    }
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FileFormat {
     /// 最後の行が改行で終わっていたか。
@@ -57,6 +48,15 @@ pub struct FileFormat {
     /// ⭐ これで**行末が混在したファイルも 1 欄で返る**: 寄せないので、`\r` は在った場所に
     /// 在ったまま書き戻る。行ごとに覚える必要は無い。
     pub line_ending: LineEnding,
+
+    /// 読んだときの符号化。**保存でそのまま戻す**。
+    ///
+    /// ⭐ 決め方は推測ではなく**往復検査** —— decode して encode し直し、元のバイトと
+    /// 一致した候補だけを採る（`utils::encoding`）。∴ **開けたファイルは、保存しても
+    /// 元のバイトに戻ることが保証されている**。
+    /// ⚠️ 表示が正しいことまでは保証しない（短いバイト列は複数の候補で往復しうる）。
+    /// ∴ 何と解釈したかは画面で名乗る。
+    pub encoding: crate::utils::encoding::FileEncoding,
 }
 
 impl Default for FileFormat {
@@ -70,6 +70,7 @@ impl Default for FileFormat {
         Self {
             final_newline: true,
             line_ending: LineEnding::Lf,
+            encoding: crate::utils::encoding::FileEncoding::Utf8,
         }
     }
 }
@@ -81,10 +82,25 @@ impl FileFormat {
     /// 「行 0 個・終端なし」として 0 バイトのまま返り、`\n` 1 バイトのファイルは
     /// 「空行 1 個・終端あり」として 1 バイトのまま返る。**この 2 つは `lines` だけでは
     /// 区別が付かない**（どちらも `[""]`）ので、区別しているのはこの欄である。
-    pub fn detect(content: &str) -> Self {
+    /// テスト用の入口 —— 符号化を UTF-8 に固定して形だけ測る。
+    ///
+    /// ⚠️ 本番の経路は必ず `detect_with_encoding` を通る（符号化は**先に**決まる）。
+    /// ⭐ 「UTF-8 と決め打つ口」を本番から見えるところに置かないための分離。
+    #[cfg(test)]
+    pub fn detect_with_encoding_for_test(content: &str) -> Self {
+        Self::detect_with_encoding(content, crate::utils::encoding::FileEncoding::Utf8)
+    }
+
+    /// 符号化まで決まっているときの形。⚠️ 読む側は**先に符号化を決めてから**
+    /// 中身を測る —— 行末も終端も、**復号したあとの文字列**に対する事実だから。
+    pub fn detect_with_encoding(
+        content: &str,
+        encoding: crate::utils::encoding::FileEncoding,
+    ) -> Self {
         Self {
             final_newline: content.ends_with('\n'),
             line_ending: Self::detect_line_ending(content),
+            encoding,
         }
     }
 
@@ -122,22 +138,22 @@ mod tests {
 
     #[test]
     fn detects_a_trailing_newline() {
-        assert!(FileFormat::detect("a\nb\n").final_newline);
-        assert!(!FileFormat::detect("a\nb").final_newline);
+        assert!(FileFormat::detect_with_encoding_for_test("a\nb\n").final_newline);
+        assert!(!FileFormat::detect_with_encoding_for_test("a\nb").final_newline);
     }
 
     #[test]
     fn empty_and_one_newline_are_different_shapes() {
         // どちらも `lines()` では `[""]` に潰れる。分けているのはこの欄だけ。
-        assert!(!FileFormat::detect("").final_newline);
-        assert!(FileFormat::detect("\n").final_newline);
+        assert!(!FileFormat::detect_with_encoding_for_test("").final_newline);
+        assert!(FileFormat::detect_with_encoding_for_test("\n").final_newline);
     }
 
     #[test]
     fn a_lone_cr_is_not_a_terminator() {
         // CR のみで改行する古い Mac のファイル。cozy は `\r` を行の区切りとして
         // 読まないので、これは「1 行・終端なし」＝ 足さずに返せば元のバイトに戻る。
-        assert!(!FileFormat::detect("a\rb\rc").final_newline);
+        assert!(!FileFormat::detect_with_encoding_for_test("a\rb\rc").final_newline);
     }
 
     #[test]
