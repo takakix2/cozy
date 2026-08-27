@@ -50,11 +50,15 @@ pub struct Shortcut {
     pub action: EditorAction,
     /// `"Ctrl+H Help"` のような、**画面に出すための一言**。
     ///
-    /// ⚠️ **いまは誰も読んでいない。** 帯（footer）は `#2` 段③で
-    /// `key_for` からキー名を引く形になり、ラベルは呼び出し側が持つようになった。
-    /// ⭐ 残してあるのは **Help 画面の材料**だから —— あちらはまだ 40 行以上を
-    /// べた書きしており、`[keys]` の上書きに追随しない（`#2` と同じ形が残っている）。
-    /// 📌 Help を直すときにここから引く。それまでは読み手がいない。
+    /// 🚨 **いまは誰も読んでいない。** 帯（`#2` 段③）も Help（`#9`）も、
+    /// キー名は `key_for` / `keys_for` から引き、**説明の文言は呼び出し側が持つ**
+    /// 形に落ち着いた —— そちらの方が、幅による綴りの出し分けや
+    /// `Ctrl+Z / Ctrl+Y  Undo / Redo` のような 2 アクション 1 行と噛み合う。
+    ///
+    /// ⚠️ ∴ **この欄は「Help を直すときに使う」と書いて残したが、使わなかった。**
+    /// 消していないのは、`get_shortcuts()` の一覧を読む人にとって
+    /// 「この鍵は何のためか」がその場で分かる注記として働いているから。
+    /// 📌 読み手が現れないままなら、次に触る人が消してよい。
     #[allow(dead_code)]
     pub label: &'static str,
     /// この鍵は「主」ではなく、**主の鍵が届かない環境のために置いた 2 本目**か。
@@ -513,6 +517,44 @@ pub fn key_for(
         }
     }
     None
+}
+
+/// そのアクションを呼び出す鍵を**全部**、主 → フォールバックの順で。
+///
+/// ⭐ Help はキーの**全体像**を見る場所なので、`Ctrl+B / F3` のように
+/// 主とフォールバックを両方出す（帯は枠が 3〜5 個しか無いので `key_for` の 1 本だけ）。
+/// ⚠️ `[keys]` で足された鍵が最優先なのは `key_for` と同じ ——
+/// 利用者が書いた鍵を差し置いてフォールバックを先頭に出さない。
+pub fn keys_for(
+    map: &HashMap<(KeyCode, KeyModifiers), EditorAction>,
+    action: EditorAction,
+    style: KeyStyle,
+) -> Vec<String> {
+    let defaults = get_shortcuts();
+    let is_default =
+        |k: KeyCode, m: KeyModifiers| defaults.iter().any(|s| s.key == k && s.modifiers == m);
+
+    // ① 上書きで足された鍵（綴りで並べて決定的に）。
+    let mut out: Vec<String> = map
+        .iter()
+        .filter(|(_, v)| **v == action)
+        .filter(|((k, m), _)| !is_default(*k, *m))
+        .map(|((k, m), _)| display_key(*k, *m, style))
+        .collect();
+    out.sort();
+
+    // ② 既定のまま生きている鍵。主 → フォールバックの順。
+    for want_fallback in [false, true] {
+        for sc in defaults.iter() {
+            if sc.action == action
+                && sc.fallback == want_fallback
+                && map.get(&(sc.key, sc.modifiers)) == Some(&action)
+            {
+                out.push(display_key(sc.key, sc.modifiers, style));
+            }
+        }
+    }
+    out
 }
 
 /// `"ctrl+s"` / `"alt+enter"` / `"pageup"` 等のキー文字列を (KeyCode, KeyModifiers) に変換する

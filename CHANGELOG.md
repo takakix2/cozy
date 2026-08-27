@@ -1,5 +1,21 @@
 # Changelog
 
+## v0.2.28
+
+### Fixes
+
+- **The help screen names the keys that actually work.** The shortcut bar learned this in
+  0.2.27; the help screen had not, and it is the more important of the two — the bar shows
+  three to five bindings, so the help screen is the only place the whole keymap is
+  visible. Anyone who rebinds a key is therefore the person most likely to open it, and
+  it was the part that stayed wrong.
+
+  ⚠️ Two lines are spelled differently now, as a consequence of being generated rather
+  than typed: the primary binding comes first and is written out in full. `F2 / Ctrl+D`
+  reads `Ctrl+D / F2`, and `Ctrl+Z / Y` reads `Ctrl+Z / Ctrl+Y`. Glide-mode motions
+  (`hjkl`, `w b e`, `dd`) are unchanged — those cannot be rebound, so they were never
+  telling you anything untrue.
+
 ## v0.2.27
 
 ### Fixes

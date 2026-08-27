@@ -302,6 +302,35 @@ fn render_help_narrow(editor: &mut EditorState, f: &mut Frame, area: Rect) {
     render_help_body(editor, f, area, lines);
 }
 
+/// Help の 1 行を、**いま効いている鍵**から作る。
+///
+/// 🚨 Help はキー名をべた書きしていたので、`[keys]` の上書きに追随しなかった（`#9`）。
+/// ⭐ 帯は 3〜5 枠しか出せないので、**キーの全体像を見る場所は Help しかない** ——
+/// 上書きした人ほど Help を見るのに、そこが最も古かった。
+///
+/// ⚠️ **鍵は全部出す**（`Ctrl+B / F3`）。帯が 1 本だけ出すのとは役目が違う。
+/// ⚠️ 鍵を 1 本も持たないアクションは**行ごと落とす** —— 押せない案内を残さない。
+fn help_key_line(
+    editor: &EditorState,
+    actions: &[crate::shortcuts::EditorAction],
+    text: &str,
+) -> Option<String> {
+    let mut keys = Vec::new();
+    for a in actions {
+        let mut k = crate::shortcuts::keys_for(
+            &editor.shortcut_map,
+            *a,
+            crate::shortcuts::KeyStyle::Spelled,
+        );
+        if k.is_empty() {
+            return None;
+        }
+        keys.append(&mut k);
+    }
+    // 既定の見た目（2 桁下げ + 16 桁の欄）に合わせる。
+    Some(format!("  {:<16}{}", keys.join(" / "), text))
+}
+
 fn render_help_wide(editor: &mut EditorState, f: &mut Frame, area: Rect) {
     let cyan = Style::default()
         .fg(Color::Cyan)
@@ -321,30 +350,115 @@ fn render_help_wide(editor: &mut EditorState, f: &mut Frame, area: Rect) {
         Line::from(Span::styled("Numbers repeat:  3j  5w  3dd", gray)),
         Line::from(""),
         Line::from(Span::styled("=== Edit Mode ===", yel)),
-        Line::from("  Ctrl+O          Open file"),
-        Line::from("  Ctrl+B / F3     Browse folder tree (F3 for tmux)"),
-        Line::from("  Ctrl+S          Save"),
-        Line::from("  Ctrl+X          Exit"),
-        Line::from("  Ctrl+F          Find"),
-        Line::from("  Ctrl+R          Replace"),
-        Line::from("  Ctrl+Z / Y      Undo / Redo"),
-        Line::from("  Ctrl+K          Cut line"),
-        Line::from("  Ctrl+J          Jump to line"),
+        help_key_line(
+            editor,
+            &[crate::shortcuts::EditorAction::EnterOpen],
+            "Open file",
+        )
+        .map(Line::from)
+        .unwrap_or_else(|| Line::from("")),
+        help_key_line(
+            editor,
+            &[crate::shortcuts::EditorAction::EnterBrowse],
+            "Browse folder tree (F3 for tmux)",
+        )
+        .map(Line::from)
+        .unwrap_or_else(|| Line::from("")),
+        help_key_line(editor, &[crate::shortcuts::EditorAction::EnterSave], "Save")
+            .map(Line::from)
+            .unwrap_or_else(|| Line::from("")),
+        help_key_line(editor, &[crate::shortcuts::EditorAction::EnterExit], "Exit")
+            .map(Line::from)
+            .unwrap_or_else(|| Line::from("")),
+        help_key_line(
+            editor,
+            &[crate::shortcuts::EditorAction::EnterSearch],
+            "Find",
+        )
+        .map(Line::from)
+        .unwrap_or_else(|| Line::from("")),
+        help_key_line(
+            editor,
+            &[crate::shortcuts::EditorAction::EnterReplace],
+            "Replace",
+        )
+        .map(Line::from)
+        .unwrap_or_else(|| Line::from("")),
+        help_key_line(
+            editor,
+            &[
+                crate::shortcuts::EditorAction::Undo,
+                crate::shortcuts::EditorAction::Redo,
+            ],
+            "Undo / Redo",
+        )
+        .map(Line::from)
+        .unwrap_or_else(|| Line::from("")),
+        help_key_line(
+            editor,
+            &[crate::shortcuts::EditorAction::DeleteLine],
+            "Cut line",
+        )
+        .map(Line::from)
+        .unwrap_or_else(|| Line::from("")),
+        help_key_line(
+            editor,
+            &[crate::shortcuts::EditorAction::EnterGoto],
+            "Jump to line",
+        )
+        .map(Line::from)
+        .unwrap_or_else(|| Line::from("")),
         Line::from("  Ctrl+A / E      Line start / end"),
         Line::from("  Alt+\\ / Alt+/   File top / bottom"),
         Line::from("  Ctrl+Home/End   The same, without Alt"),
-        Line::from("  Ctrl+G          Enter Glide mode"),
+        help_key_line(
+            editor,
+            &[crate::shortcuts::EditorAction::EnterGlide],
+            "Enter Glide mode",
+        )
+        .map(Line::from)
+        .unwrap_or_else(|| Line::from("")),
         Line::from(""),
         Line::from(Span::styled("=== View ===", yel)),
-        Line::from("  Ctrl+L          Toggle line numbers"),
+        help_key_line(
+            editor,
+            &[crate::shortcuts::EditorAction::ToggleLineNumbers],
+            "Toggle line numbers",
+        )
+        .map(Line::from)
+        .unwrap_or_else(|| Line::from("")),
         Line::from("  Ctrl+W          Toggle line wrap"),
-        Line::from("  Ctrl+U          Toggle footer"),
-        Line::from("  F2 / Ctrl+D     Toggle Markdown preview"),
+        help_key_line(
+            editor,
+            &[crate::shortcuts::EditorAction::ToggleFooter],
+            "Toggle footer",
+        )
+        .map(Line::from)
+        .unwrap_or_else(|| Line::from("")),
+        help_key_line(
+            editor,
+            &[crate::shortcuts::EditorAction::ToggleMarkdownPreview],
+            "Toggle Markdown preview",
+        )
+        .map(Line::from)
+        .unwrap_or_else(|| Line::from("")),
         Line::from("  F4              Toggle diff review"),
         Line::from(""),
         Line::from(Span::styled("=== Global ===", yel)),
-        Line::from("  Ctrl+P          Command palette"),
-        Line::from("  Ctrl+H / F1     Help (F1 if Ctrl+H is taken)"),
+        help_key_line(
+            editor,
+            &[crate::shortcuts::EditorAction::EnterCommand],
+            "Command palette",
+        )
+        .map(Line::from)
+        .unwrap_or_else(|| Line::from("")),
+        help_key_line(
+            editor,
+            &[crate::shortcuts::EditorAction::EnterHelp],
+            "Help (F1 if Ctrl+H is taken)",
+        )
+        .map(Line::from)
+        .unwrap_or_else(|| Line::from("")),
         Line::from(""),
         Line::from(Span::styled("=== Glide Mode — Movement ===", yel)),
         Line::from("  hjkl / arrows   Move cursor"),
@@ -549,6 +663,121 @@ mod welcome_notice_tests {
             assert!(
                 flattened(&welcome_text(width, 30, Some(notice))).contains("notes-from-2019.txt"),
                 "width={width} で尻が消えた"
+            );
+        }
+    }
+}
+
+/// 🚨 **Help はキーの全体像を見る場所** —— 帯が 3〜5 枠しか出せないので、
+/// 上書きした人ほどここを見る。∴ ここが古いと、上書きした人が最も困る（`#9`）。
+#[cfg(test)]
+mod help_follows_the_keymap {
+    use super::*;
+    use crate::state::{Config, EditorState};
+    use ratatui::{Terminal, backend::TestBackend};
+
+    fn editor_with_keys(pairs: &[(&str, &str)]) -> EditorState {
+        let mut editor = EditorState::new(Some("note.txt".to_string()));
+        let mut config = Config::default_values();
+        if !pairs.is_empty() {
+            config.keys = Some(
+                pairs
+                    .iter()
+                    .map(|(a, k)| (a.to_string(), k.to_string()))
+                    .collect(),
+            );
+        }
+        editor.shortcut_map = crate::shortcuts::build_shortcut_map(config.keys.as_ref());
+        editor.config = config;
+        editor
+    }
+
+    fn help_text(editor: &mut EditorState) -> String {
+        let (w, h) = (100u16, 60u16);
+        let backend = TestBackend::new(w, h);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|f| render_help(editor, f, Rect::new(0, 0, w, h)))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        (0..h)
+            .map(|y| {
+                (0..w)
+                    .map(|x| buffer.cell((x, y)).unwrap().symbol())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// 🚨 **本丸** —— 上書きすると Help の該当行が変わる。
+    #[test]
+    fn help_follows_an_override() {
+        let plain = help_text(&mut editor_with_keys(&[]));
+        assert!(plain.contains("Ctrl+S"), "既定の Help が違う");
+
+        let mut e = editor_with_keys(&[("enter_save", "f9")]);
+        let text = help_text(&mut e);
+        assert!(
+            text.contains("F9") && text.contains("Save"),
+            "上書きしたのに Help が追随していない"
+        );
+    }
+
+    /// ⭐ **主とフォールバックの両方が出る**（`Ctrl+B / F3` の形）。
+    /// 上書きで主が変われば `F6 / F3` になる —— フォールバックは消えない。
+    #[test]
+    fn help_shows_the_primary_and_the_fallback() {
+        let plain = help_text(&mut editor_with_keys(&[]));
+        assert!(
+            plain.contains("Ctrl+B / F3"),
+            "主とフォールバックが並んでいない"
+        );
+
+        let mut e = editor_with_keys(&[("enter_browse", "f6")]);
+        let text = help_text(&mut e);
+        assert!(
+            text.contains("F6 / F3"),
+            "上書き後に「利用者の鍵 / フォールバック」になっていない"
+        );
+    }
+
+    /// 🚨 **陽性対照。** 上書きが無ければ Help は既定の鍵を出す。
+    /// これが無いと「全部消す」実装が緑で通る。
+    ///
+    /// ⚠️ **綴りは 2 か所で変わった**（意図的）—— 鍵から作るようになったので、
+    /// **主が先・正式な綴り**で並ぶ:
+    /// `F2 / Ctrl+D` → `Ctrl+D / F2`（`Ctrl+D` が主で `F2` がフォールバック）、
+    /// `Ctrl+Z / Y` → `Ctrl+Z / Ctrl+Y`（手書きの短縮をやめた）。
+    /// ⭐ 手で書いていた間は、並びも短縮も**書いた人の気分**だった。
+    #[test]
+    fn without_overrides_help_shows_the_default_keys() {
+        let text = help_text(&mut editor_with_keys(&[]));
+        for want in [
+            "Ctrl+O",
+            "Ctrl+S",
+            "Ctrl+X",
+            "Ctrl+Z / Ctrl+Y",
+            "Ctrl+H / F1",
+            "Ctrl+D / F2",
+            "Ctrl+B / F3",
+        ] {
+            assert!(text.contains(want), "{want} が Help から消えた");
+        }
+    }
+
+    /// ⚠️ **`[keys]` で上書きできない行は触らない。** Glide のモーションは
+    /// `action_from_name` の対象外なので、べた書きのままで**嘘をついていない**。
+    /// ⭐ ここが動いたら、直す範囲が広がりすぎている合図。
+    #[test]
+    fn glide_motions_are_left_alone() {
+        let plain = help_text(&mut editor_with_keys(&[]));
+        let overridden = help_text(&mut editor_with_keys(&[("enter_save", "f9")]));
+        for motion in ["hjkl", "w / b / e"] {
+            assert!(plain.contains(motion), "{motion} が既定の Help に無い");
+            assert!(
+                overridden.contains(motion),
+                "{motion} が上書きで変わった（対象外の行に手が入っている）"
             );
         }
     }
