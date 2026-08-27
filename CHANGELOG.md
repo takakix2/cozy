@@ -1,5 +1,42 @@
 # Changelog
 
+## v0.2.25
+
+### Fixes
+
+- **A file can no longer repaint cozy's own screen.** Control characters in an opened
+  file were handed to the terminal raw, so the terminal obeyed them instead of showing
+  them. Measured before the fix, inside an isolated pane: a file containing an escape
+  sequence could **erase the line-number gutter**, **write text onto a different line**
+  of cozy's display, and **change the terminal's title** — just by being opened. cozy's
+  screen is a gutter, a footer, and an `Edit:` / `Saved:` status line, so all of it was
+  writable by the contents of the file being edited. That is UI spoofing, not a cosmetic
+  glitch: a file could in principle paint a `Saved:` line that never happened.
+
+  Control characters are now drawn in caret notation — `^M` for a carriage return, `^[`
+  for an escape, `^H` for a backspace, `^?` for delete — and nothing but the notation
+  reaches the terminal. A carriage return inside a line no longer overwrites what came
+  before it or spills outside cozy's frame.
+
+  ⭐ This is the other half of the byte-level work in 0.2.24. Keeping a lone `\r` as an
+  ordinary character is what lets mixed-ending and Classic-Mac files come back
+  byte-identical; drawing it as `^M` is what stops that same byte from lying about what
+  is on screen. The bytes are unchanged by this release — the eight round-trip files from
+  0.2.24, plus one containing an escape sequence, all still save identically.
+
+- **The cursor lands on the character it appears to be on.** Three different width
+  calculations existed side by side, disagreeing about control characters — the wrap used
+  one column, the cursor used zero. On a line holding a carriage return, the wrap and the
+  cursor already disagreed with each other, before any of the drawing changed. They now
+  share a single rule, and the drawing asks that same rule what to draw. Pressing
+  `Ctrl+E` on a line whose content is `a` followed by a carriage return now stops at
+  column 7, matching the `a^M` that is actually drawn; it used to stop at 6,
+  indistinguishable from an ordinary two-character line.
+
+  ⚠️ **Tabs are deliberately unchanged.** Unlike the other control characters a tab
+  appears in ordinary text, so drawing it as `^I` would change how every file with a tab
+  in it looks. What a tab should be worth is tracked separately.
+
 ## v0.2.24
 
 ### Fixes

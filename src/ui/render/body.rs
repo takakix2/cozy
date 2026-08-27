@@ -5,7 +5,6 @@ use ratatui::{
     text::{Line, Span},
     widgets::Paragraph,
 };
-use unicode_width::UnicodeWidthStr;
 
 use crate::state::{EditorMode, EditorState};
 use crate::utils::unicode::display_width_up_to;
@@ -219,7 +218,7 @@ pub fn render_text_buffer(editor: &mut EditorState, f: &mut Frame, area: Rect) {
                         if cursor_x >= cs && cursor_x < next_start {
                             let end = cursor_x.min(line.len());
                             let before = &line[cs..end];
-                            let dcol = UnicodeWidthStr::width(before) as u16;
+                            let dcol = crate::utils::unicode::str_display_width(before) as u16;
                             let (cx, cy) = clamp_cursor(
                                 f.area(),
                                 area.x + text_x_offset + dcol,
@@ -327,7 +326,15 @@ fn render_line_range(
                     final_style = final_style.bg(Color::Rgb(100, 80, 0)).fg(Color::White);
                 }
             }
-            spans.push(Span::styled(ch.to_string(), final_style));
+            // 🚨 **他人のバイトを端末へ渡す関門。** 制御文字はここで `^X` になる ——
+            // 素のまま渡すと、ファイルの中身が端末制御を奪う（`ROADMAP.md`
+            // 「Stop handing the terminal whatever the file says」）。
+            // ⭐ 幅を数える `char_display_width` と**同じ関数**に訊いているので、
+            // カーソルの列と描かれた字がずれない。
+            spans.push(Span::styled(
+                crate::utils::unicode::visible_char(ch),
+                final_style,
+            ));
             has_content = true;
         }
     }
@@ -376,5 +383,71 @@ mod render_color_tests {
             "function name should be LightBlue; got {:?}",
             fgs
         );
+    }
+}
+
+/// 🚨 **描いた字そのものを固定する網。**
+///
+/// ⚠️ 幅の側（`utils::unicode`）だけを網で押さえていた間、**描画を元に戻しても
+/// テストは全部緑のまま**だった（2026-08-28 に陰性対照で発覚）。
+/// ⭐ 幅と描画は**別々に壊れる**ので、**別々に固定する**必要がある ——
+/// 片方だけ直すと「画面と内部が別々に正しい」状態になり、それがまさに `#8` の症状。
+#[cfg(test)]
+mod control_char_rendering_tests {
+    use super::*;
+    use crate::state::EditorState;
+    use crate::state::buffer::TextBuffer;
+
+    /// 1 行を描いて、画面に出る文字列を組み立てる。
+    fn rendered(line: &str) -> String {
+        let mut editor = EditorState::new(None);
+        editor.buffer = TextBuffer::from_lines(vec![line.to_string()]);
+        render_line(&editor, 0)
+            .spans
+            .iter()
+            .map(|s| s.content.as_ref())
+            .collect()
+    }
+
+    /// 🚨 **本丸** —— ESC が端末へ渡らないこと。生で渡ると、ファイルの中身が
+    /// cozy の画面（行番号・フッタ・ステータス行）を書き換えられる。
+    #[test]
+    fn escape_never_reaches_the_terminal() {
+        assert_eq!(rendered("a\u{1b}[2Jb"), "a^[[2Jb");
+        assert_eq!(rendered("a\u{1b}]0;t\u{7}b"), "a^[]0;t^Gb");
+    }
+
+    #[test]
+    fn control_chars_are_drawn_as_caret_notation() {
+        assert_eq!(rendered("a\rb\rc"), "a^Mb^Mc");
+        assert_eq!(rendered("a\u{8}b"), "a^Hb");
+        assert_eq!(rendered("a\u{7f}b"), "a^?b");
+    }
+
+    /// 陽性対照 —— 普通の行は**1 文字も変わらない**。
+    /// ⭐ これが無いと「全部 `^X` にする」実装が緑で通る。
+    #[test]
+    fn ordinary_lines_are_drawn_unchanged() {
+        assert_eq!(rendered("abc"), "abc");
+        assert_eq!(rendered("あい"), "あい");
+        assert_eq!(rendered("a\tb"), "a\tb", "TAB は `#8` の外（素通し）");
+    }
+
+    /// ⭐ 描いた桁数と、幅の計算が一致すること。**この 2 つを繋ぐ網**が無いと、
+    /// 片方だけ直した状態が緑で通る（実際に一度そうなった）。
+    #[test]
+    fn drawn_columns_match_the_counted_width() {
+        for line in ["a\rb", "a\u{1b}[31mX", "abc", "あい"] {
+            let drawn = rendered(line);
+            let drawn_cols: usize = drawn
+                .chars()
+                .map(|c| unicode_width::UnicodeWidthChar::width(c).unwrap_or(0))
+                .sum();
+            assert_eq!(
+                drawn_cols,
+                crate::utils::unicode::str_display_width(line),
+                "{line:?} を描くと {drawn:?}（{drawn_cols} 桁）だが、幅は別の値と数えている"
+            );
+        }
     }
 }

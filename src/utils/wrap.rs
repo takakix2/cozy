@@ -1,4 +1,4 @@
-use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+use crate::utils::unicode::{char_display_width, str_display_width};
 
 /// Split `line` into byte ranges that each fit within `width` display columns.
 /// Always returns at least one element.
@@ -11,7 +11,7 @@ pub fn wrap_chunks(line: &str, width: usize) -> Vec<(usize, usize)> {
     let mut col = 0usize;
 
     for (i, ch) in line.char_indices() {
-        let w = UnicodeWidthChar::width(ch).unwrap_or(1);
+        let w = char_display_width(ch);
         if col + w > width && col > 0 {
             chunks.push((chunk_start, i));
             chunk_start = i;
@@ -50,7 +50,7 @@ pub fn byte_at_visual_col(
     let mut w = 0usize;
     let mut last_char_start = cs;
     for (i, ch) in chunk.char_indices() {
-        let cw = UnicodeWidthChar::width(ch).unwrap_or(1);
+        let cw = char_display_width(ch);
         let byte = cs + i;
         if target_vcol < w + cw {
             return byte;
@@ -66,7 +66,7 @@ pub fn byte_at_visual_col(
 /// Used by non-wrapped vertical movement to keep a width-aware goal column.
 pub fn visual_col(line: &str, cx: usize) -> usize {
     let end = cx.min(line.len());
-    UnicodeWidthStr::width(&line[..end])
+    str_display_width(&line[..end])
 }
 
 /// Returns `(sub_row, visual_col)` for byte offset `cx` within `line`.
@@ -84,7 +84,7 @@ pub fn cursor_visual_pos(line: &str, cx: usize, width: usize) -> (usize, usize) 
         if in_chunk {
             let end = cx.min(line.len());
             let before = if s <= end { &line[s..end] } else { "" };
-            return (idx, UnicodeWidthStr::width(before));
+            return (idx, str_display_width(before));
         }
     }
     (0, 0)
@@ -120,6 +120,42 @@ mod tests {
         // Past end: last chunk -> line end; non-last -> start of last char (う @ 6).
         assert_eq!(byte_at_visual_col(line, 0, 9, 99, true), 9);
         assert_eq!(byte_at_visual_col(line, 0, 9, 99, false), 6);
+    }
+
+    /// 🚨 **幅を数える場所が割れていた**（2026-08-28 に統合）。折り返し
+    /// （`wrap_chunks`）とカーソル（`visual_col` / `cursor_visual_pos`）が、
+    /// 同じ行を**別の幅**として数えていた —— 制御文字を `wrap_chunks` は 1、
+    /// `UnicodeWidthStr` 系は 0 としていたため。
+    ///
+    /// ⭐ ここは**値そのもの**ではなく **3 者が一致すること**を見る。
+    /// 幅の規則を変えたときに、片方だけ追随し損ねたら落ちる。
+    #[test]
+    fn every_counter_agrees_on_a_line_with_control_chars() {
+        let line = "a\rb\u{1b}c"; // a, CR, b, ESC, c
+        // 制御文字は `^X` の 2 桁 → 1 + 2 + 1 + 2 + 1 = 7
+        assert_eq!(visual_col(line, line.len()), 7);
+        assert_eq!(
+            crate::utils::unicode::display_width_up_to(line, line.len()),
+            7,
+            "display_width_up_to が visual_col と食い違っている"
+        );
+
+        // 折り返さない幅なら 1 行。`cursor_visual_pos` の列も同じ数え方になる。
+        let (row, col) = cursor_visual_pos(line, line.len(), 80);
+        assert_eq!((row, col), (0, 7), "cursor_visual_pos が別の幅を使っている");
+
+        // 幅 7 にちょうど収まり、8 文字目で折り返す（＝ wrap も同じ規則）。
+        assert_eq!(visual_row_count(line, 7), 1);
+        assert_eq!(visual_row_count(line, 6), 2);
+    }
+
+    /// 陽性対照 —— 制御文字を含まない行は**今までどおり**。
+    #[test]
+    fn ordinary_lines_are_unaffected() {
+        assert_eq!(visual_col("abc", 3), 3);
+        assert_eq!(visual_col("あい", 6), 4);
+        assert_eq!(visual_row_count("abcdef", 3), 2);
+        assert_eq!(cursor_visual_pos("あい", 6, 80), (0, 4));
     }
 
     #[test]
