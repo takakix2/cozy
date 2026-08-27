@@ -1710,3 +1710,48 @@ fn test_ctrl_h_opens_help_from_edit_mode() {
         );
     }
 }
+
+/// `Ctrl+O` の欄は**空で始まる**。
+///
+/// 🚨 以前は現在のファイル名が残っていて、カーソルが末尾に在った。∴ 欄を空だと思って
+/// 打つと **2 つが連結される** —— `ok.txt` を開いた状態で `sjis.txt` と打つと
+/// `ok.txtsjis.txt` になり、`File not found` と言われる。⚠️ **cozy は正しいことを
+/// 言っているのに、利用者にはタイプミスに見える。** 実機で踏んで `#5` になった。
+#[test]
+fn test_open_prompt_starts_empty() {
+    let mut editor = EditorState::new(Some("ok.txt".to_string()));
+    editor.enter_mode(EditorMode::Open);
+    assert_eq!(
+        editor.open_filename_buffer, "",
+        "開いているファイル名が残ると、打った名前がその後ろに繋がる"
+    );
+    assert_eq!(editor.filename_cursor, 0);
+}
+
+/// 陽性対照。**`Save` の欄には今までどおり名前が入っている。**
+///
+/// 🚨 これが無いと「両方の欄を空にする」実装でも上の 1 本は緑になる。
+/// ⭐ `Save` は「**同じ名前に**保存する」が既定なので、名前が入っているのが正しい ——
+/// 逆にしてはいけない、というのがこの対の主張。
+#[test]
+fn test_save_prompt_still_carries_the_name() {
+    let mut editor = EditorState::new(Some("ok.txt".to_string()));
+    editor.enter_mode(EditorMode::Save);
+    assert_eq!(editor.save_filename_buffer, "ok.txt");
+    assert_eq!(editor.filename_cursor, "ok.txt".len());
+}
+
+/// 欄を離れて戻っても空のまま（前回打ちかけた名前が残らない）。
+/// ⚠️ `open_filename_buffer` は状態として持ち越されるので、`clear()` を
+/// `enter_mode` に置かないとここで漏れる。
+#[test]
+fn test_open_prompt_is_empty_again_after_leaving_it() {
+    let mut editor = EditorState::new(Some("ok.txt".to_string()));
+    editor.enter_mode(EditorMode::Open);
+    editor.open_filename_buffer.push_str("half-typed");
+    editor.filename_cursor = "half-typed".len();
+    editor.enter_mode(editor.home_mode());
+    editor.enter_mode(EditorMode::Open);
+    assert_eq!(editor.open_filename_buffer, "");
+    assert_eq!(editor.filename_cursor, 0);
+}

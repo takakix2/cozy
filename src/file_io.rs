@@ -7,8 +7,34 @@ use std::path::{Path, PathBuf};
 
 pub(crate) enum StartupDocument {
     Empty,
-    File { path: PathBuf, lines: Vec<String> },
-    Directory { tree: BrowseTree },
+    File {
+        path: PathBuf,
+        lines: Vec<String>,
+    },
+    Directory {
+        tree: BrowseTree,
+    },
+    /// 存在するのに読めなかったファイル。**開かない**（＝バッファにも名前にも載せない）。
+    /// 🚨 空バッファ＋ファイル名 で開くと、次の `Ctrl+S` が元のバイト列を消す。
+    Unreadable {
+        message: String,
+    },
+}
+
+/// 開けなかったときに画面へ出す一文。
+///
+/// ⚠️ **入口は 2 つある**（起動引数と `Ctrl+O`）。文言が割れると、同じ拒み方をしているのに
+/// 利用者には別の事故に見えるので、**必ずここを通す**。
+///
+/// 🚨 `InvalidData` を素通しすると `stream did not contain valid UTF-8` という
+/// **Rust の言い回し**が出る。これは正しいが、利用者は「自分のファイルがどうなったか」を
+/// 知りたいのであって stream の話をされても困る。∴ **何が起きなかったか**を言う。
+fn cannot_open_message(display: &str, error: &io::Error) -> String {
+    if error.kind() == io::ErrorKind::InvalidData {
+        format!("Not UTF-8 text: {display} (not opened — the file is unchanged)")
+    } else {
+        format!("Cannot open '{display}': {error}")
+    }
 }
 
 /// 先頭の `~` をホームへ展開する。
@@ -140,9 +166,22 @@ pub(crate) fn load_startup_document(filename: Option<&str>) -> StartupDocument {
         };
     }
 
-    let lines = std::fs::read_to_string(path_ref)
-        .map(|content| lines_from_content(&content))
-        .unwrap_or_else(|_| vec![String::new()]);
+    // ⚠️ ここは `NotFound`（＝これから作る新規ファイル）と、`InvalidData` や
+    // `PermissionDenied`（＝**そこに在るのに読めなかった**既存ファイル）の分かれ目。
+    // 以前は両方まとめて空バッファに落としていたので、`cozy sjis.txt` が
+    // **新規ファイルを開いたのと画面上まったく同じ**に見え、そのまま保存すると
+    // 43 バイトが 6 バイトになった（警告は一度も出ない）。
+    let lines = match std::fs::read_to_string(path_ref) {
+        Ok(content) => lines_from_content(&content),
+        // ⭐ 新規ファイルは空で開くのが正しい。cozy の書き味の芯なので変えない。
+        Err(e) if e.kind() == io::ErrorKind::NotFound => vec![String::new()],
+        // 🚨 中身を知らないまま名前だけ引き受けると、保存が破壊になる。**引き受けない。**
+        Err(e) => {
+            return StartupDocument::Unreadable {
+                message: cannot_open_message(path, &e),
+            };
+        }
+    };
 
     // ⚠️ 保持するのは**展開後**のパス。原文（`~/x`）を持つと、後の `save` が
     // また `~` から解き直すことになり、開いた先と保存先がずれうる。
@@ -204,27 +243,27 @@ pub fn open_file(editor: &mut EditorState, path: &str) -> io::Result<()> {
     }
 
     let path_buf = expand_tilde(path);
-    if !path_buf.exists() {
+    // ⚠️ 相対名は **`save` と同じ住所の解き方**で見る。開く側だけプロセスの cwd を見ると、
+    // ホストが working_dir を宣言する経路（argo に埋め込まれた cozy）で
+    // **開けないのに保存はできる**という食い違いが起きる。desktop では両者は同じ値。
+    let target = editor.resolve_in_working_dir(&path_buf);
+    if !target.exists() {
         return Err(io::Error::new(
             io::ErrorKind::NotFound,
             format!("File not found: {}", path),
         ));
     }
-    if !path_buf.is_file() {
+    if !target.is_file() {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
             format!("Not a file: {}", path),
         ));
     }
 
-    let content = std::fs::read_to_string(&path_buf).map_err(|e| {
-        let kind = if e.kind() == io::ErrorKind::PermissionDenied {
-            io::ErrorKind::PermissionDenied
-        } else {
-            e.kind()
-        };
-        io::Error::new(kind, format!("Failed to open '{}': {}", path, e))
-    })?;
+    // 🚨 読めなければ **開かない**。開いてしまうと、空に見えるバッファと元ファイルの名前が
+    // 結びつき、次の保存で中身が消える（起動引数側と同じ事故）。文言も起動側と共有する。
+    let content = std::fs::read_to_string(&target)
+        .map_err(|e| io::Error::new(e.kind(), cannot_open_message(path, &e)))?;
 
     let lines = lines_from_content(&content);
     editor.buffer = TextBuffer::from_lines(lines);
@@ -922,5 +961,174 @@ mod write_buffer_tests {
         let path = dir.join("fresh.md");
         save_to(&path, &["hello"]);
         assert_eq!(fs::read_to_string(&path).unwrap(), "hello\n");
+    }
+}
+
+/// 「読めないファイルを開かない」ことの網。
+///
+/// 🚨 **陽性対照が要る。** 「空バッファで開いた」は**正しい新規ファイルの場合も真**なので、
+/// 空かどうかを見るだけでは何も固定できない。∴ `NotFound` と `InvalidData` を**両方**撃ち、
+/// **振る舞いが分かれること**を見る。
+///
+/// ⭐ そして肝心の「壊れないこと」は**バイト列で**確かめる。画面側の assert では捕まらない
+/// —— 事故は「画面が空に見える」ことではなく「保存でファイルが縮む」ことだった。
+#[cfg(test)]
+mod refusing_unreadable_files {
+    use super::*;
+    use crate::state::{EditorMode, EditorState};
+    use std::fs;
+
+    /// Shift_JIS の「これは Shift_JIS」。UTF-8 としては読めない実物のバイト列。
+    const SJIS: &[u8] = &[
+        0x82, 0xb1, 0x82, 0xea, 0x82, 0xcd, 0x53, 0x68, 0x69, 0x66, 0x74, 0x5f, 0x4a, 0x49, 0x53,
+        0x0a,
+    ];
+
+    fn scratch(name: &str) -> PathBuf {
+        let base =
+            std::env::temp_dir().join(format!("cozy_open_test_{}_{}", std::process::id(), name));
+        let _ = fs::remove_dir_all(&base);
+        fs::create_dir_all(&base).unwrap();
+        base
+    }
+
+    /// ⚠️ **env を読むテストは、env を書くテストと直列化する。**
+    /// `expand_tilde` は `HOME` と `COZY_SANDBOX_ROOT` を読むので、それを差し替える
+    /// `tilde_tests` と並走すると**絶対パスに根が前置される** ——
+    /// `/var/…/sjis.txt` が `/private/container/var/…/sjis.txt` になり、
+    /// そこには何も無いので `NotFound` ＝ **「新規ファイル」に化ける**。
+    /// 🚨 これを踏むと網が「壊さないこと」ではなく**運**を測る（8 回中 2 回落ちた）。
+    fn env_guard() -> std::sync::MutexGuard<'static, ()> {
+        HOME_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    fn sjis_file(dir: &Path) -> PathBuf {
+        let path = dir.join("sjis.txt");
+        fs::write(&path, SJIS).unwrap();
+        path
+    }
+
+    // ── 起動引数（`cozy <file>`）─────────────────────────────────────────
+
+    /// 陽性対照。**新規ファイルは今までどおり空で開く** —— これを壊すと `cozy newfile.md` が
+    /// 死ぬ。分岐の片側だけ直して満足しないための対照。
+    #[test]
+    fn a_brand_new_file_still_opens_empty_with_its_name() {
+        let _guard = env_guard();
+        let dir = scratch("new_file");
+        let path = dir.join("does-not-exist-yet.md");
+        match load_startup_document(path.to_str()) {
+            StartupDocument::File { path: p, lines } => {
+                assert_eq!(lines, vec![String::new()]);
+                assert_eq!(p, path, "新規は**名前を引き受ける**（保存先になる）");
+            }
+            _ => panic!("新規ファイルは File で開かれなければならない"),
+        }
+    }
+
+    /// 事故の本体。**読めないファイルは開かない**（＝ `File` にならない）。
+    #[test]
+    fn a_non_utf8_file_is_refused_at_startup() {
+        let _guard = env_guard();
+        let dir = scratch("startup_refuse");
+        let path = sjis_file(&dir);
+        match load_startup_document(path.to_str()) {
+            StartupDocument::Unreadable { message } => {
+                assert!(
+                    message.contains("Not UTF-8"),
+                    "理由を名乗らないと利用者はタイプミスを疑う: {message}"
+                );
+            }
+            _ => panic!("非 UTF-8 は Unreadable でなければならない"),
+        }
+    }
+
+    /// ⭐ **これが本命** —— 開いて打って保存しても、**元のバイト列が 1 バイトも動かない**。
+    /// 以前はここで 43 バイトが 6 バイトになっていた。
+    #[test]
+    fn typing_and_saving_after_a_refusal_cannot_touch_the_file() {
+        let _guard = env_guard();
+        let dir = scratch("startup_bytes");
+        let path = sjis_file(&dir);
+
+        let mut editor = EditorState::new(Some(path.to_string_lossy().to_string()));
+
+        // 名前を引き受けていないこと ＝ 保存先が存在しないこと。
+        assert!(
+            editor.filename.is_none(),
+            "読めなかったファイルの名前を持つと Ctrl+S が破壊になる"
+        );
+        assert_eq!(editor.mode, EditorMode::Welcome, "編集に入ってはいけない");
+        assert!(
+            editor.status_message.is_some(),
+            "黙って空で立ち上がるのが元の事故だった"
+        );
+
+        // 利用者が気づかず打って保存した場合を、そのまま撃つ。
+        editor.buffer = crate::state::TextBuffer::from_lines(vec!["hello".to_string()]);
+        assert!(
+            save(&mut editor).is_err(),
+            "保存先が無いので保存は成立しない"
+        );
+
+        assert_eq!(fs::read(&path).unwrap(), SJIS, "元のバイト列が変わっている");
+    }
+
+    // ── `Ctrl+O`（アプリ内）──────────────────────────────────────────────
+
+    /// 陽性対照。**無いファイルは今までどおり「無い」と言う**（文言を混ぜない）。
+    #[test]
+    fn ctrl_o_still_calls_a_missing_file_missing() {
+        let _guard = env_guard();
+        let dir = scratch("open_missing");
+        let mut editor = EditorState::new(None);
+        editor._working_dir = dir.clone();
+
+        let err = open_file(&mut editor, "nope.md").unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::NotFound);
+        assert!(err.to_string().contains("File not found"), "{err}");
+    }
+
+    /// 読めない理由を **UTF-8 の話として**言う。
+    /// ⚠️ 以前は `stream did not contain valid UTF-8` という Rust の言い回しが出ていた。
+    #[test]
+    fn ctrl_o_refuses_a_non_utf8_file_and_says_why() {
+        let _guard = env_guard();
+        let dir = scratch("open_refuse");
+        let path = sjis_file(&dir);
+        let mut editor = EditorState::new(None);
+        editor._working_dir = dir.clone();
+        editor.buffer = crate::state::TextBuffer::from_lines(vec!["keep me".to_string()]);
+
+        let err = open_file(&mut editor, "sjis.txt").unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert!(err.to_string().contains("Not UTF-8"), "{err}");
+        assert!(
+            !err.to_string().contains("stream"),
+            "Rust の内部事情を利用者に見せない: {err}"
+        );
+
+        // 手元のバッファも、向こうのファイルも、どちらも無傷。
+        assert_eq!(editor.buffer.lines, &["keep me".to_string()]);
+        assert!(editor.filename.is_none());
+        assert_eq!(fs::read(&path).unwrap(), SJIS);
+    }
+
+    /// 相対名の住所の解き方を `save` と揃える。
+    /// ⚠️ desktop では `_working_dir` はプロセスの cwd と同じなので、これが効くのは
+    /// **ホストが working_dir を宣言する経路**（argo に埋め込まれた cozy）。
+    #[test]
+    fn ctrl_o_resolves_a_relative_name_against_working_dir() {
+        let _guard = env_guard();
+        let dir = scratch("open_relative");
+        fs::write(dir.join("note.md"), "hello\n").unwrap();
+
+        let mut editor = EditorState::new(None);
+        editor._working_dir = dir.clone();
+
+        open_file(&mut editor, "note.md").expect("working_dir の下に在る");
+        assert_eq!(editor.buffer.lines, &["hello".to_string()]);
     }
 }

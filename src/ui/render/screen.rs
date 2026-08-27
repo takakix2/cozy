@@ -5,24 +5,81 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Paragraph},
 };
-use unicode_width::UnicodeWidthStr;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::state::EditorState;
 
 // ── Welcome ───────────────────────────────────────────────────────────────────
 
-pub fn render_welcome(f: &mut Frame, area: Rect) {
+/// `notice` は「引数で渡されたファイルを開けなかった」ことの申し送り。
+///
+/// 🚨 **Welcome には status bar が無い**（`editor_layout` が高さ 0 にしている ——
+/// 起動画面を汚さないための意図的な設計）。∴ ここに描かないと、拒んだ理由は
+/// **どこにも出ない**。cozy はファイルを守れても「なぜ開かなかったか」を言えず、
+/// 利用者はタイプミスを疑うことになる（それが `Ctrl+O` 側の元の欠陥だった）。
+pub fn render_welcome(f: &mut Frame, area: Rect, notice: Option<&str>) {
     // Compact/low-spec hosts (e.g. an Android tablet, even in wide landscape) get
     // the lightweight box instead of the heavy block-art logo — the wide art is
     // expensive to rasterize every frame on a full-repaint GPU.
     if area.width < 50 || crate::runtime_env::compact() {
-        render_welcome_narrow(f, area);
+        render_welcome_narrow(f, area, notice);
     } else {
-        render_welcome_wide(f, area);
+        render_welcome_wide(f, area, notice);
     }
 }
 
-fn render_welcome_narrow(f: &mut Frame, area: Rect) {
+/// 申し送りを、箱の幅で折り返した赤い行にする。
+/// ⚠️ 折り返さないと**パスの尻が切れる** —— 切れた先にファイル名が在る。
+fn notice_lines(notice: &str, width: usize) -> Vec<Line<'static>> {
+    let red = Style::default().fg(Color::Red).add_modifier(Modifier::BOLD);
+    wrap_notice(notice, width)
+        .into_iter()
+        .map(|l| Line::from(Span::styled(l, red)))
+        .collect()
+}
+
+/// 幅で折り返す。**語で折れないときは文字で割る。**
+///
+/// 🚨 `wrap_help_lines` は空白でしか折らない —— Help の行はどれも語の連なりなので
+/// それで足りていた。ところが申し送りに載るのは**パス**で、これは空白を含まない 1 語。
+/// ∴ 語単位のままだと折り返されずに描画枠で切られ、**いちばん見たい末尾（ファイル名）が
+/// 消える**（狭い箱で実測 —— 網がそこで赤くなった）。
+fn wrap_notice(text: &str, width: usize) -> Vec<String> {
+    if width == 0 {
+        return vec![text.to_string()];
+    }
+    let mut out: Vec<String> = Vec::new();
+    let mut cur = String::new();
+    let mut cur_w = 0usize;
+    for word in text.split_inclusive(' ') {
+        let ww = UnicodeWidthStr::width(word);
+        if cur_w + ww > width && !cur.is_empty() {
+            out.push(std::mem::take(&mut cur).trim_end().to_string());
+            cur_w = 0;
+        }
+        if ww > width {
+            // 1 語が箱より長い（＝長いパス）。文字幅で刻む。
+            for ch in word.chars() {
+                let cw = UnicodeWidthChar::width(ch).unwrap_or(0);
+                if cur_w + cw > width && !cur.is_empty() {
+                    out.push(std::mem::take(&mut cur).trim_end().to_string());
+                    cur_w = 0;
+                }
+                cur.push(ch);
+                cur_w += cw;
+            }
+            continue;
+        }
+        cur.push_str(word);
+        cur_w += ww;
+    }
+    if !cur.is_empty() {
+        out.push(cur.trim_end().to_string());
+    }
+    out
+}
+
+fn render_welcome_narrow(f: &mut Frame, area: Rect, notice: Option<&str>) {
     // Cap the box width so it doesn't stretch edge-to-edge on wide screens — a
     // compact/low-spec tablet routes here even in landscape, where a full-width
     // box looks stretched. On a real narrow phone (width <= cap) this is a no-op.
@@ -84,7 +141,7 @@ fn render_welcome_narrow(f: &mut Frame, area: Rect) {
         yellow,
     ));
 
-    let lines: Vec<Line> = vec![
+    let mut lines: Vec<Line> = vec![
         Line::from(Span::styled(top, border_h)),
         title_line,
         sub_line,
@@ -99,6 +156,11 @@ fn render_welcome_narrow(f: &mut Frame, area: Rect) {
         enter_line,
     ];
 
+    if let Some(notice) = notice {
+        lines.push(Line::from(""));
+        lines.extend(notice_lines(notice, w));
+    }
+
     // 垂直センタリング
     let h = lines.len() as u16;
     let y = area.y + area.height.saturating_sub(h) / 2;
@@ -109,12 +171,14 @@ fn render_welcome_narrow(f: &mut Frame, area: Rect) {
     f.render_widget(Paragraph::new(lines).alignment(Alignment::Left), rect);
 }
 
-fn render_welcome_wide(f: &mut Frame, area: Rect) {
+fn render_welcome_wide(f: &mut Frame, area: Rect, notice: Option<&str>) {
     let cyan = Style::default().fg(Color::Cyan);
     let bold = Style::default().add_modifier(Modifier::BOLD);
     let yellow = Style::default().fg(Color::Yellow);
 
-    let lines = vec![
+    let width = 60u16.min(area.width);
+
+    let mut lines = vec![
         Line::from(""),
         Line::from(Span::styled(" ██████╗ ██████╗ ███████╗██╗   ██╗", cyan)),
         Line::from(Span::styled("██╔════╝██╔═══██╗╚══███╔╝╚██╗ ██╔╝", cyan)),
@@ -125,6 +189,15 @@ fn render_welcome_wide(f: &mut Frame, area: Rect) {
         Line::from(""),
         Line::from(Span::styled("cozy editor — Comfort First TUI", bold)),
         Line::from(""),
+    ];
+
+    // ⭐ ここに置くのは、**利用者がこの画面に居る理由**だから。ショートカット表より先に読む。
+    if let Some(notice) = notice {
+        lines.extend(notice_lines(notice, width as usize));
+        lines.push(Line::from(""));
+    }
+
+    lines.extend([
         Line::from(format!(
             "{:<16}{:<17}{}",
             "Ctrl+O Open", "Ctrl+S Save", "Ctrl+X Exit"
@@ -144,9 +217,8 @@ fn render_welcome_wide(f: &mut Frame, area: Rect) {
         Line::from(""),
         Line::from(Span::styled("Press Enter to start editing...", yellow)),
         Line::from(""),
-    ];
+    ]);
 
-    let width = 60u16.min(area.width);
     let height = (lines.len() as u16).min(area.height);
     let x = area.x + area.width.saturating_sub(width) / 2;
     let y = area.y + area.height.saturating_sub(height) / 2;
@@ -400,4 +472,84 @@ fn shortcut_pair(k1: &str, d1: &str, k2: &str, d2: &str, col: usize, lpad: usize
     let left = format!("{:<kw$} {:<dw$}", k1, d1, kw = key_w, dw = desc_w);
     let right = format!("{:<kw$} {}", k2, d2, kw = key_w);
     Line::from(format!("{}{}{}", " ".repeat(lpad), left, right))
+}
+
+/// Welcome が「開けなかった理由」を描くことの網。
+///
+/// 🚨 **これは飾りではない。** Welcome には status bar が無いので、ここに出ないと
+/// 拒んだ理由は**どこにも出ない** —— ファイルは守れても、利用者にはただの起動画面に見える。
+/// ⚠️ 広い版と狭い版は別の関数なので、**両方**撃つ（片方だけ直して緑になる形を潰す）。
+#[cfg(test)]
+mod welcome_notice_tests {
+    use super::*;
+    use ratatui::{Terminal, backend::TestBackend};
+
+    fn welcome_text(width: u16, height: u16, notice: Option<&str>) -> String {
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|f| render_welcome(f, Rect::new(0, 0, width, height), notice))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        (0..height)
+            .map(|y| {
+                (0..width)
+                    .map(|x| buffer.cell((x, y)).unwrap().symbol())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// 折り返しで語が割れるので、**画面全体を 1 本の文字列に潰してから**探す。
+    fn flattened(text: &str) -> String {
+        text.split_whitespace().collect::<Vec<_>>().join(" ")
+    }
+
+    #[test]
+    fn the_wide_welcome_says_why_the_file_did_not_open() {
+        let text = welcome_text(100, 26, Some("Not UTF-8 text: sjis.txt (not opened)"));
+        assert!(
+            flattened(&text).contains("Not UTF-8 text: sjis.txt"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn the_narrow_welcome_says_it_too() {
+        let text = welcome_text(44, 26, Some("Not UTF-8 text: sjis.txt (not opened)"));
+        assert!(
+            flattened(&text).contains("Not UTF-8 text: sjis.txt"),
+            "{text}"
+        );
+    }
+
+    /// 陽性対照。**申し送りが無いときの起動画面は 1 文字も変わらない** ——
+    /// 「常に赤い行を足す」でも上の 2 本は緑になるので、これが無いと何も固定できない。
+    #[test]
+    fn an_ordinary_start_gets_no_extra_line() {
+        for width in [100u16, 44] {
+            assert_eq!(
+                welcome_text(width, 26, None),
+                welcome_text(width, 26, None),
+                "決定的であること"
+            );
+            assert!(
+                !welcome_text(width, 26, None).contains("Not UTF-8"),
+                "理由が無いのに理由を出している (width={width})"
+            );
+        }
+    }
+
+    /// ⚠️ 長いパスでも**ファイル名の側が切れない**。切れた先に、利用者が探しているものが在る。
+    #[test]
+    fn a_long_path_wraps_instead_of_losing_its_tail() {
+        let notice = "Not UTF-8 text: /Users/someone/very/deep/directory/tree/notes-from-2019.txt (not opened — the file is unchanged)";
+        for width in [100u16, 44] {
+            assert!(
+                flattened(&welcome_text(width, 30, Some(notice))).contains("notes-from-2019.txt"),
+                "width={width} で尻が消えた"
+            );
+        }
+    }
 }

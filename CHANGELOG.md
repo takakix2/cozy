@@ -1,5 +1,37 @@
 # Changelog
 
+## v0.2.23
+
+### Fixes
+
+- **A file cozy cannot read is no longer opened — and no longer saved over.** Opening a
+  file that is not valid UTF-8 (a Shift_JIS note, say) gave a blank buffer that looked
+  exactly like a new file: same empty screen, same `Edit:` status line, no warning. cozy
+  kept the filename, so the next `Ctrl+S` reported `Saved:` and wrote the buffer over the
+  original. Measured before the fix: 16 bytes became 6, and the only message on screen
+  said the save had succeeded.
+
+  An editor holds someone else's file, so this is fixed structurally rather than with a
+  better warning: cozy no longer accepts the *name* of a file it could not read. With no
+  filename there is no save target, and the original bytes are out of reach even if the
+  user never notices anything is wrong. `NotFound` and `InvalidData` had been sharing one
+  branch — only `NotFound` means "a new file", and opening those empty is the point of the
+  program, so that half is unchanged.
+
+  The reason now appears on the Welcome screen itself, which has no status bar, and both
+  entrances say the same thing: `Ctrl+O` used to surface `stream did not contain valid
+  UTF-8`, which is true and tells you nothing about your file.
+
+- **The open prompt starts empty.** `Ctrl+O` used to arrive with the current filename
+  already in the field and the cursor at the end, so anyone who treated it as an empty
+  prompt got the two names joined: editing `ok.txt` and typing `sjis.txt` asked for
+  `ok.txtsjis.txt`, and cozy correctly answered `File not found`. The user typed one name,
+  was told it does not exist, and retyped it to the same answer.
+
+  Save prefills for a reason — saving to the same name is its default. Opening is the
+  opposite operation, so there is nothing to pre-load, and nano's `Ctrl+R` starts empty
+  too. `Ctrl+B` remains the way to pick a file rather than name it.
+
 ## v0.2.22
 
 ### Fixes

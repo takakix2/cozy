@@ -293,16 +293,29 @@ impl EditorState {
     pub(crate) fn from_init(init: EditorStateInit) -> Self {
         let config = Config::load_from(init.config_dir.as_ref());
         let startup_document = crate::file_io::load_startup_document(init.filename.as_deref());
-        let (lines, path_buf, initial_mode, browse_tree) = match startup_document {
+        let (lines, path_buf, initial_mode, browse_tree, startup_error) = match startup_document {
             crate::file_io::StartupDocument::Empty => {
-                (vec![String::new()], None, EditorMode::Welcome, None)
+                (vec![String::new()], None, EditorMode::Welcome, None, None)
             }
             crate::file_io::StartupDocument::File { path, lines } => {
-                (lines, Some(path), Self::resolve_home(&config), None)
+                (lines, Some(path), Self::resolve_home(&config), None, None)
             }
-            crate::file_io::StartupDocument::Directory { tree } => {
-                (vec![String::new()], None, EditorMode::Browse, Some(tree))
-            }
+            crate::file_io::StartupDocument::Directory { tree } => (
+                vec![String::new()],
+                None,
+                EditorMode::Browse,
+                Some(tree),
+                None,
+            ),
+            // 🚨 **ファイル名を引き受けない**のが肝。空バッファ自体は無害だが、そこに
+            // 読めなかったファイルの名前が結びつくと `Ctrl+S` が破壊になる。
+            crate::file_io::StartupDocument::Unreadable { message } => (
+                vec![String::new()],
+                None,
+                EditorMode::Welcome,
+                None,
+                Some(message),
+            ),
         };
 
         Self {
@@ -375,6 +388,19 @@ impl EditorState {
             create_dir: None,
         }
         .with_recovery_offer()
+        .with_startup_error(startup_error)
+    }
+
+    /// 起動引数のファイルを開けなかったことを、最初の画面で言う。
+    ///
+    /// ⚠️ **プロセスは落とさない。** cozy は argo に TUI プロバイダとして埋め込まれるのが
+    /// 本体で、そこでの `exit` は「エディタが開かない」ではなく**ホストごと消える**に化ける。
+    /// ∴ 空の Welcome に留まり、理由だけ出す（名前は持っていないので保存先も無い）。
+    fn with_startup_error(mut self, message: Option<String>) -> Self {
+        if let Some(message) = message {
+            self.set_status_message(message, StatusKind::Error, true);
+        }
+        self
     }
 
     /// Look for a swap left behind by a session that did not get to finish, and
@@ -471,12 +497,19 @@ impl EditorState {
                 self.status_message = None;
             }
             EditorMode::Open => {
-                self.open_filename_buffer = self
-                    .filename
-                    .as_ref()
-                    .map(|p| crate::file_io::shorten_home(&p.to_string_lossy()))
-                    .unwrap_or_default();
-                self.filename_cursor = self.open_filename_buffer.len();
+                // 🚨 **ここは Save と逆。空で始める。**
+                //
+                // 以前は Save と同じ形で現在のファイル名を敷き、カーソルを末尾に置いていた。
+                // ∴ 利用者が欄を空だと思って打つと **2 つが連結される** ——
+                // `ok.txt` を開いている状態で `sjis.txt` と打つと `ok.txtsjis.txt` になり、
+                // cozy は `File not found` と正しく答える。⚠️ **打ったのは `sjis.txt` だけ**
+                // なので、利用者はタイプミスを疑い、打ち直して同じことを言われる。
+                //
+                // ⭐ Save に名前が入っているのは「**同じ名前に**保存する」が既定だから。
+                // Open は**別のファイルを開く**操作なので、既定で名前が入っている理由が無い
+                // （nano の `Ctrl+R` も空で始まる）。近くのファイルを選ぶ道は `Ctrl+B`。
+                self.open_filename_buffer.clear();
+                self.filename_cursor = 0;
                 self.status_message = None;
             }
             EditorMode::Search => {

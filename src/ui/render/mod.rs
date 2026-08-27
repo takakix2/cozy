@@ -53,7 +53,13 @@ impl Renderer {
     pub fn render_body(editor: &mut EditorState, f: &mut Frame, area: Rect) {
         editor.page_size = area.height as usize;
         if editor.mode == EditorMode::Welcome {
-            render_welcome(f, area);
+            // ⚠️ 出すのは **error のときだけ**。Welcome に status bar は無いので、
+            // ここで拾わない限り理由は消える。逆に info/success まで出すと起動画面が騒がしい。
+            let notice = editor
+                .status_message
+                .as_deref()
+                .filter(|_| editor.status_kind == crate::state::StatusKind::Error);
+            render_welcome(f, area, notice);
             return;
         }
         if editor.mode == EditorMode::Help {
