@@ -5,7 +5,7 @@
 
 [English](README.md) | **Japanese**
 
-**Comfort First な TUI — nano のように打って、vim のように動く。**
+**Comfort First TUI — nanoのようにタイプ、vimのようにナビ。**
 
 ![cozy welcome screen](https://raw.githubusercontent.com/takakix2/cozy/main/docs/assets/screenshot.png)
 

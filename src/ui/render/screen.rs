@@ -245,6 +245,14 @@ fn render_help_narrow(editor: &mut EditorState, f: &mut Frame, area: Rect) {
         .add_modifier(Modifier::BOLD);
     let dim = Style::default().fg(Color::DarkGray);
 
+    // 🚨 **狭い版も「いま効いている鍵」から作る**（`#9` の取りこぼし・2026-08-28）。
+    // ⭐ 広い版の `help_key_line` と役目は同じ。違うのは 2 つだけ:
+    //    ① 綴りが `Caret`（`^S`）—— 幅が無いので `Ctrl+S` は置けない
+    //    ② **鍵だけ**を返す（説明は `shortcut_pair` の側が持つので、桁揃えは呼び出し側の仕事）
+    // ⚠️ **綴りが 1 か所、意図して変わる**: `M-\` → `Alt+\`（`display_key` の綴り）。
+    //    手で書いていた間の短縮をやめて、帯と同じ口から出す。
+    let k = |a: crate::shortcuts::EditorAction| narrow_keys(editor, a);
+    use crate::shortcuts::EditorAction as A;
     let lines: Vec<Line> = vec![
         Line::from(Span::styled(
             "cozy Help",
@@ -254,21 +262,68 @@ fn render_help_narrow(editor: &mut EditorState, f: &mut Frame, area: Rect) {
         )),
         Line::from(""),
         Line::from(Span::styled("── Edit Mode ──────────────", hdr)),
-        shortcut_pair("^O", "Open", "^S", "Save", col, 0),
-        shortcut_pair("^X", "Exit", "^F", "Find", col, 0),
-        shortcut_pair("^R", "Replace", "^H", "Help", col, 0),
-        shortcut_pair("^Z", "Undo", "^Y", "Redo", col, 0),
-        shortcut_pair("^K", "Cutline", "^J", "Jump", col, 0),
-        shortcut_pair("^A", "Ln start", "^E", "Ln end", col, 0),
-        shortcut_pair("M-\\", "File top", "M-/", "File end", col, 0),
-        Line::from("^B  → Browse folder tree"),
-        Line::from("^G  → Glide mode (vim)"),
-        Line::from(Span::styled("F1 Help  F2 Md  F3 Brws  F4 Diff", dim)),
+        shortcut_pair(&k(A::EnterOpen), "Open", &k(A::EnterSave), "Save", col, 0),
+        shortcut_pair(&k(A::EnterExit), "Exit", &k(A::EnterSearch), "Find", col, 0),
+        // ⚠️ Help は**グリッドに居るのにフォールバックを持つ**唯一の行（`^H / F1`）。
+        //    幅 44 で 34 桁に収まることを網で確かめてある。
+        shortcut_pair(
+            &k(A::EnterReplace),
+            "Replace",
+            &k(A::EnterHelp),
+            "Help",
+            col,
+            0,
+        ),
+        shortcut_pair(&k(A::Undo), "Undo", &k(A::Redo), "Redo", col, 0),
+        shortcut_pair(
+            &k(A::DeleteLine),
+            "Cutline",
+            &k(A::EnterGoto),
+            "Jump",
+            col,
+            0,
+        ),
+        shortcut_pair(&k(A::Home), "Ln start", &k(A::End), "Ln end", col, 0),
+        // 🚨 **この 2 つだけ `narrow_primary`。** 既定で主を 2 本持つ
+        //    （`Alt+\` と `Ctrl+Home`）ので、全部出すと 2 列から溢れて折り返す。
+        shortcut_pair(
+            &narrow_primary(editor, A::FileTop),
+            "File top",
+            &narrow_primary(editor, A::FileBottom),
+            "File end",
+            col,
+            0,
+        ),
+        Line::from(format!("{}  → Browse folder tree", k(A::EnterBrowse))),
+        Line::from(format!("{}  → Glide mode (vim)", k(A::EnterGlide))),
+        // 🚨 **帯 `F1 Help  F2 Md  F3 Brws  F4 Diff` は消した。**
+        //    ⭐ F1 / F2 / F3 は上の行が `^H / F1` の形で**既に出している**ので、
+        //    残すと**同じ画面が 2 か所で同じことを言い、片方だけ腐る**（この issue そのもの）。
+        //    ⚠️ ただし **F4（diff review）だけは他のどの行にも出ていなかった**ので、
+        //    自分の行を与えた —— 消すと押せる物の案内が 1 つ減る。
+        Line::from(format!("{}  → Diff review", k(A::ToggleDiffReview))),
         Line::from(""),
         Line::from(Span::styled("── View ──────────────────", hdr)),
-        shortcut_pair("^L", "LineNo", "^W", "Wrap", col, 0),
-        shortcut_pair("^U", "Footer", "^P", "Cmd Pal", col, 0),
-        Line::from("^D  → Markdown preview"),
+        shortcut_pair(
+            &k(A::ToggleLineNumbers),
+            "LineNo",
+            &k(A::ToggleWrap),
+            "Wrap",
+            col,
+            0,
+        ),
+        shortcut_pair(
+            &k(A::ToggleFooter),
+            "Footer",
+            &k(A::EnterCommand),
+            "Cmd Pal",
+            col,
+            0,
+        ),
+        Line::from(format!(
+            "{}  → Markdown preview",
+            k(A::ToggleMarkdownPreview)
+        )),
         Line::from(""),
         Line::from(Span::styled("── Glide: Move ────────────", hdr)),
         shortcut_pair("h/←", "Left", "l/→", "Right", col, 0),
@@ -310,6 +365,40 @@ fn render_help_narrow(editor: &mut EditorState, f: &mut Frame, area: Rect) {
 ///
 /// ⚠️ **鍵は全部出す**（`Ctrl+B / F3`）。帯が 1 本だけ出すのとは役目が違う。
 /// ⚠️ 鍵を 1 本も持たないアクションは**行ごと落とす** —— 押せない案内を残さない。
+/// 狭い Help の**鍵の綴りだけ**を、いま効いている鍵から作る（`^D / F2`）。
+///
+/// ⭐ `help_key_line`（広い版）との違いは 2 つだけ —— 綴りが `Caret`、そして
+/// **桁揃えをしない**（`shortcut_pair` が 2 列に並べるので、説明は呼び出し側が持つ）。
+///
+/// ⚠️ **フォールバックが 2 本目になる行は 1 つだけ**（`^H / F1` Help）で、
+/// 幅 44 なら 34 桁に収まる —— 実際に描いて測った。
+///
+/// 🚨 **ただし「2 本目＝フォールバック」ではない。** `FileTop` / `FileBottom` は
+/// **主を 2 本**持つ（`Alt+\` と `Ctrl+Home`）ので、ここを通すと狭い 2 列から溢れて
+/// **行が折り返す**（2026-08-28 に実際に描いて見つけた —— 網は文字列を探すだけなので
+/// 折り返しても緑だった）。∴ その 2 つは `narrow_primary` を使う。
+fn narrow_keys(editor: &EditorState, action: crate::shortcuts::EditorAction) -> String {
+    crate::shortcuts::keys_for(
+        &editor.shortcut_map,
+        action,
+        crate::shortcuts::KeyStyle::Caret,
+    )
+    .join(" / ")
+}
+
+/// 狭い面で**主の 1 本だけ**を出す。別名を複数持つ行のための口。
+///
+/// ⭐ 広い面は `Alt+\ / Ctrl+Home` と両方出せる（桁が在る）。狭い面は出せない。
+/// ∴ **落とすのは別名であって、押せる鍵の案内ではない** —— 主は必ず出る。
+fn narrow_primary(editor: &EditorState, action: crate::shortcuts::EditorAction) -> String {
+    crate::shortcuts::key_for(
+        &editor.shortcut_map,
+        action,
+        crate::shortcuts::KeyStyle::Caret,
+    )
+    .unwrap_or_default()
+}
+
 fn help_key_line(
     editor: &EditorState,
     actions: &[crate::shortcuts::EditorAction],
@@ -328,7 +417,14 @@ fn help_key_line(
         keys.append(&mut k);
     }
     // 既定の見た目（2 桁下げ + 16 桁の欄）に合わせる。
-    Some(format!("  {:<16}{}", keys.join(" / "), text))
+    // 🚨 **16 桁は下限であって上限ではない。** 鍵が 16 桁を超えると、固定幅のままでは
+    //    詰め物がゼロになり、**説明が鍵にくっつく**（`Alt+\ / Ctrl+HomeFile top`）。
+    //    ⭐ 2026-08-28 に `file_top` を鍵から作った回で実際に出した —— 欄に収まっていた
+    //    間は起きず、**行が長くなって初めて現れる**ので、それまで誰も踏まなかった。
+    // ⚠️ 16 桁に収まる行は 1 文字も変わらない（陽性対照が固定している）。
+    let keys = keys.join(" / ");
+    let width = 16.max(UnicodeWidthStr::width(keys.as_str()) + 1);
+    Some(format!("  {keys:<width$}{text}"))
 }
 
 fn render_help_wide(editor: &mut EditorState, f: &mut Frame, area: Rect) {
@@ -408,9 +504,37 @@ fn render_help_wide(editor: &mut EditorState, f: &mut Frame, area: Rect) {
         )
         .map(Line::from)
         .unwrap_or_else(|| Line::from("")),
-        Line::from("  Ctrl+A / E      Line start / end"),
-        Line::from("  Alt+\\ / Alt+/   File top / bottom"),
-        Line::from("  Ctrl+Home/End   The same, without Alt"),
+        // 🚨 **ここは 2026-08-28 までべた書きだった**（`#9` の取りこぼし）——
+        //    `home` / `end` / `file_top` / `file_bottom` は `action_from_name` が
+        //    受けるので**上書きできる**のに、Help は固定の綴りを出し続けていた。
+        help_key_line(
+            editor,
+            &[
+                crate::shortcuts::EditorAction::Home,
+                crate::shortcuts::EditorAction::End,
+            ],
+            "Line start / end",
+        )
+        .map(Line::from)
+        .unwrap_or_else(|| Line::from("")),
+        // ⭐ `Ctrl+Home/End  The same, without Alt` の行は**消した** ——
+        //    `FileTop` / `FileBottom` は既定で `Alt+\` と `Ctrl+Home` の**両方**を
+        //    持っており、鍵から作れば下の 2 行が最初から両方を出す。
+        //    ∴ 別行で言い直すと、**同じことを 2 か所で言って片方が腐る**。
+        help_key_line(
+            editor,
+            &[crate::shortcuts::EditorAction::FileTop],
+            "File top",
+        )
+        .map(Line::from)
+        .unwrap_or_else(|| Line::from("")),
+        help_key_line(
+            editor,
+            &[crate::shortcuts::EditorAction::FileBottom],
+            "File bottom",
+        )
+        .map(Line::from)
+        .unwrap_or_else(|| Line::from("")),
         help_key_line(
             editor,
             &[crate::shortcuts::EditorAction::EnterGlide],
@@ -427,7 +551,13 @@ fn render_help_wide(editor: &mut EditorState, f: &mut Frame, area: Rect) {
         )
         .map(Line::from)
         .unwrap_or_else(|| Line::from("")),
-        Line::from("  Ctrl+W          Toggle line wrap"),
+        help_key_line(
+            editor,
+            &[crate::shortcuts::EditorAction::ToggleWrap],
+            "Toggle line wrap",
+        )
+        .map(Line::from)
+        .unwrap_or_else(|| Line::from("")),
         help_key_line(
             editor,
             &[crate::shortcuts::EditorAction::ToggleFooter],
@@ -442,7 +572,13 @@ fn render_help_wide(editor: &mut EditorState, f: &mut Frame, area: Rect) {
         )
         .map(Line::from)
         .unwrap_or_else(|| Line::from("")),
-        Line::from("  F4              Toggle diff review"),
+        help_key_line(
+            editor,
+            &[crate::shortcuts::EditorAction::ToggleDiffReview],
+            "Toggle diff review",
+        )
+        .map(Line::from)
+        .unwrap_or_else(|| Line::from("")),
         Line::from(""),
         Line::from(Span::styled("=== Global ===", yel)),
         help_key_line(
@@ -692,8 +828,16 @@ mod help_follows_the_keymap {
         editor
     }
 
-    fn help_text(editor: &mut EditorState) -> String {
-        let (w, h) = (100u16, 60u16);
+    /// ⚠️ **広い版と狭い版は別の関数**（`render_help` は `width < 50` で分ける）ので、
+    /// **両方**撃つ —— 片方だけ直して緑になる形を潰す。
+    ///
+    /// 🚨 **この網は 2026-08-28 まで幅 100 だけを描いていた。** `#9` を閉じたとき
+    /// `render_help_wide` の 15 行は鍵から作るようになったが、`render_help_narrow` の
+    /// 36 行はべた書きのまま残り、**網はそれを一度も描かなかった**。
+    /// ⭐ 同じファイルの `welcome_notice_tests` は最初から両幅を回している ——
+    /// **ルールは在ったのに、この網だけがそれを破っていた。**
+    fn help_text_at(editor: &mut EditorState, w: u16) -> String {
+        let h = 60u16;
         let backend = TestBackend::new(w, h);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal
@@ -708,6 +852,17 @@ mod help_follows_the_keymap {
             })
             .collect::<Vec<_>>()
             .join("\n")
+    }
+
+    /// 広い版（`Ctrl+S` の綴り）。
+    fn help_text(editor: &mut EditorState) -> String {
+        help_text_at(editor, 100)
+    }
+
+    /// 狭い版（`^S` の綴り）。**幅は welcome の網と同じ 44** —— `render_help` の
+    /// 分岐は `width < 50` なので、これは確実に `render_help_narrow` を通る。
+    fn narrow_help_text(editor: &mut EditorState) -> String {
+        help_text_at(editor, 44)
     }
 
     /// 🚨 **本丸** —— 上書きすると Help の該当行が変わる。
@@ -766,6 +921,101 @@ mod help_follows_the_keymap {
         }
     }
 
+    /// 🚨 **広い版にも取りこぼしが在る。** close コメントは「15 行」と言っていたが、
+    /// `action_from_name` が受ける名前には `toggle_wrap` / `toggle_diff_review` /
+    /// `home` / `end` / `file_top` / `file_bottom` も在り、**その 6 つは広い Help でも
+    /// べた書きのまま**（`Ctrl+W` / `F4` / `Ctrl+A / E` / `Alt+\ / Alt+/`）。
+    /// ⭐ 上書きできる行は全部、鍵から作る。
+    #[test]
+    fn help_follows_the_remaining_overrides() {
+        for (name, want, stale) in [
+            ("toggle_wrap", "F8", "Ctrl+W"),
+            ("toggle_diff_review", "F10", "F4"),
+        ] {
+            let mut e = editor_with_keys(&[(name, &want.to_lowercase())]);
+            let text = help_text(&mut e);
+            assert!(
+                text.contains(want),
+                "{name} を上書きしても Help が {want} と言わない"
+            );
+            assert!(
+                !text.contains(stale),
+                "{name} を上書きしたのに Help が古い {stale} を出したまま"
+            );
+        }
+    }
+
+    /// 🚨 **本丸（狭い版）** —— スマホ / argo の中はこちらが出る。
+    /// ⭐ 「埋め込みが本体」（2026-08-20）と決めた側なので、**むしろこちらが本丸**。
+    #[test]
+    fn narrow_help_follows_an_override() {
+        let plain = narrow_help_text(&mut editor_with_keys(&[]));
+        assert!(plain.contains("^S"), "既定の狭い Help が違う");
+
+        let mut e = editor_with_keys(&[("enter_save", "f9")]);
+        let text = narrow_help_text(&mut e);
+        assert!(
+            text.contains("F9"),
+            "上書きしたのに狭い Help が追随していない"
+        );
+        assert!(
+            !text.contains("^S"),
+            "上書きで消えたはずの既定の鍵が狭い Help に残っている"
+        );
+    }
+
+    /// ⭐ 狭い版でも**主とフォールバックの両方**が出る。
+    /// ⚠️ 幅が無いので綴りは `^B / F3`（Caret）になる —— **形は同じ、綴りだけ狭い**。
+    #[test]
+    fn narrow_help_shows_the_primary_and_the_fallback() {
+        let plain = narrow_help_text(&mut editor_with_keys(&[]));
+        assert!(
+            plain.contains("^B / F3"),
+            "狭い Help で主とフォールバックが並んでいない"
+        );
+
+        let mut e = editor_with_keys(&[("enter_browse", "f6")]);
+        let text = narrow_help_text(&mut e);
+        assert!(
+            text.contains("F6 / F3"),
+            "上書き後に「利用者の鍵 / フォールバック」になっていない（狭い版）"
+        );
+    }
+
+    /// 🚨 **陽性対照（狭い版）。** 上書きが無ければ既定の鍵を出す。
+    /// これが無いと「全部消す」実装が緑で通る。
+    ///
+    /// ⚠️ **Markdown プレビューをここに入れてある** —— 狭い面は元々 `^D` と
+    /// `F2 Md` を**べた書きで 2 箇所**に持っており、上書きすると両方が嘘になった。
+    #[test]
+    fn without_overrides_the_narrow_help_shows_the_default_keys() {
+        let text = narrow_help_text(&mut editor_with_keys(&[]));
+        for want in ["^O", "^S", "^X", "^D / F2", "^H / F1", "^B / F3"] {
+            assert!(text.contains(want), "{want} が狭い Help から消えた");
+        }
+    }
+
+    /// 🚨 **Markdown プレビューの鍵を上書きしたら、狭い Help も追随する。**
+    /// ⭐ 狭い版はこれを `^D → Markdown preview` と `F2 Md` の**2 箇所**で言っていた
+    /// ので、片方だけ直すと**同じ画面が自分と食い違う**。
+    #[test]
+    fn the_narrow_help_follows_a_markdown_override() {
+        let mut e = editor_with_keys(&[("toggle_markdown", "f7")]);
+        let text = narrow_help_text(&mut e);
+        assert!(
+            text.contains("F7"),
+            "toggle_markdown を上書きしたのに狭い Help が追随していない"
+        );
+        assert!(
+            !text.contains("^D"),
+            "上書きで消えたはずの ^D が狭い Help に残っている"
+        );
+        assert!(
+            !text.contains("F2 Md"),
+            "帯行の `F2 Md` がべた書きのまま残っている（同じ画面が自分と食い違う）"
+        );
+    }
+
     /// ⚠️ **`[keys]` で上書きできない行は触らない。** Glide のモーションは
     /// `action_from_name` の対象外なので、べた書きのままで**嘘をついていない**。
     /// ⭐ ここが動いたら、直す範囲が広がりすぎている合図。
@@ -778,6 +1028,85 @@ mod help_follows_the_keymap {
             assert!(
                 overridden.contains(motion),
                 "{motion} が上書きで変わった（対象外の行に手が入っている）"
+            );
+        }
+    }
+
+    /// 🚨 **広い面で、鍵と説明が必ず離れている。**
+    ///
+    /// ⭐ 欄は 16 桁だが、鍵から作るようになって **16 桁を超える行が生まれた**
+    /// （`Alt+\ / Ctrl+Home` = 17 桁）。固定幅のままだと詰め物がゼロになり、
+    /// `Alt+\ / Ctrl+HomeFile top` と**くっついて読めなくなる**（2026-08-28 に実際に出した）。
+    /// ⚠️ **上の `contains` 系はこれも全部緑にする** —— 探しているのは部分文字列で、
+    /// 間に空白が在るかを見ていないから。
+    #[test]
+    fn wide_help_never_glues_a_key_to_its_text() {
+        for pairs in [vec![], vec![("file_top", "f11")]] {
+            let text = help_text(&mut editor_with_keys(&pairs));
+            for line in text.lines() {
+                let body = line.trim_end();
+                if body.trim().is_empty() {
+                    continue;
+                }
+                // 鍵の綴りは英数と `+ / \ ^` で終わる。説明は必ず空白の後から始まる。
+                for want in ["File top", "File bottom", "Line start / end"] {
+                    if let Some(at) = body.find(want) {
+                        assert!(
+                            at > 0 && body.as_bytes()[at - 1] == b' ',
+                            "`{want}` が鍵にくっついている: {body:?}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// 🚨 **狭い面の 2 列が折り返さない。**
+    ///
+    /// ⭐ **この網が無かったから、鍵から作った初回に折り返しを出した**（2026-08-28）——
+    /// `FileTop` は既定で**主を 2 本**持つ（`Alt+\` と `Ctrl+Home`）ので、
+    /// 全部出すと左列だけで 13 桁になり、行が 2 行に割れた:
+    ///
+    /// ```text
+    /// Alt+\ / ^Home File top         Alt+/ / ^End
+    /// File end                       ← 折り返した残り
+    /// ```
+    ///
+    /// ⚠️ **上の `contains` 系の網は、折り返しても全部緑になる** ——
+    /// 探しているのは文字列で、**どの行に在るかを見ていない**から。
+    /// ∴ 「在ること」ではなく「**同じ行に在ること**」を固定する。
+    #[test]
+    fn narrow_help_pairs_stay_on_one_row() {
+        let text = narrow_help_text(&mut editor_with_keys(&[]));
+        for (left, right) in [
+            ("Open", "Save"),
+            ("Exit", "Find"),
+            ("Replace", "Help"),
+            ("Undo", "Redo"),
+            ("Cutline", "Jump"),
+            ("Ln start", "Ln end"),
+            ("File top", "File end"),
+            ("LineNo", "Wrap"),
+            ("Footer", "Cmd Pal"),
+        ] {
+            assert!(
+                text.lines().any(|l| l.contains(left) && l.contains(right)),
+                "`{left}` と `{right}` が同じ行に無い（狭い 2 列から溢れて折り返している）"
+            );
+        }
+    }
+
+    /// ⚠️ **陰性対照（狭い版）。** 狭い面の Glide 行も `[keys]` の対象外。
+    /// ⭐ 狭い版を鍵から作り直すときに、**ここまで書き換えたら範囲が広すぎる**。
+    #[test]
+    fn narrow_glide_motions_are_left_alone() {
+        let plain = narrow_help_text(&mut editor_with_keys(&[]));
+        let overridden = narrow_help_text(&mut editor_with_keys(&[("enter_save", "f9")]));
+        for motion in ["h/←", "gg", "dd"] {
+            assert!(plain.contains(motion), "{motion} が狭い Help に無い");
+            assert!(
+                overridden.contains(motion),
+                "{motion} が上書きで変わった（対象外の行に手が入っている・狭い版）"
             );
         }
     }

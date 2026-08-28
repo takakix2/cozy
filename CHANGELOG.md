@@ -1,5 +1,37 @@
 # Changelog
 
+## v0.2.31
+
+### Fixed
+
+- **Help now tells the truth about your keys on a narrow screen too.** If you remap
+  anything under `[keys]`, Help has to be the place that says so — the footer only has
+  room for three to five slots, so Help is where the whole picture lives, and the people
+  most likely to open it are exactly the people who changed something.
+
+  v0.2.27 made that true for the wide layout. It was never true for the narrow one:
+  below 50 columns cozy draws a different, two-column Help, and every key in it was a
+  hard-coded string. Remap `toggle_markdown` and the wide Help followed you while the
+  narrow Help kept saying `^D`. **This is the layout phones and embedded terminals get**,
+  so the face that lied was the one most often read on a small screen.
+
+  ⭐ Six rows in the *wide* layout were hard-coded too, and had been missed: line wrap,
+  diff review, line start/end, and file top/bottom. All of them are remappable. Every
+  row that `[keys]` can move is now built from the live keymap, on both layouts. Rows it
+  cannot move — the Glide motions (`hjkl`, `w b e`, `dd`) — stay as they are, because
+  those were never lying.
+
+### Changed
+
+- **The narrow Help lost its `F1 Help  F2 Md  F3 Brws  F4 Diff` strip.** The function
+  keys it listed are now shown on the rows themselves (`^H / F1`, `^D / F2`, `^B / F3`),
+  so keeping the strip meant one screen saying the same thing twice — and only one half
+  would have followed a remap. Diff review, which had no row of its own, gained one.
+- **The narrow Help spells Alt keys as `Alt+\` rather than `M-\`.** The spelling now
+  comes from the same place the footer's does instead of being written by hand.
+- The wide Help shows file top and bottom on their own rows, each listing both of its
+  keys (`Alt+\ / Ctrl+Home`), which retires the separate "the same, without Alt" line.
+
 ## v0.2.30
 
 ### Changed
