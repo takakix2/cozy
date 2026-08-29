@@ -1,5 +1,41 @@
 # Changelog
 
+## v0.2.32
+
+### Changed
+
+- **Help lists one key per row, and a `/` in it is always a key you can press.** In a
+  screen made of key names, the slash had been doing three jobs at once: separating two
+  keys that do the same thing (`Ctrl+B / F3`), pairing two descriptions with two keys
+  (`Undo / Redo`), and being a key in its own right (`Alt+/`). The row that made this
+  unreadable was `Alt+\ / Alt+/    File top / bottom` — it ends in a slash, and nothing
+  on the line tells you whether that slash is a separator or part of the key beside it.
+
+  Rows that carried two meanings are now two rows: `Ctrl+Z  Undo` and `Ctrl+Y  Redo`,
+  `Ctrl+A  Line start` and `Ctrl+E  Line end`. Where one action genuinely has two keys,
+  they are joined with `·` instead — `Ctrl+B · F3`, `Alt+/ · Ctrl+End`. ⭐ So every
+  slash left on the screen is a key, and there is one rule to read instead of three.
+
+- **The Glide sections are split the same way.** `d / c / y    Delete / Change / Yank +
+  motion` asked you to match three keys to three words by position; it is now
+  `d <motion>  Delete`, `c <motion>  Change`, `y <motion>  Yank`, one per row. Movement
+  reads the same way: `h · ←  Move left`, then `j`, `k`, `l` on their own lines. ⭐ Help
+  is where people pick up vim-style motion, so the rows are laid out to be learned
+  rather than counted. This makes the wide Help longer — 60 rows to 91 — which costs
+  nothing mechanically, because Help has always scrolled.
+
+### Fixed
+
+- **Two rows of the wide Help had their descriptions out of line with every other row.**
+  File top and file bottom each list two keys, and that pair is one column wider than
+  the key field was, so those two rows — and only those two — pushed their text to the
+  right. The field now fits the longest default key.
+
+⚠️ The shortcut bar along the bottom of the screen still uses `/` as a separator
+(`gg/G Top/Bottom`). It is a different kind of surface — it has no room to grow and
+silently truncates when it runs out — so it is being handled separately rather than
+given the same answer.
+
 ## v0.2.31
 
 ### Fixed

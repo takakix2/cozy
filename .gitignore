@@ -2,6 +2,9 @@
 *.png
 # README assets are tracked; stray screenshots elsewhere stay ignored
 !/docs/assets/*.png
+# Article figures are tracked too, but stay out of the clean snapshot: the
+# allowlist copies docs/assets/ only, so these never reach GitHub or crates.io.
+!/docs/announcements/assets/*.png
 .DS_Store
 
 # Editor / IDE

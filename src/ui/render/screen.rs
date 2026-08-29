@@ -326,15 +326,21 @@ fn render_help_narrow(editor: &mut EditorState, f: &mut Frame, area: Rect) {
         )),
         Line::from(""),
         Line::from(Span::styled("── Glide: Move ────────────", hdr)),
-        shortcut_pair("h/←", "Left", "l/→", "Right", col, 0),
-        shortcut_pair("j/↓", "Down", "k/↑", "Up", col, 0),
+        // 🚨 **`/` を区切りに使わない**（`#12`）。別名は ` · `、意味が 2 つある
+        //    ものは**セルを分ける** —— 狭い面は 2 列グリッドなので、
+        //    ⭐ 割る先は「行」ではなく「セル」で足りる。
+        shortcut_pair("h·←", "Left", "l·→", "Right", col, 0),
+        shortcut_pair("j·↓", "Down", "k·↑", "Up", col, 0),
         shortcut_pair("w", "Fwd wrd", "b", "Bck wrd", col, 0),
         shortcut_pair("e", "Wrd end", "0", "Ln start", col, 0),
         shortcut_pair("$", "Ln end", "^", "1st char", col, 0),
         shortcut_pair("gg", "Top", "G", "Bottom", col, 0),
-        shortcut_pair("H", "Hi", "L", "Low", col, 0),
-        shortcut_pair("M", "Mid", "+/-", "Nxt/Prv", col, 0),
-        Line::from(Span::styled("> / < / t / T  char jump", dim)),
+        shortcut_pair("H", "Scr hi", "M", "Scr mid", col, 0),
+        // ⚠️ `+/-  Nxt/Prv` は**両方の欄が `/` で束ねられていた**（鍵も説明も）。
+        shortcut_pair("L", "Scr low", "+", "Next ln", col, 0),
+        shortcut_pair("-", "Prev ln", ">", "Nxt char", col, 0),
+        shortcut_pair("<", "Prv char", "t", "Bef char", col, 0),
+        shortcut_pair("T", "Aft char", "", "", col, 0),
         Line::from(""),
         Line::from(Span::styled("── Glide: Edit ────────────", hdr)),
         shortcut_pair("i", "Insert", "a", "After", col, 0),
@@ -344,7 +350,7 @@ fn render_help_narrow(editor: &mut EditorState, f: &mut Frame, area: Rect) {
         shortcut_pair("~", "Case", "J", "Join", col, 0),
         Line::from(""),
         Line::from(Span::styled("── Glide: Ops ─────────────", hdr)),
-        Line::from(Span::styled("d/c/y + motion:", dim)),
+        Line::from(Span::styled("d · c · y take a motion:", dim)),
         shortcut_pair("d", "Delete", "c", "Change", col, 0),
         shortcut_pair("y", "Yank", "dd", "Delline", col, 0),
         shortcut_pair("cc", "Chgline", "yy", "Yank ln", col, 0),
@@ -383,7 +389,7 @@ fn narrow_keys(editor: &EditorState, action: crate::shortcuts::EditorAction) -> 
         action,
         crate::shortcuts::KeyStyle::Caret,
     )
-    .join(" / ")
+    .join(" · ")
 }
 
 /// 狭い面で**主の 1 本だけ**を出す。別名を複数持つ行のための口。
@@ -399,31 +405,38 @@ fn narrow_primary(editor: &EditorState, action: crate::shortcuts::EditorAction) 
     .unwrap_or_default()
 }
 
+/// Help の 1 行を、**いま効いている鍵**から作る。
+///
+/// 🚨 **アクションは 1 つしか取らない**（`#12`・2026-08-29）。以前は複数取って
+/// `Ctrl+Z / Ctrl+Y  Undo / Redo` を作れたが、⭐ **その形は `/` に 2 つ目の意味
+/// （説明の対応関係）を与えていた** —— 鍵の区切りと同じ字で、読む側が位置で
+/// 突き合わせる羽目になる。∴ **束ねられないように型で塞いだ**。
+///
+/// ⚠️ 残る `/` はキー名の `/`（`Alt+/`）だけ。別名の区切りは ` · `。
+/// ⚠️ 鍵を 1 本も持たないアクションは `None` ＝ **行ごと落とす**（押せない案内を残さない）。
 fn help_key_line(
     editor: &EditorState,
-    actions: &[crate::shortcuts::EditorAction],
+    action: crate::shortcuts::EditorAction,
     text: &str,
 ) -> Option<String> {
-    let mut keys = Vec::new();
-    for a in actions {
-        let mut k = crate::shortcuts::keys_for(
-            &editor.shortcut_map,
-            *a,
-            crate::shortcuts::KeyStyle::Spelled,
-        );
-        if k.is_empty() {
-            return None;
-        }
-        keys.append(&mut k);
+    let keys = crate::shortcuts::keys_for(
+        &editor.shortcut_map,
+        action,
+        crate::shortcuts::KeyStyle::Spelled,
+    );
+    if keys.is_empty() {
+        return None;
     }
-    // 既定の見た目（2 桁下げ + 16 桁の欄）に合わせる。
-    // 🚨 **16 桁は下限であって上限ではない。** 鍵が 16 桁を超えると、固定幅のままでは
-    //    詰め物がゼロになり、**説明が鍵にくっつく**（`Alt+\ / Ctrl+HomeFile top`）。
+    // 既定の見た目（2 桁下げ + 18 桁の欄）に合わせる。
+    // ⭐ **欄は 18 桁**（2026-08-29）—— 既定でいちばん長い鍵 `Alt+\ · Ctrl+Home`（17 桁）が
+    //    収まる幅。16 桁だった間は**この 2 行だけ説明の位置がずれていた**（`#12` の見出しの行）。
+    // 🚨 **18 桁は下限であって上限ではない。** 鍵が 18 桁を超えると、固定幅のままでは
+    //    詰め物がゼロになり、**説明が鍵にくっつく**（`Alt+\ · Ctrl+HomeFile top`）。
     //    ⭐ 2026-08-28 に `file_top` を鍵から作った回で実際に出した —— 欄に収まっていた
     //    間は起きず、**行が長くなって初めて現れる**ので、それまで誰も踏まなかった。
     // ⚠️ 16 桁に収まる行は 1 文字も変わらない（陽性対照が固定している）。
-    let keys = keys.join(" / ");
-    let width = 16.max(UnicodeWidthStr::width(keys.as_str()) + 1);
+    let keys = keys.join(" · ");
+    let width = 18.max(UnicodeWidthStr::width(keys.as_str()) + 1);
     Some(format!("  {keys:<width$}{text}"))
 }
 
@@ -436,6 +449,18 @@ fn render_help_wide(editor: &mut EditorState, f: &mut Frame, area: Rect) {
         .fg(Color::Yellow)
         .add_modifier(Modifier::BOLD);
 
+    use crate::shortcuts::EditorAction as A;
+    // 🚨 **1 行 = 1 鍵 = 1 意味**（`#12`）。`help_key_line` はアクションを 1 つしか
+    //    取らないので、`Undo / Redo` の形は**もう作れない**。
+    let kl = |a: A, text: &str| {
+        help_key_line(editor, a, text)
+            .map(Line::from)
+            .unwrap_or_else(|| Line::from(""))
+    };
+    // ⚠️ Glide のモーションは `action_from_name` の対象外 ＝ 上書きできないので、
+    //    べた書きのままで**嘘をついていない**。欄は `help_key_line` と同じ 2 + 18 桁。
+    let raw = |keys: &str, text: &str| Line::from(format!("  {keys:<18}{text}"));
+
     let lines = vec![
         Line::from(Span::styled("cozy — Keyboard Shortcuts", cyan)),
         Line::from(""),
@@ -446,186 +471,92 @@ fn render_help_wide(editor: &mut EditorState, f: &mut Frame, area: Rect) {
         Line::from(Span::styled("Numbers repeat:  3j  5w  3dd", gray)),
         Line::from(""),
         Line::from(Span::styled("=== Edit Mode ===", yel)),
-        help_key_line(
-            editor,
-            &[crate::shortcuts::EditorAction::EnterOpen],
-            "Open file",
-        )
-        .map(Line::from)
-        .unwrap_or_else(|| Line::from("")),
-        help_key_line(
-            editor,
-            &[crate::shortcuts::EditorAction::EnterBrowse],
-            "Browse folder tree (F3 for tmux)",
-        )
-        .map(Line::from)
-        .unwrap_or_else(|| Line::from("")),
-        help_key_line(editor, &[crate::shortcuts::EditorAction::EnterSave], "Save")
-            .map(Line::from)
-            .unwrap_or_else(|| Line::from("")),
-        help_key_line(editor, &[crate::shortcuts::EditorAction::EnterExit], "Exit")
-            .map(Line::from)
-            .unwrap_or_else(|| Line::from("")),
-        help_key_line(
-            editor,
-            &[crate::shortcuts::EditorAction::EnterSearch],
-            "Find",
-        )
-        .map(Line::from)
-        .unwrap_or_else(|| Line::from("")),
-        help_key_line(
-            editor,
-            &[crate::shortcuts::EditorAction::EnterReplace],
-            "Replace",
-        )
-        .map(Line::from)
-        .unwrap_or_else(|| Line::from("")),
-        help_key_line(
-            editor,
-            &[
-                crate::shortcuts::EditorAction::Undo,
-                crate::shortcuts::EditorAction::Redo,
-            ],
-            "Undo / Redo",
-        )
-        .map(Line::from)
-        .unwrap_or_else(|| Line::from("")),
-        help_key_line(
-            editor,
-            &[crate::shortcuts::EditorAction::DeleteLine],
-            "Cut line",
-        )
-        .map(Line::from)
-        .unwrap_or_else(|| Line::from("")),
-        help_key_line(
-            editor,
-            &[crate::shortcuts::EditorAction::EnterGoto],
-            "Jump to line",
-        )
-        .map(Line::from)
-        .unwrap_or_else(|| Line::from("")),
-        // 🚨 **ここは 2026-08-28 までべた書きだった**（`#9` の取りこぼし）——
-        //    `home` / `end` / `file_top` / `file_bottom` は `action_from_name` が
-        //    受けるので**上書きできる**のに、Help は固定の綴りを出し続けていた。
-        help_key_line(
-            editor,
-            &[
-                crate::shortcuts::EditorAction::Home,
-                crate::shortcuts::EditorAction::End,
-            ],
-            "Line start / end",
-        )
-        .map(Line::from)
-        .unwrap_or_else(|| Line::from("")),
-        // ⭐ `Ctrl+Home/End  The same, without Alt` の行は**消した** ——
-        //    `FileTop` / `FileBottom` は既定で `Alt+\` と `Ctrl+Home` の**両方**を
-        //    持っており、鍵から作れば下の 2 行が最初から両方を出す。
-        //    ∴ 別行で言い直すと、**同じことを 2 か所で言って片方が腐る**。
-        help_key_line(
-            editor,
-            &[crate::shortcuts::EditorAction::FileTop],
-            "File top",
-        )
-        .map(Line::from)
-        .unwrap_or_else(|| Line::from("")),
-        help_key_line(
-            editor,
-            &[crate::shortcuts::EditorAction::FileBottom],
-            "File bottom",
-        )
-        .map(Line::from)
-        .unwrap_or_else(|| Line::from("")),
-        help_key_line(
-            editor,
-            &[crate::shortcuts::EditorAction::EnterGlide],
-            "Enter Glide mode",
-        )
-        .map(Line::from)
-        .unwrap_or_else(|| Line::from("")),
+        kl(A::EnterOpen, "Open file"),
+        kl(A::EnterBrowse, "Browse folder tree (F3 for tmux)"),
+        kl(A::EnterSave, "Save"),
+        kl(A::EnterExit, "Exit"),
+        kl(A::EnterSearch, "Find"),
+        kl(A::EnterReplace, "Replace"),
+        kl(A::Undo, "Undo"),
+        kl(A::Redo, "Redo"),
+        kl(A::DeleteLine, "Cut line"),
+        kl(A::EnterGoto, "Jump to line"),
+        kl(A::Home, "Line start"),
+        kl(A::End, "Line end"),
+        // ⭐ `FileTop` / `FileBottom` は既定で**主を 2 本**持つ（`Alt+\` と `Ctrl+Home`）。
+        //    別名なので ` · ` で並ぶ —— 別行にすると説明を 2 か所で言うことになる。
+        kl(A::FileTop, "File top"),
+        kl(A::FileBottom, "File bottom"),
+        kl(A::EnterGlide, "Enter Glide mode"),
         Line::from(""),
         Line::from(Span::styled("=== View ===", yel)),
-        help_key_line(
-            editor,
-            &[crate::shortcuts::EditorAction::ToggleLineNumbers],
-            "Toggle line numbers",
-        )
-        .map(Line::from)
-        .unwrap_or_else(|| Line::from("")),
-        help_key_line(
-            editor,
-            &[crate::shortcuts::EditorAction::ToggleWrap],
-            "Toggle line wrap",
-        )
-        .map(Line::from)
-        .unwrap_or_else(|| Line::from("")),
-        help_key_line(
-            editor,
-            &[crate::shortcuts::EditorAction::ToggleFooter],
-            "Toggle footer",
-        )
-        .map(Line::from)
-        .unwrap_or_else(|| Line::from("")),
-        help_key_line(
-            editor,
-            &[crate::shortcuts::EditorAction::ToggleMarkdownPreview],
-            "Toggle Markdown preview",
-        )
-        .map(Line::from)
-        .unwrap_or_else(|| Line::from("")),
-        help_key_line(
-            editor,
-            &[crate::shortcuts::EditorAction::ToggleDiffReview],
-            "Toggle diff review",
-        )
-        .map(Line::from)
-        .unwrap_or_else(|| Line::from("")),
+        kl(A::ToggleLineNumbers, "Toggle line numbers"),
+        kl(A::ToggleWrap, "Toggle line wrap"),
+        kl(A::ToggleFooter, "Toggle footer"),
+        kl(A::ToggleMarkdownPreview, "Toggle Markdown preview"),
+        kl(A::ToggleDiffReview, "Toggle diff review"),
         Line::from(""),
         Line::from(Span::styled("=== Global ===", yel)),
-        help_key_line(
-            editor,
-            &[crate::shortcuts::EditorAction::EnterCommand],
-            "Command palette",
-        )
-        .map(Line::from)
-        .unwrap_or_else(|| Line::from("")),
-        help_key_line(
-            editor,
-            &[crate::shortcuts::EditorAction::EnterHelp],
-            "Help (F1 if Ctrl+H is taken)",
-        )
-        .map(Line::from)
-        .unwrap_or_else(|| Line::from("")),
+        kl(A::EnterCommand, "Command palette"),
+        kl(A::EnterHelp, "Help (F1 if Ctrl+H is taken)"),
         Line::from(""),
         Line::from(Span::styled("=== Glide Mode — Movement ===", yel)),
-        Line::from("  hjkl / arrows   Move cursor"),
-        Line::from("  w / b / e       Fwd / back / end of word"),
-        Line::from("  W / B / E       Same, WORD (whitespace)"),
-        Line::from("  0 / ^ / $       Ln start / first non-blank / ln end"),
-        Line::from("  gg / G          File top / bottom"),
-        Line::from("  H / M / L       Scr hi / mid / low"),
-        Line::from("  + / -           Next / prev line (first non-ws)"),
-        Line::from("  > / < <char>    Jump to next / prev char"),
-        Line::from("  t / T <char>    Jump just before / after char"),
-        Line::from("  . / ,           Repeat last char jump fwd / back"),
+        raw("h · ←", "Move left"),
+        raw("j · ↓", "Move down"),
+        raw("k · ↑", "Move up"),
+        raw("l · →", "Move right"),
+        raw("w", "Fwd a word"),
+        raw("b", "Back a word"),
+        raw("e", "End of word"),
+        raw("W", "Fwd a WORD (whitespace)"),
+        raw("B", "Back a WORD (whitespace)"),
+        raw("E", "End of WORD (whitespace)"),
+        raw("0", "Line start"),
+        raw("^", "First non-blank"),
+        raw("$", "Line end"),
+        raw("gg", "File top"),
+        raw("G", "File bottom"),
+        raw("H", "Screen high"),
+        raw("M", "Screen middle"),
+        raw("L", "Screen low"),
+        raw("+", "Next line (first non-ws)"),
+        raw("-", "Prev line (first non-ws)"),
+        raw("> <char>", "Jump to next char"),
+        raw("< <char>", "Jump to prev char"),
+        raw("t <char>", "Jump just before char"),
+        raw("T <char>", "Jump just after char"),
+        raw(".", "Repeat last char jump forward"),
+        raw(",", "Repeat last char jump back"),
         Line::from(""),
         Line::from(Span::styled("=== Glide Mode — Edit Entry ===", yel)),
-        Line::from("  i / I           Insert at cursor / line start"),
-        Line::from("  a / A           Append after cursor / line end"),
-        Line::from("  o / O           Open line below / above"),
+        raw("i", "Insert at cursor"),
+        raw("I", "Insert at line start"),
+        raw("a", "Append after cursor"),
+        raw("A", "Append at line end"),
+        raw("o", "Open line below"),
+        raw("O", "Open line above"),
         Line::from(""),
         Line::from(Span::styled("=== Glide Mode — Operators ===", yel)),
-        Line::from("  d / c / y       Delete / Change / Yank + motion"),
-        Line::from("  dd / cc / yy    Operate on whole line  (3dd = 3 lines)"),
-        Line::from("  D / C / Y       To end of line"),
+        raw("d <motion>", "Delete"),
+        raw("c <motion>", "Change"),
+        raw("y <motion>", "Yank"),
+        raw("dd", "Delete whole line  (3dd = 3 lines)"),
+        raw("cc", "Change whole line"),
+        raw("yy", "Yank whole line"),
+        raw("D", "Delete to end of line"),
+        raw("C", "Change to end of line"),
+        raw("Y", "Yank to end of line"),
         Line::from(""),
         Line::from(Span::styled("=== Glide Mode — Other ===", yel)),
-        Line::from("  x / X           Delete char at / before cursor"),
-        Line::from("  ~               Toggle case  (3~ = 3 chars)"),
-        Line::from("  J               Join line with next"),
-        Line::from("  p / P           Paste below / above"),
-        Line::from("  f               Enter Find mode"),
-        Line::from("  r               Enter Replace mode"),
-        Line::from("  Esc             Return to Edit mode"),
+        raw("x", "Delete char at cursor"),
+        raw("X", "Delete char before cursor"),
+        raw("~", "Toggle case  (3~ = 3 chars)"),
+        raw("J", "Join line with next"),
+        raw("p", "Paste below"),
+        raw("P", "Paste above"),
+        raw("f", "Enter Find mode"),
+        raw("r", "Enter Replace mode"),
+        raw("Esc", "Return to Edit mode"),
         Line::from(""),
     ];
 
@@ -836,8 +767,12 @@ mod help_follows_the_keymap {
     /// 36 行はべた書きのまま残り、**網はそれを一度も描かなかった**。
     /// ⭐ 同じファイルの `welcome_notice_tests` は最初から両幅を回している ——
     /// **ルールは在ったのに、この網だけがそれを破っていた。**
+    /// 🚨 **高さは中身より大きく取る。** `render_help_body` は 1 画面ぶんしか描かない
+    /// ので、⭐ **見切れた行は `contains` の網から黙って消える** ——「無い」と
+    /// 「画面の外に在る」が同じ顔になる。2026-08-29 に行を割って広い版が 60 行を
+    /// 超えたとき、実際に `d <motion>` が網から落ちた。
     fn help_text_at(editor: &mut EditorState, w: u16) -> String {
-        let h = 60u16;
+        let h = 140u16;
         let backend = TestBackend::new(w, h);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal
@@ -885,15 +820,15 @@ mod help_follows_the_keymap {
     fn help_shows_the_primary_and_the_fallback() {
         let plain = help_text(&mut editor_with_keys(&[]));
         assert!(
-            plain.contains("Ctrl+B / F3"),
+            plain.contains("Ctrl+B · F3"),
             "主とフォールバックが並んでいない"
         );
 
         let mut e = editor_with_keys(&[("enter_browse", "f6")]);
         let text = help_text(&mut e);
         assert!(
-            text.contains("F6 / F3"),
-            "上書き後に「利用者の鍵 / フォールバック」になっていない"
+            text.contains("F6 · F3"),
+            "上書き後に「利用者の鍵 · フォールバック」になっていない"
         );
     }
 
@@ -902,8 +837,9 @@ mod help_follows_the_keymap {
     ///
     /// ⚠️ **綴りは 2 か所で変わった**（意図的）—— 鍵から作るようになったので、
     /// **主が先・正式な綴り**で並ぶ:
-    /// `F2 / Ctrl+D` → `Ctrl+D / F2`（`Ctrl+D` が主で `F2` がフォールバック）、
-    /// `Ctrl+Z / Y` → `Ctrl+Z / Ctrl+Y`（手書きの短縮をやめた）。
+    /// `F2 / Ctrl+D` → `Ctrl+D · F2`（`Ctrl+D` が主で `F2` がフォールバック）、
+    /// `Ctrl+Z / Y` → **`Ctrl+Z` と `Ctrl+Y` の 2 行**（手書きの短縮をやめ、
+    /// さらに `#12` で行ごと割った）。
     /// ⭐ 手で書いていた間は、並びも短縮も**書いた人の気分**だった。
     #[test]
     fn without_overrides_help_shows_the_default_keys() {
@@ -912,10 +848,11 @@ mod help_follows_the_keymap {
             "Ctrl+O",
             "Ctrl+S",
             "Ctrl+X",
-            "Ctrl+Z / Ctrl+Y",
-            "Ctrl+H / F1",
-            "Ctrl+D / F2",
-            "Ctrl+B / F3",
+            "Ctrl+Z",
+            "Ctrl+Y",
+            "Ctrl+H · F1",
+            "Ctrl+D · F2",
+            "Ctrl+B · F3",
         ] {
             assert!(text.contains(want), "{want} が Help から消えた");
         }
@@ -970,15 +907,15 @@ mod help_follows_the_keymap {
     fn narrow_help_shows_the_primary_and_the_fallback() {
         let plain = narrow_help_text(&mut editor_with_keys(&[]));
         assert!(
-            plain.contains("^B / F3"),
+            plain.contains("^B · F3"),
             "狭い Help で主とフォールバックが並んでいない"
         );
 
         let mut e = editor_with_keys(&[("enter_browse", "f6")]);
         let text = narrow_help_text(&mut e);
         assert!(
-            text.contains("F6 / F3"),
-            "上書き後に「利用者の鍵 / フォールバック」になっていない（狭い版）"
+            text.contains("F6 · F3"),
+            "上書き後に「利用者の鍵 · フォールバック」になっていない（狭い版）"
         );
     }
 
@@ -990,7 +927,7 @@ mod help_follows_the_keymap {
     #[test]
     fn without_overrides_the_narrow_help_shows_the_default_keys() {
         let text = narrow_help_text(&mut editor_with_keys(&[]));
-        for want in ["^O", "^S", "^X", "^D / F2", "^H / F1", "^B / F3"] {
+        for want in ["^O", "^S", "^X", "^D · F2", "^H · F1", "^B · F3"] {
             assert!(text.contains(want), "{want} が狭い Help から消えた");
         }
     }
@@ -1023,7 +960,7 @@ mod help_follows_the_keymap {
     fn glide_motions_are_left_alone() {
         let plain = help_text(&mut editor_with_keys(&[]));
         let overridden = help_text(&mut editor_with_keys(&[("enter_save", "f9")]));
-        for motion in ["hjkl", "w / b / e"] {
+        for motion in ["gg", "Fwd a word"] {
             assert!(plain.contains(motion), "{motion} が既定の Help に無い");
             assert!(
                 overridden.contains(motion),
@@ -1049,7 +986,7 @@ mod help_follows_the_keymap {
                     continue;
                 }
                 // 鍵の綴りは英数と `+ / \ ^` で終わる。説明は必ず空白の後から始まる。
-                for want in ["File top", "File bottom", "Line start / end"] {
+                for want in ["File top", "File bottom", "Line start", "Line end"] {
                     if let Some(at) = body.find(want) {
                         assert!(
                             at > 0 && body.as_bytes()[at - 1] == b' ',
@@ -1059,6 +996,47 @@ mod help_follows_the_keymap {
                 }
             }
         }
+    }
+
+    /// 🚨 **広い面で、説明の欄が全部同じ桁から始まる。**
+    ///
+    /// ⭐ 欄は「いちばん長い既定の鍵が収まる幅」でなければならない。16 桁だった間、
+    /// `Alt+\ · Ctrl+Home`（17 桁）の 2 行**だけ**が欄からはみ出し、説明が右へずれていた
+    /// —— それが `#12` の見出しに出ていた行そのもの。
+    ///
+    /// ⚠️ **`wide_help_never_glues_a_key_to_its_text` はこれを緑にする** ——
+    /// あちらが見ているのは「空白が 1 つ在るか」で、**どの桁に在るかを見ていない**。
+    #[test]
+    fn wide_help_lines_up_its_description_column() {
+        let text = help_text(&mut editor_with_keys(&[]));
+        let mut cols = std::collections::BTreeMap::new();
+        for want in [
+            "Open file",
+            "Save",
+            "Undo",
+            "Line start",
+            "File top",
+            "File bottom",
+            "Toggle line numbers",
+            "Command palette",
+            "Move left",
+            "Delete whole line",
+        ] {
+            let line = text
+                .lines()
+                .find(|l| l.contains(want))
+                .unwrap_or_else(|| panic!("`{want}` の行が Help に無い"));
+            // 🚨 **`find` はバイト位置を返す。** `·` は 2 バイト・`←` は 3 バイトなので、
+            //    そのまま桁として読むと**水増しされた数**を比べることになる（最初に踏んだ）。
+            let at = line.find(want).unwrap();
+            cols.insert(want, UnicodeWidthStr::width(&line[..at]));
+        }
+        let distinct: std::collections::BTreeSet<_> = cols.values().copied().collect();
+        assert_eq!(
+            distinct.len(),
+            1,
+            "説明の欄が揃っていない（欄からはみ出した鍵が在る）: {cols:?}"
+        );
     }
 
     /// 🚨 **狭い面の 2 列が折り返さない。**
@@ -1096,13 +1074,76 @@ mod help_follows_the_keymap {
         }
     }
 
+    /// 🚨 **この issue の芯（`#12`）—— `/` は区切りとして出てこない。**
+    ///
+    /// ⭐ Help の `/` は 3 つの意味を持っていた: ①鍵の区切り（`Ctrl+B / F3`）
+    /// ②説明の対応（`Undo / Redo`）③**キー名そのもの**（`Alt+/`）。
+    /// 実機の `Alt+\ / Alt+/    File top / bottom` は、行が `/` で終わるせいで
+    /// **①なのか③なのかが字面で決まらなかった**。
+    ///
+    /// ∴ ②は**行を割って**消し、①は ` · ` に替えた。残った `/` は③だけ ——
+    /// **`/` はキー名の一部としてしか現れない**を、ここで釘付けにする。
+    ///
+    /// ⚠️ `contains` の網ではこれは測れない —— 探しているのは部分文字列で、
+    /// **その `/` が何を意味しているかを見ていない**から。
+    #[test]
+    fn a_slash_in_help_is_always_part_of_a_key_name() {
+        for (label, text) in [
+            ("広い版", help_text(&mut editor_with_keys(&[]))),
+            ("狭い版", narrow_help_text(&mut editor_with_keys(&[]))),
+        ] {
+            for line in text.lines() {
+                let b = line.as_bytes();
+                for (i, c) in b.iter().enumerate() {
+                    if *c != b'/' {
+                        continue;
+                    }
+                    // 唯一許す形は `Alt+/` —— キー名の一部。
+                    assert!(
+                        i > 0 && b[i - 1] == b'+',
+                        "{label}: `/` が区切りとして出ている: {:?}",
+                        line.trim_end()
+                    );
+                }
+            }
+        }
+    }
+
+    /// 🚨 **陽性対照。** 割った行が、**1 行に 1 鍵 1 意味**で並んでいる。
+    ///
+    /// ⭐ これが無いと「`/` を全部消しただけ」（`Undo Redo` が同じ行に残る）が緑で通る。
+    /// ⚠️ 相方の語が**同じ行に居ないこと**まで見る —— 在ることだけでは割れた証拠にならない。
+    #[test]
+    fn split_help_rows_carry_one_key_and_one_meaning() {
+        let text = help_text(&mut editor_with_keys(&[]));
+        for (key, mine, theirs) in [
+            ("Ctrl+Z", "Undo", "Redo"),
+            ("Ctrl+Y", "Redo", "Undo"),
+            ("Ctrl+A", "Line start", "Line end"),
+            ("Ctrl+E", "Line end", "Line start"),
+            ("d ", "Delete", "Yank"),
+            ("y ", "Yank", "Delete"),
+            (".", "forward", "back"),
+        ] {
+            let row = text
+                .lines()
+                .find(|l| l.trim_start().starts_with(key) && l.contains(mine))
+                .unwrap_or_else(|| panic!("`{key}` の行に `{mine}` が無い"));
+            assert!(
+                !row.contains(theirs),
+                "`{key}` の行に相方の `{theirs}` が残っている（割れていない）: {:?}",
+                row.trim_end()
+            );
+        }
+    }
+
     /// ⚠️ **陰性対照（狭い版）。** 狭い面の Glide 行も `[keys]` の対象外。
     /// ⭐ 狭い版を鍵から作り直すときに、**ここまで書き換えたら範囲が広すぎる**。
     #[test]
     fn narrow_glide_motions_are_left_alone() {
         let plain = narrow_help_text(&mut editor_with_keys(&[]));
         let overridden = narrow_help_text(&mut editor_with_keys(&[("enter_save", "f9")]));
-        for motion in ["h/←", "gg", "dd"] {
+        for motion in ["h·←", "gg", "dd"] {
             assert!(plain.contains(motion), "{motion} が狭い Help に無い");
             assert!(
                 overridden.contains(motion),

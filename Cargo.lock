@@ -153,7 +153,7 @@ dependencies = [
 
 [[package]]
 name = "cozy"
-version = "0.2.31"
+version = "0.2.32"
 dependencies = [
  "arboard",
  "atomicwrites",
