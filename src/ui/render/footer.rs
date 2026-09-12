@@ -37,6 +37,7 @@ pub fn render_shortcuts(editor: &EditorState, f: &mut Frame, area: Rect) {
         EditorMode::Goto => render_goto_shortcuts(editor, f, area),
         EditorMode::Browse => render_browse_shortcuts(editor, f, area),
         EditorMode::Markdown => render_read_shortcuts(editor, f, area),
+        EditorMode::View => render_view_shortcuts(editor, f, area),
         EditorMode::DiffReview => render_diff_review_shortcuts(editor, f, area),
         EditorMode::DiffCommitMsg => render_diff_commit_shortcuts(editor, f, area),
         EditorMode::Command => render_command_shortcuts(editor, f, area),
@@ -229,6 +230,38 @@ pub fn render_status_bar(editor: &EditorState, f: &mut Frame, area: Rect) {
             (
                 format!(" Markdown{}{}", hint, status),
                 format!("{}/{} ", pos, total.max(1)),
+            )
+        }
+        // `View`（`czv`）。⭐ **名前は Edit と同じ出し方**（利用者は同じファイルを見ている）
+        // だが、右は **カーソル位置ではなく「どこまで読んだか」** ——
+        // 📌 `scroll_offset` ＝ 画面最上行で数える。`less` が出すのはこれ（`ROADMAP.md:498`）。
+        //
+        // ⭐ **`[read-only]` は常に出る** —— `czv` は開いた時点で立てるので、
+        // 「誤操作で汚さない」という約束が**画面に出ている**（`#7` と同じ形）。
+        EditorMode::View => {
+            let name = editor
+                .filename
+                .as_ref()
+                .and_then(|p| p.file_name())
+                .and_then(|n| n.to_str())
+                .unwrap_or("[No Name]")
+                .to_string();
+            let mut pend = String::new();
+            pend.push_str(&editor.glide_count);
+            if let Some(p) = editor.glide_prefix {
+                pend.push(p);
+            }
+            let hint = if pend.is_empty() {
+                String::new()
+            } else {
+                format!(" [{}]", pend)
+            };
+            let ro = if editor.read_only { " [read-only]" } else { "" };
+            let total = editor.buffer.lines.len().max(1);
+            let pos = (editor.scroll_offset + 1).min(total);
+            (
+                format!(" {}{}{}{}", name, ro, hint, status),
+                format!("{}/{} ", pos, total),
             )
         }
         EditorMode::DiffReview => {
@@ -847,6 +880,72 @@ fn render_read_shortcuts(editor: &EditorState, f: &mut Frame, area: Rect) {
                 editor,
                 narrow,
                 &[("Spc/f/b · PgUp/PgDn", "Page"), ("Esc", "Return")],
+            )),
+            layout[1],
+        );
+    }
+}
+
+/// `View`（`czv`）の帯。`render_read_shortcuts` と移動の綴りは同じで、**出口だけが違う**。
+///
+/// 🚨 Help / Markdown の `Esc Return` は「**戻る先が在る**」から出せる文言で、
+/// `czv` には戻る先が無い。⭐ 出すのは **`q Quit`** ——
+/// 閲覧面でいちばん軽い鍵（`Ctrl+Q` も `Esc` も効くが、帯には出さない）。
+///
+/// 📌 **`/` は帯に載せない。** 押す人は既に知っていて、知らない人は `^F Find` を見る。
+/// ⭐ 帯の仕事は「**指が知らないものを教える**」ことなので、`/` はその対象ではない（`#14`）。
+fn render_view_shortcuts(editor: &EditorState, f: &mut Frame, area: Rect) {
+    if area.width < 50 {
+        if area.height <= 1 {
+            f.render_widget(
+                Paragraph::new(compact_line(
+                    editor,
+                    &[("jk", "Move"), ("Spc/b", "Page"), ("q", "Quit")],
+                )),
+                row(area, 0),
+            );
+            return;
+        }
+        let layout = narrow_layout(area);
+        f.render_widget(
+            Paragraph::new(compact_line(
+                editor,
+                &[("jk/↑↓", "Move"), ("gg/G", "Top/Bot")],
+            )),
+            layout[0],
+        );
+        f.render_widget(
+            Paragraph::new(compact_line(editor, &[("H/M/L", "Screen")])),
+            layout[1],
+        );
+        f.render_widget(
+            Paragraph::new(compact_line(editor, &[("Spc/b · PgUp/Dn", "Page")])),
+            layout[2],
+        );
+        f.render_widget(
+            Paragraph::new(compact_line(editor, &[("q", "Quit")])),
+            layout[3],
+        );
+    } else {
+        let narrow = area.width < 80;
+        let layout = wide_layout(area);
+        f.render_widget(
+            Paragraph::new(shortcut_line(
+                editor,
+                narrow,
+                &[
+                    ("jk/↑↓", "Move"),
+                    ("gg/G", "Top/Bottom"),
+                    ("H/M/L", "Scr Hi/Mid/Low"),
+                ],
+            )),
+            layout[0],
+        );
+        f.render_widget(
+            Paragraph::new(shortcut_line(
+                editor,
+                narrow,
+                &[("Spc/f/b · PgUp/PgDn", "Page"), ("q", "Quit")],
             )),
             layout[1],
         );

@@ -1,5 +1,41 @@
 # Changelog
 
+## v0.2.33
+
+### Added
+
+- **`czv` — a second command that opens a file to read, not to edit.** cozy already had
+  a read-only scrolling view (Help, and the Markdown preview) with vim keys on it; `czv`
+  points that view at an ordinary file. It scrolls with `j`/`k`, `gg`/`G`, `H`/`M`/`L`,
+  counts (`5j`), and `Space`/`f`/`b`, searches with `/`, and shows `[read-only]` and how
+  far you have read — the line at the top of the screen out of the total, which is what
+  `less` shows.
+
+  ⭐ **Editing is not blocked by a check; it is absent.** The keys in this mode produce
+  no editing action at all, so there is nothing to forget to guard. `i`, `x`, `dd` and
+  the rest simply are not keys here.
+
+- **Three ways out of the view: `q`, `Esc`, and `Ctrl+Q`.** In the editor `Ctrl+Q` is
+  deliberately the heavy key, because leaving discards unsaved work. There is nothing to
+  lose in a viewer, so the exit is the lightest key instead — and `q` is the one every
+  pager has trained fingers to reach for. The bar says `q Quit`.
+
+- **`/` starts a search in Glide mode as well.** It is an alias for `Ctrl+F`, which
+  still works; the point is that fingers coming from vi or `less` reach for `/` and now
+  find it there. ⚠️ It is not a global binding: in Edit mode `/` is still a character, so
+  paths and URLs type normally.
+
+### Changed
+
+- **cozy describes itself as an editor *and pager*.** The crate description and the
+  README said "text editor", which was the whole of it until this release.
+
+### Notes
+
+The viewer is one program with two entry points, not two programs: `czv` is the same
+crate, opened in a different mode. Nothing about the editor changed — `cozy` still opens
+in Edit, still saves, and `/` in a document is still a slash.
+
 ## v0.2.32
 
 ### Changed

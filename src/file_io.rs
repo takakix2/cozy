@@ -302,9 +302,19 @@ pub fn open_file(editor: &mut EditorState, path: &str) -> io::Result<()> {
 
     let (lines, format) = parse_content_with(&content, encoding);
     editor.buffer = TextBuffer::from_lines_with_format(lines, format);
-    editor.read_only = std::fs::metadata(&target)
-        .map(|m| is_read_only(&m))
-        .unwrap_or(false);
+    // 🚨 **閲覧の席では、開く先が書けるファイルでも `read_only` は下ろさない。**
+    //
+    // 📏 実機で踏んだ（2026-09-12）: `czv README.md` から `Ctrl+O` で書ける
+    // `Cargo.toml` を開くと、**フッタの `[read-only]` が消えた**。
+    // ⭐ 編集自体は腕が編集アクションを産まないので**構造で止まったまま**だったが、
+    // ⚠️ **約束の表示だけが消える** ＝「見るだけ」と言った利用者に嘘をつく。
+    //
+    // 📌 ∴ 2 つの理由の **or**。あちらは「書けないファイルだから」、
+    // こちらは「**利用者が見るだけだと言ったから**」（`#14`）。
+    editor.read_only = editor.view_session
+        || std::fs::metadata(&target)
+            .map(|m| is_read_only(&m))
+            .unwrap_or(false);
     editor.filename = Some(path_buf);
     editor.cursor = Cursor::default();
     editor.modified = false;

@@ -117,6 +117,7 @@ fn compact_shortcut_rows(is_narrow: bool, mode: EditorMode) -> u16 {
         | EditorMode::Glide
         | EditorMode::Browse
         | EditorMode::Markdown
+        | EditorMode::View
         | EditorMode::DiffReview
         | EditorMode::Help => 1,
     }
@@ -132,6 +133,7 @@ fn hidden_shortcut_rows(mode: EditorMode) -> u16 {
         | EditorMode::Glide
         | EditorMode::Browse
         | EditorMode::Markdown
+        | EditorMode::View
         | EditorMode::DiffReview
         | EditorMode::Help => 0,
     }

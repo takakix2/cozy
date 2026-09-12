@@ -103,6 +103,17 @@ pub enum EditorMode {
     Goto,
     Browse,
     Markdown,
+    /// 閲覧だけの面（`czv`）。⭐ **ファイル本文を、`less` と同じ持ち物で読む** ——
+    /// スクロール offset だけを持ち、カーソルは無い（`body.rs` の門番が描かない）。
+    ///
+    /// 🚨 **`Help` / `Markdown` と鍵の綴りは同じだが、座標系が違う。** あの 2 つは
+    /// 専用の中身を描くので専用の offset（`help_scroll_offset` 等）を持つが、
+    /// こちらは**バッファそのもの**を描くので `editor.scroll_offset` を使う。
+    /// ∴ `ReadView` の機械には載せず、`reducer::view_scroll` が面を直接送る。
+    ///
+    /// ⚠️ 編集アクションは**腕が産まない**ので、`read_only` の検査ではなく
+    /// **構造で**止まっている（`#14`）。
+    View,
     DiffReview,
     DiffCommitMsg,
     Command,
@@ -142,6 +153,17 @@ pub struct EditorState {
     /// （`#7`）。∴ フッタに常時出す。⚠️ ここは**表示のための事実**で、
     /// 保存を止めているのは `file_io::write_buffer` 側の検査（そちらが正本）。
     pub read_only: bool, // 新規: 変更フラグ
+    /// この席が **閲覧専用の席**（`czv`）かどうか。
+    ///
+    /// 🚨 **`mode` では代用できない。** モードは検索やヘルプで一時的に離れるので、
+    /// 「いまどこに居るか」しか言わない。⭐ 必要なのは **「戻る先はどこか」** で、
+    /// それを持つのがこの欄（`home_mode` が見る）。
+    ///
+    /// 📏 **実機で踏んだ**（2026-09-12）: ここが無かったとき、
+    /// `czv` → `/` → `Esc` で **編集面に降りた**（帯が `Ctrl+S Save` に変わった）。
+    /// ⚠️ `read_only` が保存を止めるので**ファイルは無事**だが、
+    /// 「誤操作で汚さない」という約束は**画面の上で破れていた**。
+    pub view_session: bool,
     pub mode: EditorMode, // 新規: モード管理
     pub diff_review: Option<crate::state::diff::DiffReviewState>, // 新規: セッション diff レビュー状態
     pub commit_msg_buffer: String, // 新規: diff レビューからのコミットメッセージ入力
@@ -380,6 +402,7 @@ impl EditorState {
             _working_dir: init.working_dir,
             modified: false,
             read_only,
+            view_session: false,
             mode: initial_mode,
             diff_review: None,
             commit_msg_buffer: String::new(),
@@ -516,6 +539,12 @@ impl EditorState {
     /// resolved from `config.default_mode`. Unknown/missing → Edit (the safe
     /// default that keeps zero hidden state for newcomers).
     pub fn home_mode(&self) -> EditorMode {
+        // ⭐ **閲覧の席は `default_mode` より強い。** `czv` で開いた人は、
+        // 検索やヘルプから戻ったときに**閲覧へ帰る**のであって、
+        // 設定ファイルに書いた編集面へ降りるのではない。
+        if self.view_session {
+            return EditorMode::View;
+        }
         Self::resolve_home(&self.config)
     }
 

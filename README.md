@@ -9,7 +9,7 @@
 
 ![cozy welcome screen](https://raw.githubusercontent.com/takakix2/cozy/main/docs/assets/screenshot.png)
 
-cozy is a small Rust terminal text editor for people who want direct, low-friction editing by default, with optional modal navigation when they need it. It is intended to feel approachable like `nano` while keeping a focused set of vim-like motions in Glide mode.
+cozy is a small Rust terminal editor **and pager** for people who want direct, low-friction editing by default, with optional modal navigation when they need it. It is intended to feel approachable like `nano` while keeping a focused set of vim-like motions in Glide mode. The same binary set ships `czv`, which opens a file read-only in that vim-style navigation — a pager that tells you which keys it has.
 
 ## Install
 

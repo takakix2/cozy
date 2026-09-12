@@ -213,6 +213,12 @@ impl Keymap {
                     KeyCode::Char('P') => Some(Action::PasteRegister(false)),
                     KeyCode::Char('f') => Some(Action::EnterMode(EditorMode::Search)),
                     KeyCode::Char('r') => Some(Action::EnterMode(EditorMode::Replace)),
+                    // ⭐ `/` は `f` の別名。`f` / `r` は `Ctrl+F` / `Ctrl+R` から
+                    // `Ctrl` を落とした綴りで、cozy の検索はそちらが正だが、
+                    // **vi の指は `/` へ行く**（`#14`）。
+                    // 🚨 **大域表には入れない** —— あの表はモードの区別なく先に引かれるので、
+                    // Edit モードで `/` が打てなくなる（パスも URL も打てない）。
+                    KeyCode::Char('/') => Some(Action::EnterMode(EditorMode::Search)),
                     // Bare to-char jump: `>`/`<` land onto the char, `t`/`T` just
                     // before/after it (till). No operator -> the cursor moves.
                     KeyCode::Char('>') => Some(Action::SetFindPending(FindKind::Find)),
@@ -291,7 +297,12 @@ impl Keymap {
             },
             // Help shares the read-only navigation model with Markdown preview:
             // same keys (j/k, gg/G, H/M/L, counts, Page) drive the shared scroll view.
-            EditorMode::Help | EditorMode::Markdown => {
+            //
+            // ⭐ `View`（`czv`）も同じ綴りを使う。⚠️ ただし**描く中身が違う** ——
+            // Help / Markdown は専用の中身を専用の offset で描くが、View は
+            // **バッファそのもの**を `editor.scroll_offset` で描く。
+            // 座標系の対応は `reducer::read_view()` が持つ。
+            EditorMode::Help | EditorMode::Markdown | EditorMode::View => {
                 if let Some(prefix) = editor.glide_prefix {
                     return match (prefix, code) {
                         ('g', KeyCode::Char('g')) => Some(Action::GlideMove(Motion::FileTop)),
@@ -321,6 +332,26 @@ impl Keymap {
                     // mobile): Space/f page forward, b pages back — the less/man idiom.
                     KeyCode::Char(' ') | KeyCode::Char('f') => Some(Action::PageDown),
                     KeyCode::Char('b') => Some(Action::PageUp),
+
+                    // ── ここから下は `View` だけ（`czv`）────────────────────────
+                    //
+                    // 🚨 **Help / Markdown には効かせない。** あの 2 つは専用の中身を
+                    // 描いているのに、検索が見るのは**バッファ**なので、`/` を効かせると
+                    // **画面に無い物を探し始める**。⚠️ `Ctrl+F` は大域表に在るので既に
+                    // その口が開いているが、**新しい口を増やさない**。
+                    //
+                    // ⭐ `/` は「便利な別名」ではなく**無いと躓く鍵**（`#14`）——
+                    // vi も less も `/` で探すので、指もエージェントもここへ来る。
+                    KeyCode::Char('/') if editor.mode == EditorMode::View => {
+                        Some(Action::EnterMode(EditorMode::Search))
+                    }
+                    // ⭐ **出口は軽い鍵で。** 編集面の `Ctrl+Q` が重いのは
+                    // **未保存の編集を失う**からで、閲覧面には失う物が無い。
+                    // 🚨 そして `Ctrl+Q` は less にも vi にも無い綴り ＝
+                    // **知らないと押せない**。⭐ ページャーで最初に困るのが
+                    // 「どうやって抜けるのか」なので、そこを繰り返さない。
+                    // 📌 `Ctrl+Q` も `Esc` も残る（大域表と `Cancel`）。3 つとも効く。
+                    KeyCode::Char('q') if editor.mode == EditorMode::View => Some(Action::Quit),
                     _ => None,
                 }
             }

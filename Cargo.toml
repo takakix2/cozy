@@ -1,9 +1,9 @@
 [package]
 name = "cozy"
-version = "0.2.32"
+version = "0.2.33"
 edition = "2024"
 rust-version = "1.85"
-description = "A Comfort First terminal text editor: type like nano, navigate like vim"
+description = "A Comfort First terminal editor and pager: type like nano, navigate like vim"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/takakix2/cozy"
 homepage = "https://labs.navii.online/"

@@ -15,6 +15,8 @@ pub mod status;
 
 #[cfg(test)]
 mod editor_test;
+#[cfg(test)]
+mod view_test;
 
 use crate::action::Action;
 use crate::state::EditorState;
@@ -40,6 +42,39 @@ fn read_view(mode: &crate::state::EditorMode) -> Option<ReadView> {
         crate::state::EditorMode::Help => Some(ReadView::Help),
         _ => None,
     }
+}
+
+/// `View`（`czv`）で**面そのものを動かす**。⚠️ 呼ぶ側がモードを確かめてから呼ぶ。
+///
+/// # 🚨 なぜ専用の経路が要るのか（実機で踏んだ・2026-09-12）
+///
+/// View は本文を `render_text_buffer` で描くので、素だと **`j` がカーソルを動かし、
+/// `adjust_scroll` が端で初めて追いつく**。⚠️ カーソルは描かれない面なので、
+/// これは **`j` を押しても何も起きない区間が 1 画面分ある**ことを意味する。
+///
+/// 📏 実測（幅 100 × 高さ 20 で `README.md`）: **`j` を 5 回押して `1/281` のまま**。
+/// 20 回でようやく `22/281`。⭐⭐ **ページャーで最もよく押す鍵が、最初の 15 回死んでいた。**
+///
+/// ∴ View では **`scroll_offset` を動かし、カーソルをその先頭行に留める**。
+/// ⭐ カーソルを置き去りにしないのは `adjust_scroll` と喧嘩しないため ——
+/// 先頭行は常に可視なので、あちらは何もしない。
+/// 📌 逆に `gg` / `G` / `20G` / 検索は**カーソルを動かして `adjust_scroll` に追わせる**形で
+/// 既に正しく動く（📏 実測済み）。**動かすのは「面を 1 行ずつ送る」鍵だけ**。
+fn view_scroll(editor: &mut EditorState, delta: isize) {
+    let last = editor.buffer.lines.len().saturating_sub(1);
+    let next = if delta.is_negative() {
+        editor.scroll_offset.saturating_sub(delta.unsigned_abs())
+    } else {
+        editor.scroll_offset.saturating_add(delta as usize)
+    };
+    editor.scroll_offset = next.min(last);
+    editor.cursor.y = editor.scroll_offset;
+    editor.cursor.x = 0;
+}
+
+/// View で 1 回に送る行数。⚠️ `page_size` は 0 になりうる（描画前）ので下限を置く。
+fn view_page_step(editor: &EditorState) -> usize {
+    editor.page_size.max(1)
 }
 
 /// Move the highlighted hunk in session diff review. The render layer keeps it
@@ -452,7 +487,11 @@ pub fn reduce(editor: &mut EditorState, action: Action) -> EventResult {
             crate::state::EditorMode::Browse => browse::move_up(editor),
             crate::state::EditorMode::DiffReview => diff_move_hunk(editor, -1),
             _ => {
-                if let Some(view) = read_view(&editor.mode) {
+                if editor.mode == crate::state::EditorMode::View {
+                    let n = take_read_count_opt(editor).unwrap_or(1);
+                    view_scroll(editor, -(n as isize));
+                    EventResult::Continue
+                } else if let Some(view) = read_view(&editor.mode) {
                     let n = take_read_count_opt(editor).unwrap_or(1);
                     move_read_cursor(editor, view, -(n as isize));
                     EventResult::Continue
@@ -465,7 +504,11 @@ pub fn reduce(editor: &mut EditorState, action: Action) -> EventResult {
             crate::state::EditorMode::Browse => browse::move_down(editor),
             crate::state::EditorMode::DiffReview => diff_move_hunk(editor, 1),
             _ => {
-                if let Some(view) = read_view(&editor.mode) {
+                if editor.mode == crate::state::EditorMode::View {
+                    let n = take_read_count_opt(editor).unwrap_or(1);
+                    view_scroll(editor, n as isize);
+                    EventResult::Continue
+                } else if let Some(view) = read_view(&editor.mode) {
                     let n = take_read_count_opt(editor).unwrap_or(1);
                     move_read_cursor(editor, view, n as isize);
                     EventResult::Continue
@@ -475,7 +518,11 @@ pub fn reduce(editor: &mut EditorState, action: Action) -> EventResult {
             }
         },
         Action::PageUp => {
-            if let Some(view) = read_view(&editor.mode) {
+            if editor.mode == crate::state::EditorMode::View {
+                let n = take_read_count_opt(editor).unwrap_or(1);
+                view_scroll(editor, -((view_page_step(editor) * n) as isize));
+                EventResult::Continue
+            } else if let Some(view) = read_view(&editor.mode) {
                 let n = take_read_count_opt(editor).unwrap_or(1);
                 move_read_cursor(editor, view, -((rv_page_step(editor, view) * n) as isize));
                 EventResult::Continue
@@ -484,7 +531,11 @@ pub fn reduce(editor: &mut EditorState, action: Action) -> EventResult {
             }
         }
         Action::PageDown => {
-            if let Some(view) = read_view(&editor.mode) {
+            if editor.mode == crate::state::EditorMode::View {
+                let n = take_read_count_opt(editor).unwrap_or(1);
+                view_scroll(editor, (view_page_step(editor) * n) as isize);
+                EventResult::Continue
+            } else if let Some(view) = read_view(&editor.mode) {
                 let n = take_read_count_opt(editor).unwrap_or(1);
                 move_read_cursor(editor, view, (rv_page_step(editor, view) * n) as isize);
                 EventResult::Continue
@@ -561,6 +612,16 @@ pub fn reduce(editor: &mut EditorState, action: Action) -> EventResult {
                 editor.enter_mode(crate::state::EditorMode::DiffReview);
                 EventResult::Continue
             }
+            // ⭐ `View`（`czv`）では `Esc` が**終了**する。
+            //
+            // 🚨 他のどの面でも `Esc` は「一段戻る」だが、**`czv` には戻る先が無い**
+            // （閲覧が最上段）。⚠️ そこで「何もしない」に倒すと、全画面のビューアで
+            // Esc を押して無反応 ＝ **死んで見える**。
+            //
+            // 📌 出口が 3 つ（`Ctrl+Q` / `Esc` / `q`）在るのは冗長ではなく
+            // **3 種類の利用者に効かせるため**（デスクトップ・モバイル・エージェント）。
+            // ⭐ 失う物が無い面なので、出口は軽いほどよい（`#14`）。
+            crate::state::EditorMode::View => EventResult::Exit,
             _ => editor::apply_editor_event(editor, &action),
         },
         Action::BrowseExpandOrOpen => browse::expand_or_open(editor),

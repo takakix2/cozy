@@ -71,8 +71,22 @@ impl Drop for TerminalSession {
 
 /// Convenience: run with full terminal setup (CLI binary entry point).
 pub fn run_cli(filename: Option<String>) -> io::Result<()> {
+    run_cli_mode(filename, false)
+}
+
+/// 閲覧だけで開く CLI 入口（`czv`）。⭐ **`cozy` と同じ lib を、モードだけ変えて呼ぶ。**
+///
+/// 📌 だから `czv` 側に引数解析は要らない —— `host.rs` はいま `--version` しか
+/// 見ておらず、**フラグの概念が無い**。⚠️ ここへ `--view` のような旗を足すと、
+/// その概念を 1 つ増やすことになる（`#14` で A4 を落とした理由）。
+pub fn run_cli_view(filename: Option<String>) -> io::Result<()> {
+    run_cli_mode(filename, true)
+}
+
+fn run_cli_mode(filename: Option<String>, view: bool) -> io::Result<()> {
     let config = CozyConfig {
         filename,
+        view,
         ..Default::default()
     };
     run_cli_with_config(config)
@@ -80,14 +94,32 @@ pub fn run_cli(filename: Option<String>) -> io::Result<()> {
 
 /// Parse process arguments and run the CLI entry point.
 pub fn run_cli_from_env() -> io::Result<()> {
-    let filename = match std::env::args().nth(1) {
+    match args_or_version("cozy") {
+        Some(filename) => run_cli(filename),
+        None => Ok(()),
+    }
+}
+
+/// `czv` の入口。⭐ `run_cli_from_env` と同じ引数の見方で、**開く面だけが違う**。
+pub fn run_cli_view_from_env() -> io::Result<()> {
+    match args_or_version("czv") {
+        Some(filename) => run_cli_view(filename),
+        None => Ok(()),
+    }
+}
+
+/// 第 1 引数を返す。`--version` / `-V` なら版を名乗って `None`（＝もう走らない）。
+///
+/// ⚠️ **`name` で名乗りを変える** —— `czv --version` が `cozy` と名乗ると、
+/// どちらを入れたのか分からなくなる。📌 版番号は同じ（同じクレートから焼かれる）。
+fn args_or_version(name: &str) -> Option<Option<String>> {
+    match std::env::args().nth(1) {
         Some(arg) if arg == "--version" || arg == "-V" => {
-            println!("cozy {}", env!("CARGO_PKG_VERSION"));
-            return Ok(());
+            println!("{} {}", name, env!("CARGO_PKG_VERSION"));
+            None
         }
-        other => other,
-    };
-    run_cli(filename)
+        other => Some(other),
+    }
 }
 
 /// Run with CLI terminal setup using an explicit configuration.
