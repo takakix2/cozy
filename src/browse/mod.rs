@@ -85,10 +85,10 @@ impl BrowseTree {
     }
 
     fn collect_visible(&self, idx: usize, keep: &Option<Vec<bool>>, out: &mut Vec<usize>) {
-        if let Some(keep) = keep {
-            if !keep[idx] {
-                return;
-            }
+        if let Some(keep) = keep
+            && !keep[idx]
+        {
+            return;
         }
         out.push(idx);
         // 絞り込み中は全ディレクトリを展開扱い。

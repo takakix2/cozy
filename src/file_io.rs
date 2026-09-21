@@ -7,6 +7,11 @@ use std::path::{Path, PathBuf};
 
 pub(crate) enum StartupDocument {
     Empty,
+    Stdin {
+        lines: Vec<String>,
+        format: FileFormat,
+        truncated: bool,
+    },
     File {
         path: PathBuf,
         lines: Vec<String>,
@@ -162,10 +167,43 @@ pub(crate) fn shorten_home(path: &str) -> String {
     }
 }
 
+/// パイプから一度に読み込むバイト数の上限（64 MB）。
+/// 🚨 パイプは無限ストリーム（`yes | czv`）の可能性があり、無制限に溜めると数秒で RAM を食い尽くす。
+pub(crate) const MAX_PIPE_BYTES: usize = 64 * 1024 * 1024;
+
+pub(crate) fn load_stdin_document<R: std::io::Read>(mut reader: R) -> io::Result<StartupDocument> {
+    use std::io::Read;
+    let mut bytes = Vec::new();
+    let mut take = (&mut reader).take((MAX_PIPE_BYTES + 1) as u64);
+    take.read_to_end(&mut bytes)?;
+
+    let truncated = bytes.len() > MAX_PIPE_BYTES;
+    if truncated {
+        bytes.truncate(MAX_PIPE_BYTES);
+    }
+
+    let (content, encoding) = crate::utils::encoding::decode(&bytes);
+    let (lines, format) = parse_content_with(&content, encoding);
+
+    Ok(StartupDocument::Stdin {
+        lines,
+        format,
+        truncated,
+    })
+}
+
 pub(crate) fn load_startup_document(filename: Option<&str>) -> StartupDocument {
     let Some(path) = filename else {
         return StartupDocument::Empty;
     };
+
+    if path == "-" {
+        return load_stdin_document(std::io::stdin()).unwrap_or_else(|e| {
+            StartupDocument::Unreadable {
+                message: format!("Cannot read from stdin: {e}"),
+            }
+        });
+    }
 
     let expanded = expand_tilde(path);
     let path_ref = expanded.as_path();
@@ -386,13 +424,13 @@ fn write_buffer(editor: &EditorState, target: &std::path::Path, context: &str) -
         ));
     }
 
-    if let Some(meta) = existing.as_ref() {
-        if write_is_refused(&real, meta) {
-            return Err(annotate(
-                io::Error::new(io::ErrorKind::PermissionDenied, "read-only file (chmod +w)"),
-                context,
-            ));
-        }
+    if let Some(meta) = existing.as_ref()
+        && write_is_refused(&real, meta)
+    {
+        return Err(annotate(
+            io::Error::new(io::ErrorKind::PermissionDenied, "read-only file (chmod +w)"),
+            context,
+        ));
     }
 
     if replaceable(existing.as_ref()) {
@@ -437,16 +475,16 @@ fn resolve_symlink(target: &Path) -> PathBuf {
         return real;
     }
     // リンクは在るがリンク先が無い。行き先を解決して、そこを書きに行く。
-    if target.is_symlink() {
-        if let Ok(link) = std::fs::read_link(target) {
-            if link.is_absolute() {
-                return link;
-            }
-            if let Some(parent) = target.parent() {
-                return parent.join(link);
-            }
+    if target.is_symlink()
+        && let Ok(link) = std::fs::read_link(target)
+    {
+        if link.is_absolute() {
             return link;
         }
+        if let Some(parent) = target.parent() {
+            return parent.join(link);
+        }
+        return link;
     }
     target.to_path_buf()
 }
@@ -656,13 +694,14 @@ pub fn missing_parent_of(e: &io::Error) -> Option<PathBuf> {
 }
 
 fn ensure_parent_dir(target: &std::path::Path) -> io::Result<()> {
-    if let Some(parent) = target.parent() {
-        if !parent.as_os_str().is_empty() && !parent.exists() {
-            return Err(io::Error::new(
-                io::ErrorKind::NotFound,
-                MissingParent(parent.to_path_buf()),
-            ));
-        }
+    if let Some(parent) = target.parent()
+        && !parent.as_os_str().is_empty()
+        && !parent.exists()
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            MissingParent(parent.to_path_buf()),
+        ));
     }
     Ok(())
 }
@@ -1813,6 +1852,54 @@ mod legacy_encodings {
         ] {
             let (after, _) = open_then_save(name, bytes);
             assert_eq!(after, bytes, "{name}: `#6` が壊れた");
+        }
+    }
+
+    // ── パイプ受け入れ (Issue #15) ────────────────────────────────────────────
+
+    #[test]
+    fn load_stdin_document_parses_lines_and_format() {
+        let input = b"first line\nsecond line\n";
+        let doc = load_stdin_document(&input[..]).unwrap();
+        match doc {
+            StartupDocument::Stdin {
+                lines,
+                format,
+                truncated,
+            } => {
+                assert_eq!(lines, vec!["first line", "second line"]);
+                assert_eq!(format.line_ending, LineEnding::Lf);
+                assert!(format.final_newline);
+                assert!(!truncated, "64MB 未満なのに truncated が立った");
+            }
+            _ => panic!("Stdin として開かれなかった"),
+        }
+    }
+
+    #[test]
+    fn load_stdin_document_handles_crlf() {
+        let input = b"line 1\r\nline 2\r\n";
+        let doc = load_stdin_document(&input[..]).unwrap();
+        match doc {
+            StartupDocument::Stdin { lines, format, .. } => {
+                assert_eq!(lines, vec!["line 1", "line 2"]);
+                assert_eq!(format.line_ending, LineEnding::CrLf);
+            }
+            _ => panic!("Stdin として開かれなかった"),
+        }
+    }
+
+    #[test]
+    fn load_stdin_document_truncates_at_max_pipe_bytes() {
+        // MAX_PIPE_BYTES (64MB) + 10 バイトの無限ストリームを模した入力
+        use std::io::Read;
+        let stream = std::io::repeat(b'x').take((MAX_PIPE_BYTES + 10) as u64);
+        let doc = load_stdin_document(stream).unwrap();
+        match doc {
+            StartupDocument::Stdin { truncated, .. } => {
+                assert!(truncated, "上限超過で truncated が立っていない");
+            }
+            _ => panic!("Stdin として開かれなかった"),
         }
     }
 }

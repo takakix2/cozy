@@ -96,15 +96,44 @@ pub fn paste_from_clipboard(editor: &mut EditorState) -> EventResult {
 }
 
 pub fn paste_string(editor: &mut EditorState, s: &str) -> EventResult {
-    if editor.mode == EditorMode::Edit {
-        mark_modified(editor); // Single snapshot for entire paste
-        for c in s.chars() {
-            if c == '\n' {
-                editor.buffer.enter(&mut editor.cursor);
-            } else if c != '\r' {
-                editor.buffer.insert_char(c, &mut editor.cursor);
+    match editor.mode {
+        EditorMode::Edit => {
+            mark_modified(editor); // Single snapshot for entire paste
+            for c in s.chars() {
+                if c == '\n' {
+                    editor.buffer.enter(&mut editor.cursor);
+                } else if c != '\r' {
+                    editor.buffer.insert_char(c, &mut editor.cursor);
+                }
             }
         }
+        EditorMode::Search => {
+            crate::reducer::search::insert_str_to_search_buffer(editor, s);
+        }
+        EditorMode::Replace => {
+            crate::reducer::replace::insert_str_to_replace_buffer(editor, s);
+        }
+        EditorMode::Save | EditorMode::Open | EditorMode::Quit => {
+            let _ = crate::reducer::file::insert_str_to_filename_buffer(editor, s);
+        }
+        EditorMode::Goto => {
+            for c in s.chars() {
+                if c.is_ascii_digit() {
+                    editor.goto_line_buffer.push(c);
+                }
+            }
+        }
+        EditorMode::Command => {
+            let _ = crate::reducer::command::input_str(editor, s);
+        }
+        EditorMode::DiffCommitMsg => {
+            for c in s.chars() {
+                if c != '\n' && c != '\r' {
+                    editor.commit_msg_buffer.push(c);
+                }
+            }
+        }
+        _ => {}
     }
     EventResult::Continue
 }

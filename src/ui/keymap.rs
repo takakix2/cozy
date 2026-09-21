@@ -94,7 +94,11 @@ impl Keymap {
                 EditorAction::Cancel => return Some(Action::Cancel),
                 EditorAction::ToggleLineNumbers => return Some(Action::ToggleLineNumbers),
                 EditorAction::ToggleWrap => return Some(Action::ToggleWrap),
-                EditorAction::ToggleFooter => return Some(Action::ToggleFooter),
+                EditorAction::ToggleFooter => {
+                    if editor.mode != EditorMode::View {
+                        return Some(Action::ToggleFooter);
+                    }
+                }
                 EditorAction::DeleteLine => return Some(Action::DeleteLine),
                 EditorAction::Enter => {
                     // ⚠️ A pending one-line question owns Enter — it is the *answer*,
@@ -135,7 +139,11 @@ impl Keymap {
                 EditorAction::EnterGoto => return Some(Action::EnterMode(EditorMode::Goto)),
                 EditorAction::Paste => return Some(Action::PasteFromClipboard),
                 EditorAction::EnterGlide => return Some(Action::EnterMode(EditorMode::Glide)),
-                EditorAction::ToggleMarkdownPreview => return Some(Action::ToggleMarkdownPreview),
+                EditorAction::ToggleMarkdownPreview => {
+                    if editor.mode != EditorMode::View {
+                        return Some(Action::ToggleMarkdownPreview);
+                    }
+                }
                 EditorAction::ToggleDiffReview => return Some(Action::ToggleDiffReview),
                 EditorAction::EnterCommand => {
                     if editor.mode != EditorMode::Search && editor.mode != EditorMode::Replace {
@@ -166,10 +174,11 @@ impl Keymap {
                     };
                 }
                 // Count digits ('0' is a digit only once a count has started).
-                if let KeyCode::Char(c) = code {
-                    if c.is_ascii_digit() && (c != '0' || !editor.glide_count.is_empty()) {
-                        return Some(Action::GlideDigit(c));
-                    }
+                if let KeyCode::Char(c) = code
+                    && c.is_ascii_digit()
+                    && (c != '0' || !editor.glide_count.is_empty())
+                {
+                    return Some(Action::GlideDigit(c));
                 }
                 // Operator pending (d/c/y typed): interpret the next key as the operand.
                 if let Some(op) = editor.pending_operator {
@@ -309,10 +318,11 @@ impl Keymap {
                         _ => Some(Action::SetGlidePrefix(None)),
                     };
                 }
-                if let KeyCode::Char(c) = code {
-                    if c.is_ascii_digit() && (c != '0' || !editor.glide_count.is_empty()) {
-                        return Some(Action::GlideDigit(c));
-                    }
+                if let KeyCode::Char(c) = code
+                    && c.is_ascii_digit()
+                    && (c != '0' || !editor.glide_count.is_empty())
+                {
+                    return Some(Action::GlideDigit(c));
                 }
                 match code {
                     KeyCode::Char('j') => Some(Action::MoveDown),
@@ -332,6 +342,18 @@ impl Keymap {
                     // mobile): Space/f page forward, b pages back — the less/man idiom.
                     KeyCode::Char(' ') | KeyCode::Char('f') => Some(Action::PageDown),
                     KeyCode::Char('b') => Some(Action::PageUp),
+                    KeyCode::Char('d')
+                        if modifiers == KeyModifiers::NONE
+                            || modifiers == KeyModifiers::CONTROL =>
+                    {
+                        Some(Action::HalfPageDown)
+                    }
+                    KeyCode::Char('u')
+                        if modifiers == KeyModifiers::NONE
+                            || modifiers == KeyModifiers::CONTROL =>
+                    {
+                        Some(Action::HalfPageUp)
+                    }
 
                     // ── ここから下は `View` だけ（`czv`）────────────────────────
                     //

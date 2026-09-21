@@ -25,6 +25,20 @@ pub fn update_filename_buffer(editor: &mut EditorState, c: char) -> EventResult 
     EventResult::Continue
 }
 
+pub fn insert_str_to_filename_buffer(editor: &mut EditorState, s: &str) -> EventResult {
+    let clean: String = s.chars().filter(|&c| c != '\n' && c != '\r').collect();
+    if clean.is_empty() {
+        return EventResult::Continue;
+    }
+    let pos = editor.filename_cursor;
+    let buf = active_buffer_mut(editor);
+    if pos <= buf.len() && buf.is_char_boundary(pos) {
+        buf.insert_str(pos, &clean);
+        editor.filename_cursor = pos + clean.len();
+    }
+    EventResult::Continue
+}
+
 pub fn delete_from_filename_buffer(editor: &mut EditorState) -> EventResult {
     let pos = editor.filename_cursor;
     if pos == 0 {

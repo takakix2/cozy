@@ -15,12 +15,16 @@ pub fn run<B: Backend>(
 
     loop {
         if needs_redraw {
-            terminal.draw(|f| {
-                let chunks = Renderer::editor_layout(f.area(), editor);
-                Renderer::render_body(editor, f, chunks[0]);
-                Renderer::render_shortcuts(editor, f, chunks[1]);
-                Renderer::render_status_bar(editor, f, chunks[2]);
-            })?;
+            terminal
+                .draw(|f| {
+                    let chunks = Renderer::editor_layout(f.area(), editor);
+                    Renderer::render_body(editor, f, chunks[0]);
+                    Renderer::render_shortcuts(editor, f, chunks[1]);
+                    Renderer::render_status_bar(editor, f, chunks[2]);
+                })
+                // ratatui 0.30 gives each backend its own error type; `CrosstermBackend`'s
+                // is `io::Error`, but `run` is generic over the backend.
+                .map_err(|e| io::Error::other(e.to_string()))?;
             needs_redraw = false;
         }
 

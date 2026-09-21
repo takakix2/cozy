@@ -37,14 +37,13 @@ pub fn load() -> Config {
 pub fn load_from(config_dir: Option<&PathBuf>) -> Config {
     let paths = candidate_paths(config_dir);
 
-    if let Some(path) = default_config_path(config_dir) {
-        if !path.exists() {
-            if let Err(e) = write_default_config(&path) {
-                // ⚠️ ここも同じ理由で画面には出さない。既定 config が作れなくても
-                // 動作には効かない（既定値で走る）ので、黙って進む。
-                let _ = e;
-            }
-        }
+    if let Some(path) = default_config_path(config_dir)
+        && !path.exists()
+        && let Err(e) = write_default_config(&path)
+    {
+        // ⚠️ ここも同じ理由で画面には出さない。既定 config が作れなくても
+        // 動作には効かない（既定値で走る）ので、黙って進む。
+        let _ = e;
     }
 
     // 🚨 **苦情は `eprintln!` にしない。** cozy はこの端末で TUI を描いているので、
@@ -122,10 +121,10 @@ fn default_config_path(config_dir: Option<&PathBuf>) -> Option<PathBuf> {
 }
 
 fn write_default_config(path: &Path) -> io::Result<()> {
-    if let Some(parent) = path.parent() {
-        if !parent.as_os_str().is_empty() {
-            std::fs::create_dir_all(parent)?;
-        }
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        std::fs::create_dir_all(parent)?;
     }
     std::fs::write(path, DEFAULT_CONFIG_TOML)
 }

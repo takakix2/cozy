@@ -33,8 +33,10 @@ fn key(editor: &EditorState, code: KeyCode) -> Option<Action> {
 #[test]
 fn view_produces_no_editing_action_for_the_usual_edit_keys() {
     let editor = view_editor();
-    // `i`/`a`/`o` は挿入、`x` は削除、`d` はオペレータ。Glide ではどれも効く。
-    for code in ['i', 'a', 'o', 'x', 'd', 'c', 'y', 'p', 'D', 'J', '~'] {
+    // `i`/`a`/`o` は挿入、`x` は削除、`c`/`y` はオペレータ。Glide ではどれも効く。
+    // ⚠️ `d` は Glide では Delete オペレータだが、View では `#18` で less の半ページ送り
+    // （`Action::HalfPageDown`）として引き受けた（下の検体で検証）。
+    for code in ['i', 'a', 'o', 'x', 'c', 'y', 'p', 'D', 'J', '~'] {
         let action = key(&editor, KeyCode::Char(code));
         assert!(
             action.is_none(),
@@ -269,4 +271,100 @@ fn opening_another_file_in_a_view_session_stays_read_only() {
     );
 
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+// ── 半ページ移動 (Issue #18) ──────────────────────────────────────────────────
+
+/// `View`（`czv`）では `d` / `u` および `Ctrl+D` / `Ctrl+U` で半ページ送り・戻しができる。
+#[test]
+fn view_mode_half_page_navigation_keys() {
+    let editor = view_editor();
+
+    // 1. 素の `d` と `u` (less の流儀・モバイル 1 タップ)
+    assert_eq!(
+        Keymap::map_key_to_action(&editor, KeyCode::Char('d'), KeyModifiers::NONE),
+        Some(Action::HalfPageDown),
+        "View で `d` が半ページ送りにならない"
+    );
+    assert_eq!(
+        Keymap::map_key_to_action(&editor, KeyCode::Char('u'), KeyModifiers::NONE),
+        Some(Action::HalfPageUp),
+        "View で `u` が半ページ戻しにならない"
+    );
+
+    // 2. `Ctrl+D` と `Ctrl+U` (vi / vim の流儀)
+    assert_eq!(
+        Keymap::map_key_to_action(&editor, KeyCode::Char('d'), KeyModifiers::CONTROL),
+        Some(Action::HalfPageDown),
+        "View で `Ctrl+D` が半ページ送りにならない"
+    );
+    assert_eq!(
+        Keymap::map_key_to_action(&editor, KeyCode::Char('u'), KeyModifiers::CONTROL),
+        Some(Action::HalfPageUp),
+        "View で `Ctrl+U` が半ページ戻しにならない"
+    );
+
+    // 🚨 陽性対照: Edit モードでは文字入力や大域ショートカットとして機能する
+    let mut edit = view_editor();
+    edit.mode = EditorMode::Edit;
+    assert_eq!(
+        Keymap::map_key_to_action(&edit, KeyCode::Char('d'), KeyModifiers::NONE),
+        Some(Action::InsertChar('d')),
+        "Edit で `d` が文字入力にならない"
+    );
+    assert_eq!(
+        Keymap::map_key_to_action(&edit, KeyCode::Char('d'), KeyModifiers::CONTROL),
+        Some(Action::ToggleMarkdownPreview),
+        "Edit で `Ctrl+D` が ToggleMarkdownPreview にならない"
+    );
+    assert_eq!(
+        Keymap::map_key_to_action(&edit, KeyCode::Char('u'), KeyModifiers::CONTROL),
+        Some(Action::ToggleFooter),
+        "Edit で `Ctrl+U` が ToggleFooter にならない"
+    );
+
+    // 🚨 陽性対照: Glide モードでは `d` は Delete オペレータ
+    let mut glide = view_editor();
+    glide.mode = EditorMode::Glide;
+    assert_eq!(
+        Keymap::map_key_to_action(&glide, KeyCode::Char('d'), KeyModifiers::NONE),
+        Some(Action::SetOperator(crate::glide::Operator::Delete)),
+        "Glide で `d` が Delete オペレータにならない"
+    );
+}
+
+/// `Action::HalfPageDown` / `HalfPageUp` が半画面（page_size / 2）分スクロールする。
+#[test]
+fn view_mode_half_page_scrolling() {
+    let mut editor = view_editor();
+    editor.page_size = 20; // 画面高さ 20 行 -> 半ページは 10 行
+    editor.scroll_offset = 0;
+    editor.cursor.y = 0;
+
+    // 半ページ送り: 10 行進む
+    reduce(&mut editor, Action::HalfPageDown);
+    assert_eq!(
+        editor.scroll_offset, 10,
+        "HalfPageDown で 10 行進んでいない"
+    );
+    assert_eq!(editor.cursor.y, 10);
+
+    // もう一度半ページ送り: さらに 10 行進んで 20 行目へ
+    reduce(&mut editor, Action::HalfPageDown);
+    assert_eq!(editor.scroll_offset, 20);
+    assert_eq!(editor.cursor.y, 20);
+
+    // 半ページ戻し: 10 行戻って 10 行目へ
+    reduce(&mut editor, Action::HalfPageUp);
+    assert_eq!(editor.scroll_offset, 10);
+    assert_eq!(editor.cursor.y, 10);
+
+    // さらに戻し: 0 行目へ
+    reduce(&mut editor, Action::HalfPageUp);
+    assert_eq!(editor.scroll_offset, 0);
+    assert_eq!(editor.cursor.y, 0);
+
+    // 0 行目からさらに上へ行っても 0 未満にはならない
+    reduce(&mut editor, Action::HalfPageUp);
+    assert_eq!(editor.scroll_offset, 0);
 }

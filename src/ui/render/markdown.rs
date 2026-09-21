@@ -1,3 +1,4 @@
+use crate::vendor::ratatui_markdown::{markdown::MarkdownRenderer, theme::ThemeConfig};
 use ratatui::{
     Frame,
     layout::Rect,
@@ -5,7 +6,6 @@ use ratatui::{
     text::Line,
     widgets::{Block, Paragraph},
 };
-use ratatui_markdown::{markdown::MarkdownRenderer, theme::ThemeConfig};
 
 use crate::state::EditorState;
 

@@ -10,6 +10,8 @@ pub enum Action {
     MoveRight,
     PageUp,
     PageDown,
+    HalfPageUp,
+    HalfPageDown,
     PageTop,
     PageBottom,
     FileTop,

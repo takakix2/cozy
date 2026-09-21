@@ -354,6 +354,23 @@ impl EditorState {
                     None,
                     false,
                 ),
+                crate::file_io::StartupDocument::Stdin {
+                    lines,
+                    format,
+                    truncated,
+                } => (
+                    lines,
+                    format,
+                    Some(PathBuf::from("<stdin>")),
+                    EditorMode::View,
+                    None,
+                    if truncated {
+                        Some("Input truncated at 64MB".to_string())
+                    } else {
+                        None
+                    },
+                    true,
+                ),
                 crate::file_io::StartupDocument::File {
                     path,
                     lines,

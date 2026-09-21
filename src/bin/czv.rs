@@ -16,6 +16,11 @@
 //! 📌 ∴ `[[bin]]` 2 本（11M → 22M）。同じコードを 2 度運ぶ分は、
 //! **どの入れ方でも確実に在る**ことの対価として払う。
 
-fn main() -> std::io::Result<()> {
-    cozy::run_cli_view_from_env()
+/// ⚠️ **`io::Result` をそのまま返さない** —— Rust の既定は `Error: Custom { kind: …, error: "…" }`
+/// と Debug 形で出す。`less` と同じく `czv: missing filename` の 1 行で、終了コード 1 で終わる（`#19`）。
+fn main() {
+    if let Err(e) = cozy::run_cli_view_from_env() {
+        eprintln!("czv: {e}");
+        std::process::exit(1);
+    }
 }

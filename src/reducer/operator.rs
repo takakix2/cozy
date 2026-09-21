@@ -74,10 +74,10 @@ pub fn apply_operator(
 /// The byte position one character past `pos` (clamped to the line end).
 fn advance_one_char(lines: &[String], pos: (usize, usize)) -> (usize, usize) {
     let (y, x) = pos;
-    if let Some(line) = lines.get(y) {
-        if let Some(ch) = line.get(x.min(line.len())..).and_then(|s| s.chars().next()) {
-            return (y, (x + ch.len_utf8()).min(line.len()));
-        }
+    if let Some(line) = lines.get(y)
+        && let Some(ch) = line.get(x.min(line.len())..).and_then(|s| s.chars().next())
+    {
+        return (y, (x + ch.len_utf8()).min(line.len()));
     }
     pos
 }

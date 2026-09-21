@@ -62,7 +62,7 @@ cozy <フォルダ名>
 - 通常検索、大文字小文字区別、単語境界、正規表現検索と置換
 - Undo/Redo、行カット、クリップボード貼り付け、行番号、行折り返し、行番号ジャンプ
 - Rust / Python / JavaScript / TypeScript / Go / JSON / TOML / Markdown の tree-sitter シンタックスハイライト
-- Mermaid 図ブロックも表示できる `ratatui-markdown` ベースの Markdown プレビューモード
+- Mermaid 図ブロックも表示できる Markdown プレビューモード（描画は `ratatui-markdown` から取り込んだコード）
 - Markdown プレビューでの高速な読書用操作
 - Glide モードによる vim 風の移動、operator、yank、change、delete、join、paste
 - TOML 設定とアクション単位のキーバインド上書き
@@ -93,7 +93,7 @@ Markdown プレビューは現在の文書を折り返し、コードブロッ�
 - **Open**: ファイルを開くダイアログ (`Ctrl+O`)。
 - **Browse**: フルスクリーンのファイルツリー (`Ctrl+B`、または tmux 内では prefix と衝突するため `F3`)。
 - **Command**: コマンドパレット (`Ctrl+P`)。
-- **Markdown**: `ratatui-markdown` を使った Markdown 読書モード (`F2` または `Ctrl+D`)。
+- **Markdown**: Markdown 読書モード (`F2` または `Ctrl+D`)。
 - **Help**: ヘルプ画面 (`Ctrl+H` または `F1`)。
 
 ## キーバインド
@@ -177,7 +177,7 @@ Markdown プレビューは現在の文書を折り返し、コードブロッ�
 
 ## Markdown プレビュー
 
-`F2` または `Ctrl+D` で Markdown プレビューに入ります。README、実装計画、メモなどの Markdown を素早く読むための読み取り専用ビューです。cozy は現在 `ratatui-markdown` を使ってレンダリングしているので、見出し、リスト、引用、inline code、折り返し段落、fenced code block、Mermaid 図ブロックは手書きの整形ではなく renderer の出力に従います。
+`F2` または `Ctrl+D` で Markdown プレビューに入ります。README、実装計画、メモなどの Markdown を素早く読むための読み取り専用ビューです。描画には `ratatui-markdown` から取り込んだコードを使っているので（ratatui 0.30 へ移ったときに cozy の中へ取り込んだ）、見出し、リスト、引用、inline code、折り返し段落、fenced code block、Mermaid 図ブロックは手書きの整形ではなく renderer の出力に従います。
 
 - 移動: `j`/`k` または `Up`/`Down`
 - ページ移動: `PageUp` / `PageDown`

@@ -59,12 +59,12 @@ fn apply_glide_move(editor: &mut EditorState, motion: crate::glide::Motion) -> E
 /// shrinks the list after a stage. Keeps DiffReview mode (empty list renders a
 /// "no changes" surface) rather than bouncing the user out.
 fn reload_diff_review(editor: &mut EditorState, dir: &std::path::Path) {
-    if let Ok(hunks) = crate::state::diff::load_git_diff(dir) {
-        if let Some(dr) = editor.diff_review.as_mut() {
-            dr.current = dr.current.min(hunks.len().saturating_sub(1));
-            dr.hunks = hunks;
-            dr.scroll = 0;
-        }
+    if let Ok(hunks) = crate::state::diff::load_git_diff(dir)
+        && let Some(dr) = editor.diff_review.as_mut()
+    {
+        dr.current = dr.current.min(hunks.len().saturating_sub(1));
+        dr.hunks = hunks;
+        dr.scroll = 0;
     }
 }
 
@@ -189,6 +189,16 @@ pub fn apply_editor_event(editor: &mut EditorState, action: &Action) -> EventRes
             &mut editor.cursor,
             &editor.buffer.lines,
             editor.page_size,
+        ),
+        Action::HalfPageUp => crate::reducer::cursor::page_up(
+            &mut editor.cursor,
+            &editor.buffer.lines,
+            (editor.page_size / 2).max(1),
+        ),
+        Action::HalfPageDown => crate::reducer::cursor::page_down(
+            &mut editor.cursor,
+            &editor.buffer.lines,
+            (editor.page_size / 2).max(1),
         ),
         // Glide motion engine: a motion resolves to a target. With a pending
         // operator it defines the span to act on; otherwise it moves the cursor.

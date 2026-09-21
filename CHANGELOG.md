@@ -1,5 +1,22 @@
 # Changelog
 
+## v0.2.34
+
+### Added
+
+- **`czv` accepts piped input (`git log | czv`, `czv -`).** `czv` can now be used as a `$PAGER`. To prevent memory exhaustion from infinite streams (such as `yes | czv`), reading is capped at 64MB with a visible `[truncated]` notice. Automatic character encoding (UTF-8, Shift_JIS, EUC-JP) and line ending (CRLF/LF) detection apply to piped input as well.
+- **Half-page scrolling in `czv` and read views.** Added `d` / `Ctrl+D` (half-page down) and `u` / `Ctrl+U` (half-page up) in `czv`, Help, and Markdown preview.
+- **Exit with code 1 and clean message (`czv: missing filename`)** when `czv` is invoked in a terminal without a filename or piped input.
+
+### Fixed
+
+- **Pasting text into footer prompts.** Bracketed paste (`Ctrl+Shift+V` / terminal paste) and `Ctrl+V` are now routed to Search, Replace, Save, Open, Goto, Command Palette, and Commit Message prompts instead of being silently dropped.
+- **`make install` installs both `cozy` and `czv`** and uses `install -m 755` instead of `cp` to prevent ETXTBSY on active binaries.
+
+### Changed
+
+- **Minimum Supported Rust Version (MSRV) raised to 1.88.** Upgraded ratatui to 0.30 and crossterm to 0.29. Embedded vendored ratatui-markdown parsing code for Mermaid diagrams (licensed under MIT OR Apache-2.0).
+
 ## v0.2.33
 
 ### Added

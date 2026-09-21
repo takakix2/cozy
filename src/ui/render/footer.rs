@@ -548,10 +548,10 @@ fn match_count_str(editor: &EditorState) -> String {
 }
 
 fn inline_status(editor: &EditorState) -> String {
-    if let Some(msg) = &editor.status_message {
-        if editor.should_show_status() {
-            return format!("   {}", msg);
-        }
+    if let Some(msg) = &editor.status_message
+        && editor.should_show_status()
+    {
+        return format!("   {}", msg);
     }
     String::new()
 }
@@ -853,7 +853,10 @@ fn render_read_shortcuts(editor: &EditorState, f: &mut Frame, area: Rect) {
             layout[1],
         );
         f.render_widget(
-            Paragraph::new(compact_line(editor, &[("Spc/b · PgUp/Dn", "Page")])),
+            // 🚚 2026-09-13: `Spc/b · PgUp/Dn Page` だった —— 🧑 から「`Spc` が何か分からない」
+            // 「モバイルに PgUp/Dn は無い」と読まれた。⭐ 向きを矢印で書く（Space ＝ 下・b ＝ 上）。
+            // 📌 PgUp/PgDn は物理キーボードならそのまま効くので名前は出さない。`/` の区切りも減る（`#13`）。
+            Paragraph::new(compact_line(editor, &[("Spc", "Page↓"), ("b", "Page↑")])),
             layout[2],
         );
         f.render_widget(
@@ -879,7 +882,12 @@ fn render_read_shortcuts(editor: &EditorState, f: &mut Frame, area: Rect) {
             Paragraph::new(shortcut_line(
                 editor,
                 narrow,
-                &[("Spc/f/b · PgUp/PgDn", "Page"), ("Esc", "Return")],
+                // 🚚 2026-09-14: `Spc/f/b · PgUp/PgDn Page` だった —— narrow 側（`#13`）と同じ綴りへ。
+                // 🚨 **直しが自分の狙った面に届いていなかった** —— 📏 Android のタブレット（TB330FU）は
+                // 縦でも端末が **74 桁**で `< 50` に入らないので、**モバイルなのにこちらが出る** ＝
+                // 消したかった `PgUp/PgDn` が電話以外のモバイルに残っていた（2026-09-14 実測）。
+                // ⭐ 名前を出さない理由は幅ではない（物理キーボードならそのまま効く）ので、広い方にも効く。
+                &[("Spc", "Page↓"), ("b", "Page↑"), ("Esc", "Return")],
             )),
             layout[1],
         );
@@ -919,7 +927,10 @@ fn render_view_shortcuts(editor: &EditorState, f: &mut Frame, area: Rect) {
             layout[1],
         );
         f.render_widget(
-            Paragraph::new(compact_line(editor, &[("Spc/b · PgUp/Dn", "Page")])),
+            // 🚚 2026-09-13: `Spc/b · PgUp/Dn Page` だった —— 🧑 から「`Spc` が何か分からない」
+            // 「モバイルに PgUp/Dn は無い」と読まれた。⭐ 向きを矢印で書く（Space ＝ 下・b ＝ 上）。
+            // 📌 PgUp/PgDn は物理キーボードならそのまま効くので名前は出さない。`/` の区切りも減る（`#13`）。
+            Paragraph::new(compact_line(editor, &[("Spc", "Page↓"), ("b", "Page↑")])),
             layout[2],
         );
         f.render_widget(
@@ -945,7 +956,8 @@ fn render_view_shortcuts(editor: &EditorState, f: &mut Frame, area: Rect) {
             Paragraph::new(shortcut_line(
                 editor,
                 narrow,
-                &[("Spc/f/b · PgUp/PgDn", "Page"), ("q", "Quit")],
+                // 🚚 2026-09-14: 上の `render_read_shortcuts` と同じ理由で綴りを揃えた（`#13`）。
+                &[("Spc", "Page↓"), ("b", "Page↑"), ("q", "Quit")],
             )),
             layout[1],
         );
@@ -1764,6 +1776,57 @@ mod tests {
         assert_compact_fits(&editor, &[("^S", "Save"), ("^B", "Browse"), ("^X", "Exit")]);
     }
 
+    /// ⭐ **ページの行は向きを矢印で名乗る**（2026-09-13）—— `Spc/b · PgUp/Dn Page` は
+    /// 🧑 から「`Spc` が何か分からない」「モバイルに PgUp/Dn は無い」と読まれた。
+    /// 📌 czv（View）と Help / Markdown の閲覧画面は同じ行を持つので、両方を描いて見る。
+    #[test]
+    fn narrow_read_footers_name_the_page_direction() {
+        for mode in [EditorMode::View, EditorMode::Help] {
+            let editor = editor_in_mode(mode);
+            let lines = render_footer_lines(&editor, 26, 4);
+            assert!(
+                lines.iter().any(|l| l.trim_end() == "Spc Page↓ b Page↑"),
+                "{mode:?}: {lines:?}"
+            );
+            assert!(
+                !lines.iter().any(|l| l.contains("PgUp/Dn")),
+                "{mode:?}: {lines:?}"
+            );
+        }
+    }
+
+    /// ⭐ **広い方も同じ綴りで名乗る**（2026-09-14）—— 🧑「広い方も文言あわせたほうがいいね」。
+    ///
+    /// 🚨 **上の narrow の検体だけでは、直しが届いていないことを捕まえられなかった。**
+    /// 📏 2026-09-14 に Android の実機（TB330FU）で測ったら、**縦でも端末は 74 桁**で
+    /// `area.width < 50` に入らず、**モバイルなのに広い方の帯が出た** ＝ `#13` が消したかった
+    /// `PgUp/PgDn` が画面に残っていた。⭐⭐ **「電話で直った」は「モバイルで直った」ではない。**
+    /// ∴ 幅の両側に検体を置く（50 の下と上）。
+    #[test]
+    fn wide_read_footers_name_the_page_direction_too() {
+        for mode in [EditorMode::View, EditorMode::Help] {
+            let editor = editor_in_mode(mode);
+            // 📌 74 は実機（TB330FU・縦）の実測値。`< 50` の外に居ることが要点。
+            let lines = render_footer_lines(&editor, 74, 2);
+            assert!(
+                lines
+                    .iter()
+                    .any(|l| l.contains("Spc") && l.contains("Page↓")),
+                "{mode:?}: {lines:?}"
+            );
+            assert!(
+                lines.iter().any(|l| l.contains('b') && l.contains("Page↑")),
+                "{mode:?}: {lines:?}"
+            );
+            assert!(
+                !lines
+                    .iter()
+                    .any(|l| l.contains("PgUp") || l.contains("PgDn")),
+                "{mode:?}: {lines:?}"
+            );
+        }
+    }
+
     #[test]
     fn narrow_shortcut_rows_fit_iphone_width() {
         let editor = EditorState::new(Some("smoke.txt".to_string()));
@@ -1787,6 +1850,7 @@ mod tests {
             &[("jk/↑↓", "Move"), ("gg/G", "Top/Bot")],
             &[("H/M/L", "Screen")],
             &[("PgUp/PgDn", "Page")],
+            &[("Spc", "Page↓"), ("b", "Page↑")],
             &[("Esc", "Return")],
             &[("↑↓/jk", "Select"), ("Enter", "Run")],
             &[("Tab", "Complete"), ("Esc", "Return")],

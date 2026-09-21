@@ -7,10 +7,10 @@ use regex::Regex;
 /// `${name}` capture references are substituted from `matched`; other modes
 /// treat the replacement literally (so `$` stays a plain character there).
 fn expand_replacement(matched: &str, query: &str, replacement: &str, mode: &SearchMode) -> String {
-    if let SearchMode::Regex = mode {
-        if let Ok(re) = Regex::new(query) {
-            return re.replace(matched, replacement).into_owned();
-        }
+    if let SearchMode::Regex = mode
+        && let Ok(re) = Regex::new(query)
+    {
+        return re.replace(matched, replacement).into_owned();
     }
     replacement.to_string()
 }
@@ -30,6 +30,29 @@ pub fn update_replace_buffer(editor: &mut EditorState, c: char) {
         if pos <= buf.len() && buf.is_char_boundary(pos) {
             buf.insert(pos, c);
             editor.search_cursor = pos + c.len_utf8();
+        }
+    }
+}
+
+pub fn insert_str_to_replace_buffer(editor: &mut EditorState, s: &str) {
+    let clean: String = s.chars().filter(|&c| c != '\n' && c != '\r').collect();
+    if clean.is_empty() {
+        return;
+    }
+    let pos = editor.search_cursor;
+    if editor.replace_focus == ReplaceFocus::Query {
+        let buf = &mut editor.search_buffer;
+        if pos <= buf.len() && buf.is_char_boundary(pos) {
+            buf.insert_str(pos, &clean);
+            editor.search_cursor = pos + clean.len();
+        }
+        crate::reducer::search::recompute_matches(editor);
+        crate::reducer::search::focus_nearest_match(editor);
+    } else {
+        let buf = &mut editor.replace_buffer;
+        if pos <= buf.len() && buf.is_char_boundary(pos) {
+            buf.insert_str(pos, &clean);
+            editor.search_cursor = pos + clean.len();
         }
     }
 }

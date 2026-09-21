@@ -18,6 +18,16 @@ pub fn input_char(editor: &mut EditorState, c: char) -> EventResult {
     EventResult::Continue
 }
 
+pub fn input_str(editor: &mut EditorState, s: &str) -> EventResult {
+    let clean: String = s.chars().filter(|&c| c != '\n' && c != '\r').collect();
+    if clean.is_empty() {
+        return EventResult::Continue;
+    }
+    editor.command_query.push_str(&clean);
+    clamp_selection(editor);
+    EventResult::Continue
+}
+
 pub fn backspace(editor: &mut EditorState) -> EventResult {
     editor.command_query.pop();
     clamp_selection(editor);
@@ -41,11 +51,11 @@ pub fn move_down(editor: &mut EditorState) -> EventResult {
 }
 
 pub fn complete(editor: &mut EditorState) -> EventResult {
-    if let Some(completion) = commands::label_completion(&editor.command_query) {
-        if completion.len() > editor.command_query.len() {
-            editor.command_query = completion;
-            clamp_selection(editor);
-        }
+    if let Some(completion) = commands::label_completion(&editor.command_query)
+        && completion.len() > editor.command_query.len()
+    {
+        editor.command_query = completion;
+        clamp_selection(editor);
     }
     EventResult::Continue
 }

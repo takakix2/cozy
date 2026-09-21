@@ -15,6 +15,21 @@ pub fn update_search_buffer(editor: &mut EditorState, c: char) {
     focus_nearest_match(editor);
 }
 
+pub fn insert_str_to_search_buffer(editor: &mut EditorState, s: &str) {
+    let clean: String = s.chars().filter(|&c| c != '\n' && c != '\r').collect();
+    if clean.is_empty() {
+        return;
+    }
+    let pos = editor.search_cursor;
+    let buf = &mut editor.search_buffer;
+    if pos <= buf.len() && buf.is_char_boundary(pos) {
+        buf.insert_str(pos, &clean);
+        editor.search_cursor = pos + clean.len();
+    }
+    recompute_matches(editor);
+    focus_nearest_match(editor);
+}
+
 pub fn delete_from_search_buffer(editor: &mut EditorState) {
     let pos = editor.search_cursor;
     if pos == 0 {

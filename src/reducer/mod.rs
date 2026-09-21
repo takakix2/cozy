@@ -16,6 +16,8 @@ pub mod status;
 #[cfg(test)]
 mod editor_test;
 #[cfg(test)]
+mod paste_test;
+#[cfg(test)]
 mod view_test;
 
 use crate::action::Action;
@@ -80,11 +82,11 @@ fn view_page_step(editor: &EditorState) -> usize {
 /// Move the highlighted hunk in session diff review. The render layer keeps it
 /// on screen by adjusting its own scroll offset.
 fn diff_move_hunk(editor: &mut EditorState, delta: isize) -> EventResult {
-    if let Some(dr) = editor.diff_review.as_mut() {
-        if !dr.hunks.is_empty() {
-            let max = dr.hunks.len() as isize - 1;
-            dr.current = (dr.current as isize + delta).clamp(0, max) as usize;
-        }
+    if let Some(dr) = editor.diff_review.as_mut()
+        && !dr.hunks.is_empty()
+    {
+        let max = dr.hunks.len() as isize - 1;
+        dr.current = (dr.current as isize + delta).clamp(0, max) as usize;
     }
     EventResult::Continue
 }
@@ -538,6 +540,36 @@ pub fn reduce(editor: &mut EditorState, action: Action) -> EventResult {
             } else if let Some(view) = read_view(&editor.mode) {
                 let n = take_read_count_opt(editor).unwrap_or(1);
                 move_read_cursor(editor, view, (rv_page_step(editor, view) * n) as isize);
+                EventResult::Continue
+            } else {
+                editor::apply_editor_event(editor, &action)
+            }
+        }
+        Action::HalfPageUp => {
+            if editor.mode == crate::state::EditorMode::View {
+                let n = take_read_count_opt(editor).unwrap_or(1);
+                let step = (view_page_step(editor) / 2).max(1);
+                view_scroll(editor, -((step * n) as isize));
+                EventResult::Continue
+            } else if let Some(view) = read_view(&editor.mode) {
+                let n = take_read_count_opt(editor).unwrap_or(1);
+                let step = (rv_page_step(editor, view) / 2).max(1);
+                move_read_cursor(editor, view, -((step * n) as isize));
+                EventResult::Continue
+            } else {
+                editor::apply_editor_event(editor, &action)
+            }
+        }
+        Action::HalfPageDown => {
+            if editor.mode == crate::state::EditorMode::View {
+                let n = take_read_count_opt(editor).unwrap_or(1);
+                let step = (view_page_step(editor) / 2).max(1);
+                view_scroll(editor, (step * n) as isize);
+                EventResult::Continue
+            } else if let Some(view) = read_view(&editor.mode) {
+                let n = take_read_count_opt(editor).unwrap_or(1);
+                let step = (rv_page_step(editor, view) / 2).max(1);
+                move_read_cursor(editor, view, (step * n) as isize);
                 EventResult::Continue
             } else {
                 editor::apply_editor_event(editor, &action)

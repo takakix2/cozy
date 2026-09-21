@@ -5,7 +5,7 @@ use crossterm::{
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
-use std::io;
+use std::io::{self, IsTerminal};
 
 struct TerminalSession {
     raw_mode_enabled: bool,
@@ -84,6 +84,16 @@ pub fn run_cli_view(filename: Option<String>) -> io::Result<()> {
 }
 
 fn run_cli_mode(filename: Option<String>, view: bool) -> io::Result<()> {
+    // ⭐ `czv`（view: true）でパイプ入力（stdin が tty でない）または明示の "-" の場合、
+    // 標準入力からの読み込みとして受け入れる（#15）。
+    // ⚠️ 編集面（view: false）では受けない —— 保存先のない編集面は作らない（#15 決定事項）。
+    let filename = if view
+        && (filename.as_deref() == Some("-") || (filename.is_none() && !io::stdin().is_terminal()))
+    {
+        Some("-".to_string())
+    } else {
+        filename
+    };
     let config = CozyConfig {
         filename,
         view,
@@ -124,6 +134,11 @@ fn args_or_version(name: &str) -> Option<Option<String>> {
 
 /// Run with CLI terminal setup using an explicit configuration.
 pub fn run_cli_with_config(config: CozyConfig) -> io::Result<()> {
+    // ⭐ 端末に触る**前**に断る（`#19`）—— `run()` にも同じ判定が在るが、そこまで行くと
+    // raw モードと代替画面に一度入ってから出ることになり、画面が一瞬ちらつく。
+    if let Some(e) = crate::missing_input(&config) {
+        return Err(e);
+    }
     let _session = TerminalSession::enter(TerminalSessionConfig::from(&config))?;
     let mut event_src = CrosstermEventSource;
     run(io::stdout(), config, &mut event_src)

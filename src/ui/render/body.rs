@@ -311,10 +311,10 @@ fn render_line_range(
                 default_style.patch(editor.highlighter.style_at(y, byte_pos).unwrap_or_default());
             // Yank flash (green): shown until the next keypress so you can see
             // what was just copied. A live search match still wins over it.
-            if let Some(hl) = &editor.yank_highlight {
-                if hl.contains(y, byte_pos) {
-                    final_style = final_style.bg(Color::Green).fg(Color::Black);
-                }
+            if let Some(hl) = &editor.yank_highlight
+                && hl.contains(y, byte_pos)
+            {
+                final_style = final_style.bg(Color::Green).fg(Color::Black);
             }
             if let Some(&(ms, me)) = line_matches
                 .iter()
