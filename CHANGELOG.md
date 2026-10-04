@@ -1,5 +1,26 @@
 # Changelog
 
+## v0.2.36
+
+### Added
+
+- **`n` / `N` in `czv` step through search hits.** In `czv`, `Enter` in the search prompt
+  now confirms the search and returns to the page with the hits still highlighted
+  (`Ctrl+N` / `Ctrl+P` still step inside the prompt). From the page, `n` and `N` go to
+  the next and previous hit, wrapping at the ends. While the current hit is on screen
+  they step from it; once you have scrolled away they start from what you are looking
+  at, as `less` does.
+- **`zz` / `zt` / `zb` in `czv`** put the current search hit at the middle, top or bottom
+  of the screen. With no search, they do nothing.
+- **Help lists the `czv` keys.** Both Help layouts gain a `czv (pager)` section — paging,
+  half-page, search, `n` / `N`, `zz` / `zt` / `zb` and the ways out. Until now the pager's
+  keys were shown nowhere on screen.
+
+### Unchanged
+
+- `Esc` still quits `czv`; the highlight goes with it. The editor's search prompt keeps
+  `Enter` = next match.
+
 ## v0.2.35
 
 ### Added

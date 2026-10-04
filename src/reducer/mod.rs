@@ -400,8 +400,17 @@ pub fn reduce(editor: &mut EditorState, action: Action) -> EventResult {
         Action::PasteFromClipboard => clipboard::paste_from_clipboard(editor),
         Action::ReplaceCurrent => replace::apply_replace_current(editor),
         Action::ReplaceAll => replace::apply_replace_all(editor),
+        // ⭐ View（`czv`）の `n` / `N` は閲覧専用の起点で送る（`#18`）。欄の中は従来どおり。
+        Action::SearchNext if editor.mode == crate::state::EditorMode::View => {
+            search::apply_view_search_step(editor, true)
+        }
+        Action::SearchPrevious if editor.mode == crate::state::EditorMode::View => {
+            search::apply_view_search_step(editor, false)
+        }
         Action::SearchNext => search::apply_search_next(editor),
         Action::SearchPrevious => search::apply_search_previous(editor),
+        Action::SearchConfirm => search::apply_search_confirm(editor),
+        Action::AlignMatch(align) => search::apply_align_match(editor, align),
         Action::ToggleSearchMode => search::apply_toggle_search_mode(editor),
         Action::SwitchFocus => replace::apply_switch_focus(editor),
         Action::MoveLeft => {

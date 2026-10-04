@@ -1,4 +1,4 @@
-use crate::action::Action;
+use crate::action::{Action, MatchAlign};
 use crate::glide::{FindKind, Motion, Operator};
 use crate::shortcuts::EditorAction;
 use crate::state::key::{KeyCode, KeyModifiers};
@@ -114,6 +114,9 @@ impl Keymap {
                     // Context-dependent Enter handling
                     return match editor.mode {
                         EditorMode::Welcome => Some(Action::EnterMode(editor.home_mode())),
+                        // ⭐ 閲覧の席では `Enter` は**確定**（ヒットを持って View へ戻る・`#18`）。
+                        // 欄の中で送る道は `Ctrl+N` / `Ctrl+P` に残る。編集面は従来どおり「次へ」。
+                        EditorMode::Search if editor.view_session => Some(Action::SearchConfirm),
                         EditorMode::Search => Some(Action::SearchNext),
                         EditorMode::Replace => Some(Action::ReplaceCurrent),
                         EditorMode::Save => Some(Action::Save(editor.save_filename_buffer.clone())),
@@ -170,6 +173,10 @@ impl Keymap {
                 if let Some(prefix) = editor.glide_prefix {
                     return match (prefix, code) {
                         ('g', KeyCode::Char('g')) => Some(Action::GlideMove(Motion::FileTop)),
+                        // `zz` / `zt` / `zb`: 注目中の検索ヒットを寄せる（View だけ・`#18`）
+                        ('z', KeyCode::Char('z')) => Some(Action::AlignMatch(MatchAlign::Center)),
+                        ('z', KeyCode::Char('t')) => Some(Action::AlignMatch(MatchAlign::Top)),
+                        ('z', KeyCode::Char('b')) => Some(Action::AlignMatch(MatchAlign::Bottom)),
                         _ => Some(Action::SetGlidePrefix(None)),
                     };
                 }
@@ -315,6 +322,10 @@ impl Keymap {
                 if let Some(prefix) = editor.glide_prefix {
                     return match (prefix, code) {
                         ('g', KeyCode::Char('g')) => Some(Action::GlideMove(Motion::FileTop)),
+                        // `zz` / `zt` / `zb`: 注目中の検索ヒットを寄せる（View だけ・`#18`）
+                        ('z', KeyCode::Char('z')) => Some(Action::AlignMatch(MatchAlign::Center)),
+                        ('z', KeyCode::Char('t')) => Some(Action::AlignMatch(MatchAlign::Top)),
+                        ('z', KeyCode::Char('b')) => Some(Action::AlignMatch(MatchAlign::Bottom)),
                         _ => Some(Action::SetGlidePrefix(None)),
                     };
                 }
@@ -374,6 +385,18 @@ impl Keymap {
                     // 「どうやって抜けるのか」なので、そこを繰り返さない。
                     // 📌 `Ctrl+Q` も `Esc` も残る（大域表と `Cancel`）。3 つとも効く。
                     KeyCode::Char('q') if editor.mode == EditorMode::View => Some(Action::Quit),
+                    // ⭐ **検索を閲覧へ持ち帰ったので、送る鍵も閲覧に置く**（`#18`）。
+                    // 🚨 Help / Markdown には効かせない（`/` と同じ理由 —— 検索はバッファを見る）。
+                    // 📌 `z` は `zz`/`zt`/`zb` の前置。画像ビューアの `z`（fit ↔ 等倍）は別の画面。
+                    KeyCode::Char('n') if editor.mode == EditorMode::View => {
+                        Some(Action::SearchNext)
+                    }
+                    KeyCode::Char('N') if editor.mode == EditorMode::View => {
+                        Some(Action::SearchPrevious)
+                    }
+                    KeyCode::Char('z') if editor.mode == EditorMode::View => {
+                        Some(Action::SetGlidePrefix(Some('z')))
+                    }
                     // ⭐ `F2`: Markdown ファイルなら整形プレビューへ（`#20` Phase 2・czv でも
                     // 見られるように・決定 2026-10-03）。🚨 **Ctrl+D は半ページ送りのまま**
                     // （上の HalfPageDown）—— vi/less の指を壊さないので、切替は F2 に置く。

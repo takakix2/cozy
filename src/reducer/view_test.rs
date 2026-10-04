@@ -395,3 +395,201 @@ fn view_mode_half_page_scrolling() {
     reduce(&mut editor, Action::HalfPageUp);
     assert_eq!(editor.scroll_offset, 0);
 }
+
+// ── ④ 検索を閲覧へ持ち帰る —— `Enter` で確定・`n`/`N`・`zz`/`zt`/`zb`（`#18`）────────
+//
+// ⭐ 基準は「注目中のヒット」。カーソルではない（スクロールで先頭行へ戻されるので）。
+
+/// 100 行のうち 10 行おき（9, 19, …, 99 行目 ＝ 0 起点）に `hit` が居るバッファ。
+fn hits_editor() -> EditorState {
+    let mut editor = view_editor();
+    editor.view_session = true;
+    editor.buffer = TextBuffer::from_lines(
+        (1..=100)
+            .map(|n| {
+                if n % 10 == 0 {
+                    format!("{n} hit")
+                } else {
+                    format!("{n} plain")
+                }
+            })
+            .collect::<Vec<_>>(),
+    );
+    editor.page_size = 20;
+    editor
+}
+
+/// `/hit` と打って `Enter` まで押す（鍵の対応表を通す）。
+fn search_hit_and_enter(editor: &mut EditorState) {
+    let slash = key(editor, KeyCode::Char('/')).expect("`/` が無反応");
+    reduce(editor, slash);
+    for c in "hit".chars() {
+        let a = key(editor, KeyCode::Char(c)).expect("検索欄で文字が無反応");
+        reduce(editor, a);
+    }
+    let enter = key(editor, KeyCode::Enter).expect("検索欄で `Enter` が無反応");
+    reduce(editor, enter);
+}
+
+#[test]
+fn enter_confirms_the_search_and_keeps_the_hits_in_a_view_session() {
+    let mut editor = hits_editor();
+    search_hit_and_enter(&mut editor);
+    assert_eq!(
+        editor.mode,
+        EditorMode::View,
+        "`Enter` で閲覧へ戻っていない"
+    );
+    assert_eq!(
+        editor.search_matches.len(),
+        10,
+        "ヒットが閲覧へ持ち帰られていない"
+    );
+    assert_eq!(editor.search_current, 0);
+    assert_eq!(editor.cursor.y, 9, "最初のヒットに居ない");
+}
+
+/// 🚨 **陽性対照。** 閲覧の席でなければ `Enter` は従来どおり「次へ」で、欄に居続ける。
+#[test]
+fn enter_still_means_next_outside_a_view_session() {
+    let mut editor = hits_editor();
+    editor.view_session = false;
+    editor.enter_mode(EditorMode::Glide);
+    search_hit_and_enter(&mut editor);
+    assert_eq!(
+        editor.mode,
+        EditorMode::Search,
+        "編集面の `Enter` が確定に化けた"
+    );
+    assert_eq!(
+        editor.search_current, 1,
+        "編集面の `Enter` が次へ送っていない"
+    );
+}
+
+#[test]
+fn n_and_shift_n_step_through_the_hits_in_view_and_wrap() {
+    let mut editor = hits_editor();
+    search_hit_and_enter(&mut editor);
+
+    let n = key(&editor, KeyCode::Char('n')).expect("View で `n` が無反応");
+    reduce(&mut editor, n);
+    assert_eq!((editor.search_current, editor.cursor.y), (1, 19));
+
+    let shift_n = key(&editor, KeyCode::Char('N')).expect("View で `N` が無反応");
+    reduce(&mut editor, shift_n.clone());
+    assert_eq!((editor.search_current, editor.cursor.y), (0, 9));
+    // 先頭から戻ると末尾へ折り返す。
+    reduce(&mut editor, shift_n);
+    assert_eq!((editor.search_current, editor.cursor.y), (9, 99));
+}
+
+/// ⭐ 注目中のヒットが見えなくなるまでスクロールしたら、`n` は**いま見ている所から**最寄りへ。
+/// 📌 見えているうちは「そこから 1 つ先」—— 1 行スクロールしただけで留まらない。
+#[test]
+fn n_starts_from_the_screen_once_the_current_hit_scrolled_away() {
+    let mut editor = hits_editor();
+    search_hit_and_enter(&mut editor); // 注目 = 9 行目
+
+    // 1 行だけ送る: 9 行目はまだ見えている（先頭 1・page 20）→ 次の 19 行目へ。
+    reduce(&mut editor, Action::MoveDown);
+    reduce(&mut editor, Action::SearchNext);
+    assert_eq!(
+        editor.cursor.y, 19,
+        "見えているヒットから 1 つ先へ送れていない"
+    );
+
+    // 先頭を 55 行目まで送る（注目の 19 行目は見えない）→ 55 以降の最寄り ＝ 59 行目。
+    editor.scroll_offset = 55;
+    editor.cursor.y = 55;
+    reduce(&mut editor, Action::SearchNext);
+    assert_eq!(editor.cursor.y, 59, "いま見ている所から送っていない");
+
+    // 同じく先頭 55 から `N` ＝ 55 より上の最寄り ＝ 49 行目。
+    editor.scroll_offset = 55;
+    editor.cursor.y = 55;
+    editor.search_current = 0; // 9 行目 ＝ 見えていない
+    reduce(&mut editor, Action::SearchPrevious);
+    assert_eq!(editor.cursor.y, 49, "いま見ている所から戻っていない");
+}
+
+#[test]
+fn zz_zt_zb_put_the_current_hit_at_the_middle_top_and_bottom() {
+    let mut editor = hits_editor();
+    search_hit_and_enter(&mut editor);
+    reduce(&mut editor, Action::SearchNext);
+    reduce(&mut editor, Action::SearchNext); // 注目 = 29 行目
+    assert_eq!(editor.cursor.y, 29);
+
+    for (second, top) in [('z', 19), ('t', 29), ('b', 10)] {
+        editor.scroll_offset = 0;
+        let z = key(&editor, KeyCode::Char('z')).expect("View で `z` が無反応");
+        reduce(&mut editor, z);
+        let a = key(&editor, KeyCode::Char(second)).expect("`z` の後の 2 打鍵目が無反応");
+        reduce(&mut editor, a);
+        assert_eq!(editor.scroll_offset, top, "`z{second}` の先頭行が違う");
+        assert_eq!(editor.cursor.y, 29, "`z{second}` でヒットから離れた");
+        assert_eq!(editor.glide_prefix, None, "`z{second}` の後に前置が残った");
+    }
+}
+
+/// 📌 ヒットが無ければ動かない。🚨 取り消した検索が `n` で蘇らないこと —— 欄の文字は
+/// 残っているので、`apply_search_next` のように数え直すと蘇る。
+#[test]
+fn without_hits_n_and_zz_do_nothing_and_a_cancelled_search_stays_cancelled() {
+    let mut editor = hits_editor();
+    let slash = key(&editor, KeyCode::Char('/')).unwrap();
+    reduce(&mut editor, slash);
+    for c in "hit".chars() {
+        let a = key(&editor, KeyCode::Char(c)).unwrap();
+        reduce(&mut editor, a);
+    }
+    let esc = Keymap::map_key_to_action(&editor, KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    reduce(&mut editor, esc);
+    assert_eq!(editor.mode, EditorMode::View);
+    assert!(
+        editor.search_matches.is_empty(),
+        "`Esc` でヒットが消えていない"
+    );
+
+    editor.scroll_offset = 40;
+    editor.cursor.y = 40;
+    reduce(&mut editor, Action::SearchNext);
+    reduce(
+        &mut editor,
+        Action::AlignMatch(crate::action::MatchAlign::Center),
+    );
+    assert!(
+        editor.search_matches.is_empty(),
+        "取り消した検索が `n` で蘇った"
+    );
+    assert_eq!(
+        (editor.scroll_offset, editor.cursor.y),
+        (40, 40),
+        "ヒットが無いのに動いた"
+    );
+}
+
+/// 🚨 `n` / `z` は View だけ。Help / Markdown は専用の中身を描いており、検索が見るのは
+/// バッファなので、効かせると画面に無い物を送り始める（`/` と同じ線）。
+#[test]
+fn n_and_z_are_view_only() {
+    let mut editor = hits_editor();
+    for mode in [EditorMode::Help, EditorMode::Markdown] {
+        editor.enter_mode(mode);
+        assert_eq!(
+            key(&editor, KeyCode::Char('n')),
+            None,
+            "{mode:?} で `n` が効いた"
+        );
+        assert_eq!(
+            key(&editor, KeyCode::Char('z')),
+            None,
+            "{mode:?} で `z` が効いた"
+        );
+    }
+    // 陽性対照: View では両方とも何かを産む。
+    editor.enter_mode(EditorMode::View);
+    assert!(key(&editor, KeyCode::Char('n')).is_some());
+    assert!(key(&editor, KeyCode::Char('z')).is_some());
+}

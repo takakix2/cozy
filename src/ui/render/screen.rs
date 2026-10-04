@@ -325,6 +325,20 @@ fn render_help_narrow(editor: &mut EditorState, f: &mut Frame, area: Rect) {
             k(A::ToggleMarkdownPreview)
         )),
         Line::from(""),
+        // ⭐ 広い版の `=== czv (pager) ===` と同じ中身（`/` を行頭のセルに置くのは
+        //    `a_slash_in_help_is_always_part_of_a_key_name` の約束 —— 区切りの `/` と見分ける）。
+        Line::from(Span::styled("── czv (pager) ────────────", hdr)),
+        shortcut_pair("Spc", "Page↓", "b", "Page↑", col, 0),
+        shortcut_pair("f", "Page↓", "q", "Quit", col, 0),
+        // ⚠️ `^D` / `^U` の別名は狭い面では落とす（`narrow_primary` と同じ線）。
+        //    🚨 `^D` は**編集面では Markdown の鍵**なので、ここに書くと
+        //    `the_narrow_help_follows_a_markdown_override` が「消えたはずの ^D」として拾う。
+        shortcut_pair("d", "Half↓", "u", "Half↑", col, 0),
+        shortcut_pair("/", "Find", "n", "Nxt hit", col, 0),
+        shortcut_pair("N", "Prv hit", "zz", "Hit mid", col, 0),
+        shortcut_pair("zt", "Hit top", "zb", "Hit btm", col, 0),
+        Line::from(Span::styled("Enter in Find keeps the hits", dim)),
+        Line::from(""),
         Line::from(Span::styled("── Glide: Move ────────────", hdr)),
         // 🚨 **`/` を区切りに使わない**（`#12`）。別名は ` · `、意味が 2 つある
         //    ものは**セルを分ける** —— 狭い面は 2 列グリッドなので、
@@ -499,6 +513,27 @@ fn render_help_wide(editor: &mut EditorState, f: &mut Frame, area: Rect) {
         Line::from(Span::styled("=== Global ===", yel)),
         kl(A::EnterCommand, "Command palette"),
         kl(A::EnterHelp, "Help (F1 if Ctrl+H is taken)"),
+        Line::from(""),
+        // ⭐ **ページャ（`czv`）の鍵はここにしか出ない**（2026-10-05）—— 帯は `#13` が未決で、
+        //    「指が知っている鍵は帯に載せない」（`#14`）ので、全体像を見る場所は Help だけ。
+        //    ⚠️ どれも View の腕に**べた書き**の鍵で `[keys]` の対象外 ＝ `raw` で嘘をつかない。
+        Line::from(Span::styled("=== czv (pager) ===", yel)),
+        Line::from(Span::styled(
+            "Moves like Glide: j  k  gg  G  H  M  L  5j",
+            gray,
+        )),
+        raw("Space · f", "Page down"),
+        raw("b", "Page up"),
+        raw("d · Ctrl+D", "Half page down"),
+        raw("u · Ctrl+U", "Half page up"),
+        raw("/", "Find"),
+        raw("Enter", "Keep the hits, back to the page"),
+        raw("n", "Next hit"),
+        raw("N", "Previous hit"),
+        raw("zz", "Hit to screen middle"),
+        raw("zt", "Hit to screen top"),
+        raw("zb", "Hit to screen bottom"),
+        raw("q · Esc", "Quit"),
         Line::from(""),
         Line::from(Span::styled("=== Glide Mode — Movement ===", yel)),
         raw("h · ←", "Move left"),
@@ -1093,19 +1128,82 @@ mod help_follows_the_keymap {
             ("狭い版", narrow_help_text(&mut editor_with_keys(&[]))),
         ] {
             for line in text.lines() {
-                let b = line.as_bytes();
-                for (i, c) in b.iter().enumerate() {
-                    if *c != b'/' {
-                        continue;
+                for (i, c) in line.bytes().enumerate() {
+                    if c == b'/' {
+                        assert!(
+                            slash_is_a_key_name(line, i),
+                            "{label}: `/` が区切りとして出ている: {:?}",
+                            line.trim_end()
+                        );
                     }
-                    // 唯一許す形は `Alt+/` —— キー名の一部。
-                    assert!(
-                        i > 0 && b[i - 1] == b'+',
-                        "{label}: `/` が区切りとして出ている: {:?}",
-                        line.trim_end()
-                    );
                 }
             }
+        }
+    }
+
+    /// 許す `/` は 2 つ —— どちらもキー名:
+    /// ① `Alt+/`（キー名の一部）
+    /// ② **行頭の鍵の欄が `/` 1 文字**（czv の検索キー・2026-10-05）。
+    ///    ⭐ 区切りの `/` は左右に語を持つので、行頭には来られない ＝ 見分けられる。
+    fn slash_is_a_key_name(line: &str, i: usize) -> bool {
+        let indent = line.len() - line.trim_start().len();
+        (i > 0 && line.as_bytes()[i - 1] == b'+') || (i == indent && line[i..].starts_with("/ "))
+    }
+
+    /// 🚨 **陰性対照。** 規則を広げても、`#12` が消した区切りの形は通らない。
+    /// ⭐ これが無いと「`/` は何でも許す」に化けた判定が上の網を緑で通す。
+    #[test]
+    fn a_separating_slash_is_still_refused() {
+        for (line, want) in [
+            ("  Alt+/            Find", true),
+            ("  /                 Find", true),
+            ("/    Find  n    Nxt hit", true),
+            ("  Ctrl+Z / Ctrl+Y  Undo", false),
+            ("  Ctrl+Z           Undo / Redo", false),
+            ("  +/-  Nxt/Prv", false),
+        ] {
+            let i = line.find('/').unwrap();
+            let i = if line.starts_with("  +/-") {
+                line.rfind('/').unwrap()
+            } else {
+                i
+            };
+            assert_eq!(slash_is_a_key_name(line, i), want, "{line:?}");
+        }
+    }
+
+    /// ⭐ **ページャの鍵は Help にしか出ない**（帯は `#13` が未決で載せない）ので、
+    /// 両方の版に節が在ることを釘付けする。⚠️ 在ることだけでなく、**鍵と意味が同じ行**に居ること。
+    #[test]
+    fn help_lists_the_pager_keys_in_both_versions() {
+        let wide = help_text(&mut editor_with_keys(&[]));
+        assert!(
+            wide.contains("=== czv (pager) ==="),
+            "広い版に czv の節が無い"
+        );
+        for (key, meaning) in [
+            ("/ ", "Find"),
+            ("n ", "Next hit"),
+            ("N ", "Previous hit"),
+            ("zz", "middle"),
+            ("zt", "top"),
+            ("zb", "bottom"),
+            ("Enter", "Keep the hits"),
+            ("d · Ctrl+D", "Half page down"),
+            ("q · Esc", "Quit"),
+        ] {
+            assert!(
+                wide.lines()
+                    .any(|l| l.trim_start().starts_with(key) && l.contains(meaning)),
+                "広い版に `{key}` {meaning} の行が無い"
+            );
+        }
+        let narrow = narrow_help_text(&mut editor_with_keys(&[]));
+        assert!(narrow.contains("czv (pager)"), "狭い版に czv の節が無い");
+        for cell in [
+            "Nxt hit", "Prv hit", "Hit mid", "Hit top", "Hit btm", "Find",
+        ] {
+            assert!(narrow.contains(cell), "狭い版に `{cell}` が無い");
         }
     }
 

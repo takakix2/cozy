@@ -35,6 +35,10 @@ pub enum Action {
     Open(String),
     SearchNext,
     SearchPrevious,
+    // 閲覧の席（`czv`）で検索欄の `Enter`: 確定して View へ戻り、ヒットとハイライトは残す（`#18`）
+    SearchConfirm,
+    // View の `zz` / `zt` / `zb`: 注目中のヒット行を画面の中央 / 上 / 下へ（`#18`）
+    AlignMatch(MatchAlign),
     Undo,
     Redo,
     ReplaceCurrent,
@@ -104,4 +108,12 @@ pub enum Action {
     BrowseStartFilter,  // /: begin incremental name filtering
     BrowseFilterChar(char), // a character typed while filtering
     BrowseFilterBackspace, // delete the last filter character
+}
+
+/// `zz` / `zt` / `zb` —— 注目中のヒット行を画面のどこへ置くか（`#18`）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MatchAlign {
+    Center,
+    Top,
+    Bottom,
 }
