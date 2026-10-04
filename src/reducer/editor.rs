@@ -411,6 +411,10 @@ pub fn apply_editor_event(editor: &mut EditorState, action: &Action) -> EventRes
         Action::ToggleMarkdownPreview => {
             if editor.mode == EditorMode::Markdown {
                 editor.enter_mode(editor.home_mode());
+            } else if editor.mode == EditorMode::View && !editor.is_markdown_file() {
+                // ⭐ ページャ（`czv`）で md 以外のときは整形しない（決定 2026-10-03）。
+                // コマンドパレット経由でここへ来ても無反応にする（キーマップは F2 を md に
+                // 絞っているが、入口がもう 1 つあるので両方で塞ぐ）。Edit など他モードは不変。
             } else {
                 editor.enter_mode(EditorMode::Markdown);
             }

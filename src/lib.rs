@@ -7,6 +7,8 @@ mod event_loop;
 mod file_io;
 mod glide;
 mod host;
+#[cfg(feature = "imageview")]
+mod imageview;
 mod input;
 mod reducer;
 mod runtime_env;

@@ -37,16 +37,17 @@ impl Renderer {
         };
         let available = area.height.saturating_sub(1 + status_bar_h);
         let actual_shortcut_h = requested_shortcut_h.min(available);
+        // 📌 配列は**値で渡す**（このリポの他の 4 箇所と同じ綴り）。`.as_ref()` 付きの
+        // 旧い綴りはここ 1 箇所だけで、`imageview` の依存（image / fast_image_resize）が
+        // 乗った途端に AsRef の行き先が一意でなくなり E0283 で落ちた（2026-10-03 実測 ——
+        // feature を切ると通る）。値渡しなら `I = [Constraint; 3]` で曖昧さが無い。
         Layout::default()
             .direction(Direction::Vertical)
-            .constraints(
-                [
-                    Constraint::Min(1),
-                    Constraint::Length(actual_shortcut_h),
-                    Constraint::Length(status_bar_h),
-                ]
-                .as_ref(),
-            )
+            .constraints([
+                Constraint::Min(1),
+                Constraint::Length(actual_shortcut_h),
+                Constraint::Length(status_bar_h),
+            ])
             .split(area)
     }
 

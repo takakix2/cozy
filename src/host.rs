@@ -7,15 +7,15 @@ use crossterm::{
 };
 use std::io::{self, IsTerminal};
 
-struct TerminalSession {
+pub(crate) struct TerminalSession {
     raw_mode_enabled: bool,
     alternate_screen_enabled: bool,
     bracketed_paste_enabled: bool,
 }
 
-struct TerminalSessionConfig {
-    enable_raw_mode: bool,
-    enable_alternate_screen: bool,
+pub(crate) struct TerminalSessionConfig {
+    pub(crate) enable_raw_mode: bool,
+    pub(crate) enable_alternate_screen: bool,
 }
 
 impl From<&CozyConfig> for TerminalSessionConfig {
@@ -28,7 +28,7 @@ impl From<&CozyConfig> for TerminalSessionConfig {
 }
 
 impl TerminalSession {
-    fn enter(config: TerminalSessionConfig) -> io::Result<Self> {
+    pub(crate) fn enter(config: TerminalSessionConfig) -> io::Result<Self> {
         let mut session = Self {
             raw_mode_enabled: false,
             alternate_screen_enabled: false,
@@ -94,6 +94,19 @@ fn run_cli_mode(filename: Option<String>, view: bool) -> io::Result<()> {
     } else {
         filename
     };
+    // ⭐ 絵なら画像ビューアで開く（`#20` Phase 1・czv だけ・feature `imageview`）。マジックバイトで決める ——
+    // ファイルは先頭 16 バイトを覗くだけ・`-` はここで読み切る（覗き戻しが効かないので、
+    // 絵でなかったバイト列は file_io の受け渡しスロット経由で文章の道へ戻す）。
+    #[cfg(feature = "imageview")]
+    if view {
+        match crate::imageview::startup_source(filename.as_deref()) {
+            crate::imageview::Startup::Image(src) => return crate::imageview::run(src),
+            crate::imageview::Startup::StdinText(bytes) => {
+                crate::file_io::set_prefetched_stdin(bytes);
+            }
+            crate::imageview::Startup::NotImage => {}
+        }
+    }
     let config = CozyConfig {
         filename,
         view,
@@ -140,6 +153,11 @@ pub fn run_cli_with_config(config: CozyConfig) -> io::Result<()> {
         return Err(e);
     }
     let _session = TerminalSession::enter(TerminalSessionConfig::from(&config))?;
+    // ⭐ 端末の画像能力は**ここで 1 度だけ**測る（raw モードに入った後・描画ループに入る前）。
+    // Markdown プレビューのインライン画像（`#20` Phase 2）が使う。埋め込みホストはこの道を
+    // 通らないので caps は空のまま ＝ 画像は出ず文字フォールバック（`inline.rs` の doc）。
+    #[cfg(feature = "imageview")]
+    crate::imageview::inline::capture_caps();
     let mut event_src = CrosstermEventSource;
     run(io::stdout(), config, &mut event_src)
 }

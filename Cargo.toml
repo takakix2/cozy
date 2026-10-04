@@ -1,6 +1,6 @@
 [package]
 name = "cozy"
-version = "0.2.34"
+version = "0.2.35"
 edition = "2024"
 rust-version = "1.88"
 description = "A Comfort First terminal editor and pager: type like nano, navigate like vim"
@@ -51,14 +51,32 @@ tree-sitter-typescript = { version = "0.23", optional = true }
 tree-sitter-go = { version = "0.23", optional = true }
 tree-sitter-md = { version = "0.5", features = ["parser"], optional = true }
 atomicwrites = "0.4.4"
+# 端末内画像ビューア（`#20` Phase 1・feature `imageview`）。
+# 🚚 2026-10-03 に [dev-dependencies]（PoC 専用）から昇格。
+# 🚨 `avif` は入れない —— image 0.25 の `avif` は**書く側**（rav1e エンコーダ）で、読むのは
+# `avif-native`（dav1d・C ライブラリ）。入れても AVIF は開けず、エンコーダだけが乗っていた。
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif", "ico", "bmp"], optional = true }
+fast_image_resize = { version = "6", optional = true }
+ratatui-image = { version = "11", default-features = false, features = ["crossterm"], optional = true }
+
+# XTSMGRAPHICS の交渉（fd 0 の poll/read・unix だけ。他の面では交渉せず 256 色へ落ちる）。
+[target.'cfg(unix)'.dependencies]
+libc = { version = "0.2", optional = true }
 
 [dev-dependencies]
 # Only the tests copied from ratatui-markdown (src/vendor) use it.
 anyhow = "1"
+# `sixel4096` のラウンドトリップ検体だけが使う（自前エンコーダの出力を**別実装**で復号して
+# 原画と突き合わせる）。ratatui-image 経由で lock には既に居る版（0.5.1・追加コストなし）。
+icy_sixel = "0.5"
+
 
 [features]
-default = ["clipboard", "crossterm-events", "treesitter"]
+default = ["clipboard", "crossterm-events", "treesitter", "imageview"]
 clipboard = ["dep:arboard"]
+# 端末内画像ビューア（`#20`）。CLI（czv/cozy）だけの面 —— 分岐は `run_cli_mode` に在り、
+# 埋め込みホスト（argotty の `run()` 直呼び）はこの道を通らない。軽くしたい embed は外す。
+imageview = ["dep:image", "dep:fast_image_resize", "dep:ratatui-image", "dep:libc"]
 # Disable when embedding in a host that provides its own event source (e.g. hsh-ios)
 crossterm-events = []
 # tree-sitter syntax highlighting. Disable for a lighter embed; falls back to the

@@ -65,7 +65,7 @@ fn cannot_open_message(display: &str, error: &io::Error) -> String {
 ///
 /// 展開するのは **POSIX のチルダ接頭辞**だけ: `~` 単独と `~/…`。`~user` は解決手段が無いので
 /// 触らない（そのまま返す）。⚠️ 先頭以外の `~` も触らない —— ファイル名の一部で普通に出る。
-fn expand_tilde(path: &str) -> PathBuf {
+pub(crate) fn expand_tilde(path: &str) -> PathBuf {
     let home = || {
         std::env::var_os("HOME")
             .map(PathBuf::from)
@@ -192,16 +192,37 @@ pub(crate) fn load_stdin_document<R: std::io::Read>(mut reader: R) -> io::Result
     })
 }
 
+// `czv` の画像分岐が**先に読み切った** stdin のバイト列（`#20`）。
+//
+// 絵かどうかはマジックバイトでしか決められず、stdin は覗き戻しが効かないので、
+// `imageview::startup_source` が全部読む。絵でなかったとき、その戻し先がここ ——
+// **set は `host.rs::run_cli_mode` の 1 箇所・take は下の `-` 分岐の 1 箇所だけ**。
+// CLI 起動の同一スレッド内の受け渡しで、埋め込みホスト（argotty）はこの道を通らない
+// （`CozyConfig` に公開フィールドを足すと、網羅的 struct literal で組んでいる
+// argotty の build が lockstep で割れるため、公開面には出さない）。
+thread_local! {
+    static PREFETCHED_STDIN: std::cell::RefCell<Option<Vec<u8>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(feature = "imageview")]
+pub(crate) fn set_prefetched_stdin(bytes: Vec<u8>) {
+    PREFETCHED_STDIN.with(|slot| *slot.borrow_mut() = Some(bytes));
+}
+
 pub(crate) fn load_startup_document(filename: Option<&str>) -> StartupDocument {
     let Some(path) = filename else {
         return StartupDocument::Empty;
     };
 
     if path == "-" {
-        return load_stdin_document(std::io::stdin()).unwrap_or_else(|e| {
-            StartupDocument::Unreadable {
-                message: format!("Cannot read from stdin: {e}"),
-            }
+        let prefetched = PREFETCHED_STDIN.with(|slot| slot.borrow_mut().take());
+        let result = match prefetched {
+            Some(bytes) => load_stdin_document(std::io::Cursor::new(bytes)),
+            None => load_stdin_document(std::io::stdin()),
+        };
+        return result.unwrap_or_else(|e| StartupDocument::Unreadable {
+            message: format!("Cannot read from stdin: {e}"),
         });
     }
 
@@ -1856,6 +1877,24 @@ mod legacy_encodings {
     }
 
     // ── パイプ受け入れ (Issue #15) ────────────────────────────────────────────
+
+    /// `czv` の画像分岐が読み切った stdin は、絵でなければスロット経由で文章の道へ戻る
+    /// （`#20`）。スロットが効いていれば**本物の stdin には触らない**（このテストは
+    /// tty の下でも cargo のハーネスの下でも同じ答えになる —— それが証拠）。
+    /// ⚠️ take は 1 回きり: 2 度目の `-` は従来どおり本物の stdin を読む設計。
+    #[cfg(feature = "imageview")]
+    #[test]
+    fn prefetched_stdin_feeds_the_text_path_once() {
+        set_prefetched_stdin(b"from the slot\n".to_vec());
+        match load_startup_document(Some("-")) {
+            StartupDocument::Stdin { lines, .. } => {
+                assert_eq!(lines, vec!["from the slot"]);
+            }
+            _ => panic!("スロットの中身が Stdin として開かれなかった"),
+        }
+        // 消費済み —— スロットは空に戻っている。
+        PREFETCHED_STDIN.with(|slot| assert!(slot.borrow().is_none(), "take が消費していない"));
+    }
 
     #[test]
     fn load_stdin_document_parses_lines_and_format() {

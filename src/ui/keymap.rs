@@ -374,6 +374,15 @@ impl Keymap {
                     // 「どうやって抜けるのか」なので、そこを繰り返さない。
                     // 📌 `Ctrl+Q` も `Esc` も残る（大域表と `Cancel`）。3 つとも効く。
                     KeyCode::Char('q') if editor.mode == EditorMode::View => Some(Action::Quit),
+                    // ⭐ `F2`: Markdown ファイルなら整形プレビューへ（`#20` Phase 2・czv でも
+                    // 見られるように・決定 2026-10-03）。🚨 **Ctrl+D は半ページ送りのまま**
+                    // （上の HalfPageDown）—— vi/less の指を壊さないので、切替は F2 に置く。
+                    // md 以外では無反応（czv は何でも開くページャ・整形は md のときだけ）。
+                    KeyCode::F(2)
+                        if editor.mode == EditorMode::View && editor.is_markdown_file() =>
+                    {
+                        Some(Action::ToggleMarkdownPreview)
+                    }
                     _ => None,
                 }
             }

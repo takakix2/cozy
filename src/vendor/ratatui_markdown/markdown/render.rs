@@ -76,6 +76,30 @@ impl MarkdownRenderer {
         lines
     }
 
+    /// `render` と同じ出力を作りつつ、各 `Image` ブロックの**実際の行位置**を記録する
+    /// （cozy `#20` Phase 2 の追加・上流には無い）。
+    ///
+    /// ⚠️ **位置は `line_count()` の加算では出せない** —— あれは幅非依存で、折り返す段落と
+    /// ズレる。∴ 実レンダリング中に `lines.len()` を見るこの道が要る。
+    /// 返すのは `(その画像のフォールバック行の index, path, alt)`。フォールバック行は
+    /// 1 行（`default_image_fallback`）で、高さの予約とブリットは呼び手（cozy）が決める。
+    pub fn render_tracking_images(
+        &self,
+        blocks: &[MarkdownBlock],
+        theme: &impl RichTextTheme,
+    ) -> (Vec<Line<'static>>, Vec<(usize, String, String)>) {
+        let mut lines = Vec::new();
+        let mut images = Vec::new();
+        for (block_idx, block) in blocks.iter().enumerate() {
+            if let MarkdownBlock::Image { alt, path } = block {
+                let at = lines.len();
+                images.push((at, path.clone(), alt.clone()));
+            }
+            self.render_block(block, block_idx, theme, blocks, &mut lines);
+        }
+        (lines, images)
+    }
+
     fn render_block(
         &self,
         block: &MarkdownBlock,

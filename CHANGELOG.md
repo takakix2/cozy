@@ -1,5 +1,35 @@
 # Changelog
 
+## v0.2.35
+
+### Added
+
+- **`czv` shows images in the terminal.** `czv photo.png` and `curl … | czv` open a
+  full-screen image viewer. The format is identified by its first bytes, not the file
+  name, and PNG, JPEG, GIF, WebP, BMP and ICO are read. The graphics protocol is chosen
+  for the terminal — Kitty, iTerm2 or Sixel — with a text fallback where none is
+  available. `z` toggles fit-to-screen and actual size; `q` / `Esc` close.
+- **4096-colour Sixel.** On a Sixel terminal, cozy asks the terminal how many colour
+  registers it has (XTSMGRAPHICS, in-band, so it works over ssh without configuration).
+  When the answer is 4096, images are drawn with cozy's own dithered 4096-colour encoder,
+  which removes the banding a 256-colour palette leaves in gradients; otherwise the
+  256-colour encoder is used as before.
+- **`←` / `→` move through the images in the same folder**, in natural order
+  (`img2` before `img10`), with the position shown in the footer (`2/42`). Holding the
+  key skips the images in between instead of drawing each one.
+- **Images inside the Markdown preview.** `![alt](path)` is drawn as the image itself.
+  Paths resolve relative to the Markdown file; `http(s)` images are not fetched and keep
+  the one-line text form. Images partly scrolled out of view are clipped at the edge
+  rather than popping in and out.
+- **`F2` in `czv` switches a Markdown file between source and preview.** `czv` opens a
+  Markdown file as source by default; `F2` shows the rendered preview, images included,
+  and `F2` again returns. Other files are unaffected.
+
+### Changed
+
+- The image support lives behind the `imageview` feature, on by default. Hosts that
+  embed cozy with `default-features = false` carry none of its dependencies.
+
 ## v0.2.34
 
 ### Added

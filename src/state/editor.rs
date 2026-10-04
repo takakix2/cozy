@@ -565,6 +565,20 @@ impl EditorState {
         Self::resolve_home(&self.config)
     }
 
+    /// 開いているファイルが Markdown か（拡張子で判定・大小無視）。
+    /// ⭐ **ページャ（`czv`）でプレビュー切替を出すのはこれが真のときだけ**
+    /// （決定 2026-10-03・🧑「生が既定・プレビュー対象は md でいい」）。czv は何でも開く
+    /// ので、整形は md のときだけ意味を持つ（`.rs` を Markdown として描くのは無意味）。
+    /// 名前が無いとき（新規バッファ・stdin）は false。Edit モードの切替はこれを見ない
+    /// （従来どおり任意のバッファを整形できる）。
+    pub fn is_markdown_file(&self) -> bool {
+        self.filename
+            .as_deref()
+            .and_then(|p| p.extension())
+            .and_then(|e| e.to_str())
+            .is_some_and(|e| e.eq_ignore_ascii_case("md") || e.eq_ignore_ascii_case("markdown"))
+    }
+
     /// Same resolution as [`home_mode`], usable before `EditorState` exists
     /// (e.g. when picking the startup mode in `new_with_config_dir`).
     pub fn resolve_home(config: &Config) -> EditorMode {

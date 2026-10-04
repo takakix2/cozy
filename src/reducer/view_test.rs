@@ -333,6 +333,33 @@ fn view_mode_half_page_navigation_keys() {
     );
 }
 
+/// czv（View）の F2 は **md のときだけ**整形プレビュー切替。Ctrl+D は半ページ送りのまま
+/// （決定 2026-10-03・`#20` Phase 2）。
+#[test]
+fn f2_previews_in_view_only_for_markdown() {
+    let mut md = view_editor();
+    md.filename = Some(std::path::PathBuf::from("notes.md"));
+    assert_eq!(
+        Keymap::map_key_to_action(&md, KeyCode::F(2), KeyModifiers::NONE),
+        Some(Action::ToggleMarkdownPreview),
+        "md の czv で F2 が整形切替にならない"
+    );
+    // 🚨 Ctrl+D は据え置き —— vi/less の半ページ送りを壊さない。
+    assert_eq!(
+        Keymap::map_key_to_action(&md, KeyCode::Char('d'), KeyModifiers::CONTROL),
+        Some(Action::HalfPageDown),
+        "md でも View の Ctrl+D は半ページ送りのまま"
+    );
+
+    let mut other = view_editor();
+    other.filename = Some(std::path::PathBuf::from("main.rs"));
+    assert_eq!(
+        Keymap::map_key_to_action(&other, KeyCode::F(2), KeyModifiers::NONE),
+        None,
+        "md でない czv で F2 が何かにマップされた"
+    );
+}
+
 /// `Action::HalfPageDown` / `HalfPageUp` が半画面（page_size / 2）分スクロールする。
 #[test]
 fn view_mode_half_page_scrolling() {

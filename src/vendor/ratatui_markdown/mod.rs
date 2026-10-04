@@ -13,7 +13,10 @@
 //! - image support (the `image` feature) is removed, and Mermaid is always on;
 //! - paths point into this module, and `unicode-width` 0.2 is the renamed
 //!   `unicode_width_02` (cozy's own width code stays on 0.1);
-//! - ported to ratatui 0.30 and edition 2024.
+//! - ported to ratatui 0.30 and edition 2024;
+//! - added `MarkdownRenderer::render_tracking_images` (cozy `#20` Phase 2) — records where
+//!   each `Image` block lands in the flattened output so the viewer can reserve height and
+//!   blit; not in upstream. The text fallback (`default_image_fallback`) is unchanged.
 
 pub mod constants;
 pub mod markdown;

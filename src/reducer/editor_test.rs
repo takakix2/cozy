@@ -57,6 +57,39 @@ fn test_markdown_preview_toggles_back_to_home_mode() {
     assert_eq!(editor.mode, EditorMode::Edit);
 }
 
+/// czv（View セッション）で **.md のとき**は整形プレビューへ切替でき、戻ると View に帰る
+/// （決定 2026-10-03・🧑「czv *.md でトグルはあり」）。
+#[test]
+fn czv_toggles_markdown_preview_for_a_md_file() {
+    let mut editor = EditorState::new(Some("notes.md".to_string()));
+    editor.view_session = true;
+    editor.enter_mode(EditorMode::View);
+    assert!(editor.is_markdown_file());
+
+    reduce(&mut editor, Action::ToggleMarkdownPreview);
+    assert_eq!(
+        editor.mode,
+        EditorMode::Markdown,
+        "md の czv で整形に入れない"
+    );
+
+    reduce(&mut editor, Action::ToggleMarkdownPreview);
+    assert_eq!(editor.mode, EditorMode::View, "整形から閲覧へ帰らない");
+}
+
+/// czv で **md 以外**のときはプレビューに入らない（生ページャのまま・無反応）。
+/// 🚨 パレット経由でも塞がっていること（reducer の gate）を直接突く。
+#[test]
+fn czv_does_not_preview_a_non_md_file() {
+    let mut editor = EditorState::new(Some("main.rs".to_string()));
+    editor.view_session = true;
+    editor.enter_mode(EditorMode::View);
+    assert!(!editor.is_markdown_file());
+
+    reduce(&mut editor, Action::ToggleMarkdownPreview);
+    assert_eq!(editor.mode, EditorMode::View, "md でないのに整形へ入った");
+}
+
 #[test]
 fn test_markdown_preview_scrolls_without_moving_cursor() {
     let mut editor = EditorState::new(None);
