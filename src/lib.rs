@@ -62,6 +62,16 @@ pub struct CozyConfig {
     /// 📌 立てると `EditorMode::View` で開き、`read_only` も立つ
     /// （**ファイルの mode ビットに関係なく** —— 利用者が「見るだけ」と言ったから）。
     pub view: bool,
+    /// 埋め込みホストが申告する、端末の画像の能力（`#22`）。
+    ///
+    /// ⭐ CLI は端末（tty）に問い合わせて能力を知るが、埋め込みには tty が無い ——
+    /// 問い合わせが往復しない。∴ ホストが**自分の描き手を知っている**ことを渡す
+    /// （argotty なら xterm.js ＋ addon-image ＝ Sixel・4096 色・セルの CSS px）。
+    ///
+    /// 📌 `Some` で `view` のとき、画像ファイルは画像ビューアで開く。Markdown プレビューの
+    /// インライン画像にも使う。`None` なら従来どおり（画像ファイルは文字で開く）。
+    /// ⚠️ `imageview` feature の無いビルドでは受け取るだけで使わない。
+    pub image_caps: Option<ImageCaps>,
 }
 
 impl Default for CozyConfig {
@@ -73,8 +83,35 @@ impl Default for CozyConfig {
             enable_alternate_screen: true,
             terminal_size: None,
             view: false,
+            image_caps: None,
         }
     }
+}
+
+/// この crate の版（`0.2.37` 等）。埋め込みホストが About などで名乗るのに使う。
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// 端末が受ける画像の描き方（[`ImageCaps::protocol`]）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ImageProtocol {
+    /// DEC Sixel。
+    Sixel,
+    /// Kitty graphics protocol。
+    Kitty,
+    /// iTerm2 inline images（`OSC 1337`）。
+    Iterm2,
+}
+
+/// 埋め込みホストが渡す、端末の画像の能力（[`CozyConfig::image_caps`]）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ImageCaps {
+    pub protocol: ImageProtocol,
+    /// 1 セルのピクセル寸法（幅, 高さ）。⭐ 端末が `CSI 16 t` に答える値と同じ物を渡す
+    /// （xterm.js なら `dimensions.css.cell` を丸めた値）—— CLI と同じ寸法で描ける。
+    pub cell_px: (u16, u16),
+    /// Sixel の色レジスタ数。`4096` 以上なら自前の 4096 色エンコーダを使う
+    /// （CLI は `XTSMGRAPHICS` で交渉して知る数）。Sixel 以外では見ない。
+    pub sixel_registers: u32,
 }
 
 /// 開く前に断る物があるか（`#19`）。
@@ -106,6 +143,20 @@ pub fn run<W: Write>(
     // ⭐ 端末を作る**前**に断る —— 何も描かずに戻るので、埋め込み先の画面も汚れない。
     if let Some(e) = missing_input(&config) {
         return Err(e);
+    }
+    // ⭐ 画像の道（`#22`）—— 能力をホストが渡したときだけ。CLI は `host.rs` の入口で分かれる
+    // （あちらは tty に訊ける）。埋め込みは**ここ**で分かれる（argotty は `run()` を直に呼ぶ）。
+    #[cfg(feature = "imageview")]
+    if let Some(caps) = config.image_caps {
+        imageview::inline::set_caps(&caps);
+        if config.view
+            && let Some(path) = config
+                .filename
+                .as_deref()
+                .and_then(imageview::embedded_image_path)
+        {
+            return imageview::run_embedded(path, writer, event_src, &caps, config.terminal_size);
+        }
     }
     let mut terminal = create_terminal(writer, config.terminal_size)?;
     let mut editor = create_editor(config);
@@ -219,5 +270,146 @@ mod missing_input_tests {
         let err = run(&mut out, config(true, None), &mut NoEvents).expect_err("断るはず");
         assert_eq!(err.to_string(), "missing filename");
         assert!(out.is_empty(), "断る前に {} バイト書いている", out.len());
+    }
+}
+
+/// 埋め込みの画像の道（`#22`）—— argotty は `run()` を直に呼ぶので、ここで振り分けが効くかを測る。
+#[cfg(all(test, feature = "imageview"))]
+mod embedded_image_tests {
+    use super::*;
+    use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+    use std::path::Path;
+
+    /// `q` を 1 回だけ返す入力（それで画像ビューアも閲覧面も閉じる）。
+    struct QuitOnce(bool);
+    impl EventSource for QuitOnce {
+        fn poll(&mut self, _: std::time::Duration) -> io::Result<bool> {
+            Ok(!self.0)
+        }
+        fn read(&mut self) -> io::Result<Event> {
+            self.0 = true;
+            Ok(Event::Key(KeyEvent::new(
+                KeyCode::Char('q'),
+                KeyModifiers::NONE,
+            )))
+        }
+    }
+
+    /// 32×32 の PNG を一時ディレクトリに置く（テストごとに別の場所）。
+    fn png(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("cozy-22-{}-{name}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("pic.png");
+        image::RgbaImage::from_pixel(32, 32, image::Rgba([200, 40, 40, 255]))
+            .save(&path)
+            .unwrap();
+        path
+    }
+
+    fn sixel_caps(registers: u32) -> ImageCaps {
+        ImageCaps {
+            protocol: ImageProtocol::Sixel,
+            cell_px: (9, 18),
+            sixel_registers: registers,
+        }
+    }
+
+    fn czv(path: &Path, caps: Option<ImageCaps>) -> String {
+        let config = CozyConfig {
+            filename: Some(path.to_string_lossy().into_owned()),
+            enable_raw_mode: false,
+            enable_alternate_screen: false,
+            terminal_size: Some((40, 12)),
+            view: true,
+            image_caps: caps,
+            ..CozyConfig::default()
+        };
+        let mut out = Vec::new();
+        run(&mut out, config, &mut QuitOnce(false)).expect("開いて q で閉じるはず");
+        String::from_utf8_lossy(&out).into_owned()
+    }
+
+    /// ⭐ 能力を渡せば、埋め込みの `czv pic.png` は Sixel を書く（DCS `ESC P … q`）。
+    #[test]
+    fn with_caps_a_png_is_drawn_as_sixel() {
+        for registers in [256, 4096] {
+            let out = czv(
+                &png(&format!("caps{registers}")),
+                Some(sixel_caps(registers)),
+            );
+            assert!(
+                out.contains("\u{1b}P") && out.contains('q'),
+                "registers={registers}: Sixel の DCS が出ていない（{} バイト）",
+                out.len()
+            );
+        }
+    }
+
+    /// 🚨 **陰性対照** —— 能力が無ければ従来どおり文字で開く（`#22` の前の argotty と同じ）。
+    /// これが無いと「常に画像の道へ行く」実装が上を通る。
+    #[test]
+    fn without_caps_a_png_opens_as_text() {
+        let out = czv(&png("nocaps"), None);
+        assert!(!out.contains("\u{1b}P"), "能力が無いのに Sixel を書いた");
+        assert!(out.contains("PNG"), "文字の閲覧面で開いていない");
+    }
+
+    /// 文章のファイルは、能力があっても文字で開く。
+    #[test]
+    fn with_caps_a_text_file_still_opens_as_text() {
+        let path = std::env::temp_dir().join(format!("cozy-22-{}-text.md", std::process::id()));
+        std::fs::write(&path, "hello cozy\n").unwrap();
+        let out = czv(&path, Some(sixel_caps(4096)));
+        assert!(!out.contains("\u{1b}P"), "文章なのに Sixel を書いた");
+        // ⚠️ 語と語の間には色やカーソル移動の制御が挟まりうる ＝ 1 続きでは探さない。
+        assert!(
+            out.contains("hello") && out.contains("cozy"),
+            "文字の閲覧面で開いていない"
+        );
+    }
+
+    #[test]
+    fn caps_become_a_picker_with_the_cells_and_lane() {
+        let (picker, hi) = imageview::picker_from_caps(&sixel_caps(4096));
+        assert_eq!(
+            picker.protocol_type(),
+            ratatui_image::picker::ProtocolType::Sixel
+        );
+        assert_eq!(
+            (picker.font_size().width, picker.font_size().height),
+            (9, 18)
+        );
+        assert!(hi);
+        assert!(
+            !imageview::picker_from_caps(&sixel_caps(256)).1,
+            "256 色の受け手に 4096 を流さない"
+        );
+        let kitty = ImageCaps {
+            protocol: ImageProtocol::Kitty,
+            ..sixel_caps(4096)
+        };
+        let (picker, hi) = imageview::picker_from_caps(&kitty);
+        assert_eq!(
+            picker.protocol_type(),
+            ratatui_image::picker::ProtocolType::Kitty
+        );
+        assert!(!hi, "Kitty で 4096 sixel を選ばない");
+    }
+
+    #[test]
+    fn only_image_files_take_the_image_path() {
+        let pic = png("detect");
+        assert_eq!(
+            imageview::embedded_image_path(pic.to_str().unwrap()),
+            Some(pic.clone())
+        );
+        let text = pic.with_file_name("notes.md");
+        std::fs::write(&text, "# notes\n").unwrap();
+        assert_eq!(imageview::embedded_image_path(text.to_str().unwrap()), None);
+        assert_eq!(
+            imageview::embedded_image_path("-"),
+            None,
+            "埋め込みに stdin のパイプは無い"
+        );
     }
 }

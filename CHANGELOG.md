@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.2.37
+
+### Added
+
+- **Images in embedded `czv`.** A host that embeds cozy can now say what its terminal draws (`CozyConfig::image_caps` — Sixel, Kitty or iTerm2, the cell size in pixels, and how many Sixel colours it takes). With that set, `czv picture.png` opens the image viewer inside the host, and the Markdown preview shows its images, without asking the terminal anything. Without it, nothing changes.
+- **`cozy::VERSION`** — the crate's version, for hosts that want to show it.
+
 ## v0.2.36
 
 ### Added

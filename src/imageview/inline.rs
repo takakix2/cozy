@@ -8,9 +8,10 @@
 //!
 //! Picker は端末へ問い合わせる（raw モードと stdin が要る）。プレビューは**描画ループの
 //! 最中**に呼ばれるので、そこで問い合わせると画面が壊れる。∴ CLI 起動時（cozy が端末を
-//! 握った直後）に [`capture_caps`] で 1 度測って仕舞う。⚠️ **埋め込みホスト（argotty）は
-//! cozy が端末を握らない**ので caps は空のまま ＝ 画像は出さず従来の文字フォールバックに
-//! 落ちる（Phase 2 は CLI の面だけ・argotty 側は `#110` の addon-image が別途受ける）。
+//! 握った直後）に [`capture_caps`] で 1 度測って仕舞う。
+//! 🚚 **埋め込みホスト（argotty）は tty を持たないので訊けない** —— ホストが
+//! `CozyConfig::image_caps` で能力を申告し、`run()` が [`set_caps`] で立てる（`#22`）。
+//! 申告が無ければ caps は空のまま ＝ 従来どおり文字フォールバック。
 //!
 //! # スクロールと端 —— 「丸ごと見えている画像だけ」出す（v1）
 //!
@@ -90,6 +91,17 @@ pub(crate) fn capture_caps() {
     };
     let sixel_hi = picker.protocol_type() == ProtocolType::Sixel
         && super::negotiate_sixel_registers().is_some_and(|n| n >= 4096);
+    CAPS.with(|c| *c.borrow_mut() = Some(Caps { picker, sixel_hi }));
+}
+
+/// 埋め込みホストが申告した能力で caps を立てる（`#22`）—— 問い合わせない。
+///
+/// ⭐ argotty のように tty を持たないホスト向け（[`capture_caps`] は往復しない）。
+/// 能力が変わりうる（セルの寸法・別のホスト）ので、覚え書きは捨ててから立てる。
+pub(crate) fn set_caps(caps: &crate::ImageCaps) {
+    let (picker, sixel_hi) = super::picker_from_caps(caps);
+    FITTED.with(|c| c.borrow_mut().clear());
+    RENDER.with(|c| c.borrow_mut().clear());
     CAPS.with(|c| *c.borrow_mut() = Some(Caps { picker, sixel_hi }));
 }
 

@@ -267,7 +267,7 @@ dependencies = [
 
 [[package]]
 name = "cozy"
-version = "0.2.36"
+version = "0.2.37"
 dependencies = [
  "anyhow",
  "arboard",

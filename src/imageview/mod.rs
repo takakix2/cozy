@@ -20,7 +20,7 @@ use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use crossterm::event::{self, Event, KeyCode, KeyModifiers};
+use crossterm::event::{Event, KeyCode, KeyModifiers};
 use fast_image_resize::images::{Image as FirImage, ImageRef};
 use fast_image_resize::{FilterType, PixelType, ResizeAlg, ResizeOptions, Resizer};
 use image::{DynamicImage, GenericImageView, ImageReader, RgbaImage};
@@ -177,26 +177,7 @@ struct Viewer {
 
 /// 絵をビューアで開く（`q`/`Esc` で閉じる・`z` で fit↔等倍・`←`/`→` で同フォルダの前後へ）。
 pub(crate) fn run(source: ImageSource) -> io::Result<()> {
-    // パスで開いたときは同フォルダを並べる。パイプ入力はその場の 1 枚だけ。
-    let (image, label, gallery) = match source {
-        ImageSource::Path(path) => {
-            let gallery = build_gallery(&path);
-            let (image, label) = load_entry(&gallery.entries[gallery.index])?;
-            (image, label, Some(gallery))
-        }
-        ImageSource::Memory { bytes, label } => {
-            let image = ImageReader::new(std::io::Cursor::new(bytes))
-                .with_guessed_format()?
-                .decode()
-                .map_err(|e| {
-                    io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        format!("cannot decode image: {e}"),
-                    )
-                })?;
-            (image, label, None)
-        }
-    };
+    let (image, label, gallery) = load_source(source)?;
 
     let _session = crate::host::TerminalSession::enter(crate::host::TerminalSessionConfig {
         enable_raw_mode: true,
@@ -217,21 +198,135 @@ pub(crate) fn run(source: ImageSource) -> io::Result<()> {
 
     let backend = CrosstermBackend::new(io::stdout());
     let mut terminal = Terminal::new(backend)?;
-    let mut viewer = Viewer {
-        label,
-        image,
-        picker,
-        sixel_lane,
-        zoom: Zoom::Fit,
-        rendered: None,
-        encode_ms: 0.0,
-        last_area: Rect::default(),
-        gallery,
-    };
+    let mut viewer = Viewer::new(label, image, picker, sixel_lane, gallery);
+    view_loop(
+        &mut terminal,
+        &mut viewer,
+        &mut crate::input::CrosstermEventSource,
+    )
+}
 
+/// 埋め込みホストから絵を開く（`#22`）—— 端末に**訊かず**、ホストが渡した能力で描く。
+///
+/// ⭐ CLI の [`run`] との違いは 3 つだけ: 能力は `caps` から（tty が無いので問い合わせが往復しない）、
+/// 書く先はホストの `writer`、読む先はホストの `events`。raw モードと代替画面はホストの持ち物
+/// （`run()` と同じ・argotty は自分で切り替える）。描画とキー処理は [`view_loop`] を共有する。
+pub(crate) fn run_embedded<W: io::Write>(
+    path: PathBuf,
+    writer: W,
+    events: &mut dyn crate::input::EventSource,
+    caps: &crate::ImageCaps,
+    terminal_size: Option<(u16, u16)>,
+) -> io::Result<()> {
+    let (image, label, gallery) = load_source(ImageSource::Path(path))?;
+    let (picker, sixel_hi) = picker_from_caps(caps);
+    let sixel_lane = if sixel_hi {
+        SixelLane::Hi
+    } else {
+        SixelLane::Plain
+    };
+    let backend = CrosstermBackend::new(writer);
+    let mut terminal = match terminal_size {
+        Some((cols, rows)) => Terminal::with_options(
+            backend,
+            ratatui::TerminalOptions {
+                viewport: ratatui::Viewport::Fixed(Rect::new(0, 0, cols, rows)),
+            },
+        )?,
+        None => Terminal::new(backend)?,
+    };
+    let mut viewer = Viewer::new(label, image, picker, sixel_lane, gallery);
+    view_loop(&mut terminal, &mut viewer, events)
+}
+
+/// ホストの申告から Picker を組む（`#22`）。2 つ目は「自前の 4096 色 sixel を使うか」。
+///
+/// ⚠️ `from_fontsize` は ratatui-image 9 で非推奨（「`from_query_stdio` を使え」）だが、
+/// あちらは tty に訊く —— 埋め込みには tty が無いので、**訊かずに組む道はこれしか無い**。
+/// プロトコルは直後に上書きする（`from_fontsize` は環境変数から当て推量するので、それは捨てる）。
+pub(crate) fn picker_from_caps(caps: &crate::ImageCaps) -> (Picker, bool) {
+    #[allow(deprecated)]
+    let mut picker = Picker::from_fontsize(ratatui_image::FontSize::new(
+        caps.cell_px.0.max(1),
+        caps.cell_px.1.max(1),
+    ));
+    picker.set_protocol_type(match caps.protocol {
+        crate::ImageProtocol::Sixel => ProtocolType::Sixel,
+        crate::ImageProtocol::Kitty => ProtocolType::Kitty,
+        crate::ImageProtocol::Iterm2 => ProtocolType::Iterm2,
+    });
+    let sixel_hi = caps.protocol == crate::ImageProtocol::Sixel && caps.sixel_registers >= 4096;
+    (picker, sixel_hi)
+}
+
+/// 埋め込みの `czv <file>` が絵かどうか（`#22`）。絵ならパス（`~` は展開済み）。
+///
+/// ⚠️ `-`（stdin）は扱わない —— 埋め込みにはパイプの stdin が無い。
+pub(crate) fn embedded_image_path(filename: &str) -> Option<PathBuf> {
+    if filename == "-" {
+        return None;
+    }
+    match startup_source(Some(filename)) {
+        Startup::Image(ImageSource::Path(path)) => Some(path),
+        _ => None,
+    }
+}
+
+/// 出どころから 1 枚目を読む（パスなら同フォルダの並びも作る）。
+fn load_source(source: ImageSource) -> io::Result<(DynamicImage, String, Option<Gallery>)> {
+    // パスで開いたときは同フォルダを並べる。パイプ入力はその場の 1 枚だけ。
+    match source {
+        ImageSource::Path(path) => {
+            let gallery = build_gallery(&path);
+            let (image, label) = load_entry(&gallery.entries[gallery.index])?;
+            Ok((image, label, Some(gallery)))
+        }
+        ImageSource::Memory { bytes, label } => {
+            let image = ImageReader::new(std::io::Cursor::new(bytes))
+                .with_guessed_format()?
+                .decode()
+                .map_err(|e| {
+                    io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("cannot decode image: {e}"),
+                    )
+                })?;
+            Ok((image, label, None))
+        }
+    }
+}
+
+impl Viewer {
+    fn new(
+        label: String,
+        image: DynamicImage,
+        picker: Picker,
+        sixel_lane: SixelLane,
+        gallery: Option<Gallery>,
+    ) -> Self {
+        Self {
+            label,
+            image,
+            picker,
+            sixel_lane,
+            zoom: Zoom::Fit,
+            rendered: None,
+            encode_ms: 0.0,
+            last_area: Rect::default(),
+            gallery,
+        }
+    }
+}
+
+/// 描いて、キーを読んで、を `q` / `Esc` / `Ctrl+C` まで繰り返す（CLI と埋め込みで共有）。
+fn view_loop<W: io::Write>(
+    terminal: &mut Terminal<CrosstermBackend<W>>,
+    viewer: &mut Viewer,
+    events: &mut dyn crate::input::EventSource,
+) -> io::Result<()> {
     loop {
-        terminal.draw(|f| draw(f, &mut viewer))?;
-        if !event::poll(std::time::Duration::from_millis(250))? {
+        terminal.draw(|f| draw(f, viewer))?;
+        if !events.poll(std::time::Duration::from_millis(250))? {
             continue;
         }
         // ⭐ 連打はまとめて飲む（通り過ぎた中間の絵は用意せず捨てる）。
@@ -240,13 +335,14 @@ pub(crate) fn run(source: ImageSource) -> io::Result<()> {
         let mut delta: isize = 0;
         let mut quit = false;
         let mut toggle_zoom = false;
-        let mut first = Some(event::read()?);
+        let mut resized: Option<(u16, u16)> = None;
+        let mut first = Some(events.read()?);
         loop {
             let ev = match first.take() {
                 Some(e) => e,
                 None => {
-                    if event::poll(std::time::Duration::ZERO)? {
-                        event::read()?
+                    if events.poll(std::time::Duration::ZERO)? {
+                        events.read()?
                     } else {
                         break;
                     }
@@ -265,12 +361,19 @@ pub(crate) fn run(source: ImageSource) -> io::Result<()> {
                         _ => {}
                     }
                 }
-                Event::Resize(_, _) => viewer.rendered = None,
+                Event::Resize(cols, rows) => {
+                    viewer.rendered = None;
+                    resized = Some((cols, rows));
+                }
                 _ => {}
             }
         }
         if quit {
             break;
+        }
+        // 埋め込みの固定ビューポートは自分で広げ直す（`event_loop.rs` と同じ）。CLI では無害。
+        if let Some((cols, rows)) = resized {
+            terminal.resize(Rect::new(0, 0, cols, rows))?;
         }
         if toggle_zoom {
             viewer.zoom = match viewer.zoom {
@@ -280,7 +383,7 @@ pub(crate) fn run(source: ImageSource) -> io::Result<()> {
             viewer.rendered = None;
         }
         if delta != 0 {
-            navigate(&mut viewer, delta);
+            navigate(viewer, delta);
         }
     }
     Ok(())
