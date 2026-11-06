@@ -13,6 +13,8 @@
 //! Sixel を見つけるのと同じ線。xterm.js の addon-image は SET を実装している
 //! （`_xtermGraphicsAttributes`・上限 4096）し、本物の xterm も同じ作法を受ける。
 
+#[cfg(feature = "remote-images")]
+pub(crate) mod fetch;
 pub(crate) mod inline;
 mod sixel4096;
 
@@ -26,7 +28,6 @@ use fast_image_resize::{FilterType, PixelType, ResizeAlg, ResizeOptions, Resizer
 use image::{DynamicImage, GenericImageView, ImageReader, RgbaImage};
 use ratatui::{
     Frame, Terminal,
-    backend::CrosstermBackend,
     buffer::{Buffer, CellDiffOption},
     layout::{Constraint, Direction, Layout, Position, Rect, Size},
     style::{Color, Modifier, Style},
@@ -87,7 +88,82 @@ pub(crate) fn sniff_image(head: &[u8]) -> Option<&'static str> {
     {
         return Some("ICO");
     }
+    #[cfg(feature = "avif")]
+    if is_avif(head) {
+        return Some("AVIF");
+    }
     None
+}
+
+/// 形式を言い当てるために覗く先頭の長さ。⚠️ AVIF は `ftyp` の互換ブランドまで見ないと
+/// 決められない形がある（major が `mif1` で、`avif` は互換の列にだけ居る）ので 16 では足りない。
+pub(crate) const SNIFF_LEN: usize = 32;
+
+/// AVIF か —— ISO BMFF の `ftyp` の major / compatible brand に `avif` / `avis`。
+/// 見るのは覗いた分（[`SNIFF_LEN`]）と箱の大きさの短い方だけ。
+#[cfg(feature = "avif")]
+fn is_avif(head: &[u8]) -> bool {
+    if head.len() < 12 || &head[4..8] != b"ftyp" {
+        return false;
+    }
+    let size = u32::from_be_bytes([head[0], head[1], head[2], head[3]]) as usize;
+    let end = size.min(head.len());
+    // 8..12 が major brand、12..16 は minor version（ブランドではない）、16.. が互換ブランド。
+    let (major, _) = head[8..].as_chunks::<4>();
+    let (compatible, _) = head.get(16..end).unwrap_or(&[]).as_chunks::<4>();
+    major[..1]
+        .iter()
+        .chain(compatible)
+        .any(|b| b == b"avif" || b == b"avis")
+}
+
+/// バイト列を絵にする —— どの入口（ファイル・パイプ・Markdown 内）もここを通る。
+/// ⚠️ AVIF は `image` では読めない（`Cargo.toml` の `image` の項）ので、先に分けて zenavif へ。
+pub(crate) fn decode_bytes(bytes: &[u8]) -> io::Result<DynamicImage> {
+    #[cfg(feature = "avif")]
+    if is_avif(bytes) {
+        return decode_avif(bytes);
+    }
+    ImageReader::new(std::io::Cursor::new(bytes))
+        .with_guessed_format()?
+        .decode()
+        .map_err(|e| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("cannot decode image: {e}"),
+            )
+        })
+}
+
+/// AVIF を zenavif（純 Rust の AV1 デコーダ）で読む。
+/// 📏 1350×1920 で 1 枚 0.3〜0.65 秒（release）—— C の dav1d の 2〜3 倍遅い。
+/// 1 枚開くには気にならないが、フォルダナビで連打すると待つ。
+///
+/// 🚨 **格子（タイル）の並びが当て推量になった物は読まない。** zenavif-parse 0.6.2 は格子の
+/// 並びの記述（`grid` アイテムの中身）を読まず、「全体 ÷ タイル」で並びを出す —— 割り切れない
+/// （端のタイルがはみ出す・規格が許す形）と **N 行 × 1 列の縦積み**に落ち、出力の寸法を 0 にする。
+/// 📏 Apple の ImageIO が 2188×1674 を 512 のタイルで書いた物は 512×10240 の縦積みで返った
+/// （エラーにならない）。∴ 化けた絵を出すより「読めない」と言う（壊れた画像と同じく、czv は理由を 1 行出して rc=1 で終わる）。
+#[cfg(feature = "avif")]
+fn decode_avif(bytes: &[u8]) -> io::Result<DynamicImage> {
+    use zenpixels_convert::PixelBufferConvertTypedExt;
+    let invalid = |msg: String| io::Error::new(io::ErrorKind::InvalidData, msg);
+    if let Ok(parser) = zenavif_parse::AvifParser::from_bytes(bytes)
+        && let Some(grid) = parser.grid_config()
+        && (grid.output_width == 0 || grid.output_height == 0)
+    {
+        return Err(invalid(format!(
+            "cannot decode AVIF: tiled image whose layout cannot be read ({} tiles)",
+            parser.grid_tile_count()
+        )));
+    }
+    let px = zenavif::decode(bytes).map_err(|e| invalid(format!("cannot decode AVIF: {e:?}")))?;
+    let rgb = px.to_rgb8();
+    let s = rgb.as_slice();
+    let (w, h) = (s.width(), s.rows());
+    image::RgbImage::from_raw(w, h, s.contiguous_bytes().into_owned())
+        .map(DynamicImage::ImageRgb8)
+        .ok_or_else(|| invalid("cannot decode AVIF: buffer of the wrong size".to_string()))
 }
 
 /// `czv` の起動引数から「絵か・文章か」を決める。
@@ -118,7 +194,7 @@ pub(crate) fn startup_source(filename: Option<&str>) -> Startup {
         }
         Some(path) => {
             let expanded = crate::file_io::expand_tilde(path);
-            let mut head = [0u8; 16];
+            let mut head = [0u8; SNIFF_LEN];
             let n = std::fs::File::open(&expanded)
                 .and_then(|mut f| f.read(&mut head))
                 .unwrap_or(0);
@@ -185,7 +261,7 @@ pub(crate) fn run(source: ImageSource) -> io::Result<()> {
     })?;
 
     // 端末のプロトコルとセル寸法を問い合わせる（raw モードが要る）。
-    let picker = Picker::from_query_stdio().unwrap_or_else(|_| Picker::halfblocks());
+    let picker = query_picker().unwrap_or_else(Picker::halfblocks);
 
     // Sixel のときだけ: 4096 レジスタを in-band で頼む。
     let sixel_lane = if picker.protocol_type() == ProtocolType::Sixel
@@ -196,7 +272,7 @@ pub(crate) fn run(source: ImageSource) -> io::Result<()> {
         SixelLane::Plain
     };
 
-    let backend = CrosstermBackend::new(io::stdout());
+    let backend = crate::host_backend::HostBackend::new(io::stdout(), None);
     let mut terminal = Terminal::new(backend)?;
     let mut viewer = Viewer::new(label, image, picker, sixel_lane, gallery);
     view_loop(
@@ -225,7 +301,7 @@ pub(crate) fn run_embedded<W: io::Write>(
     } else {
         SixelLane::Plain
     };
-    let backend = CrosstermBackend::new(writer);
+    let backend = crate::host_backend::HostBackend::new(writer, terminal_size);
     let mut terminal = match terminal_size {
         Some((cols, rows)) => Terminal::with_options(
             backend,
@@ -281,18 +357,7 @@ fn load_source(source: ImageSource) -> io::Result<(DynamicImage, String, Option<
             let (image, label) = load_entry(&gallery.entries[gallery.index])?;
             Ok((image, label, Some(gallery)))
         }
-        ImageSource::Memory { bytes, label } => {
-            let image = ImageReader::new(std::io::Cursor::new(bytes))
-                .with_guessed_format()?
-                .decode()
-                .map_err(|e| {
-                    io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        format!("cannot decode image: {e}"),
-                    )
-                })?;
-            Ok((image, label, None))
-        }
+        ImageSource::Memory { bytes, label } => Ok((decode_bytes(&bytes)?, label, None)),
     }
 }
 
@@ -320,7 +385,7 @@ impl Viewer {
 
 /// 描いて、キーを読んで、を `q` / `Esc` / `Ctrl+C` まで繰り返す（CLI と埋め込みで共有）。
 fn view_loop<W: io::Write>(
-    terminal: &mut Terminal<CrosstermBackend<W>>,
+    terminal: &mut Terminal<crate::host_backend::HostBackend<W>>,
     viewer: &mut Viewer,
     events: &mut dyn crate::input::EventSource,
 ) -> io::Result<()> {
@@ -373,6 +438,8 @@ fn view_loop<W: io::Write>(
         }
         // 埋め込みの固定ビューポートは自分で広げ直す（`event_loop.rs` と同じ）。CLI では無害。
         if let Some((cols, rows)) = resized {
+            // サイズを先に —— `resize` は消す途中で backend にサイズを訊く（`host_backend.rs`）。
+            terminal.backend_mut().note_size(cols, rows);
             terminal.resize(Rect::new(0, 0, cols, rows))?;
         }
         if toggle_zoom {
@@ -418,15 +485,7 @@ fn load_entry(path: &Path) -> io::Result<(DynamicImage, String)> {
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| path.display().to_string());
-    let image = ImageReader::open(path)?
-        .with_guessed_format()?
-        .decode()
-        .map_err(|e| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("cannot decode image: {e}"),
-            )
-        })?;
+    let image = decode_bytes(&std::fs::read(path)?)?;
     Ok((image, label))
 }
 
@@ -468,7 +527,7 @@ fn has_image_extension(p: &Path) -> bool {
             matches!(
                 e.as_str(),
                 "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "ico"
-            )
+            ) || (cfg!(feature = "avif") && e == "avif")
         })
 }
 
@@ -517,6 +576,85 @@ fn take_digits(it: &mut std::iter::Peekable<std::str::Chars>) -> String {
         }
     }
     s
+}
+
+/// 端末に画像の能力を問い合わせて `Picker` を返す。答えない端末なら `None`（`#26`）。
+///
+/// 🚨 **`Picker::from_query_stdio` を素で呼ばない。** ratatui-image 11.1 は別スレッドで stdin を
+/// **ブロッキングで** read し、2 秒で諦めても**スレッドは read で待ち続ける** —— 答えない端末では
+/// 起動が 2 秒遅れ、**利用者の最初の入力（1 回の read・最大 50 バイト）をそのスレッドが食う**。
+/// 📏 返事をしない端末で最初の画面まで約 2,030 ms・最初の `j` が消えた／返事をする端末では約 12 ms・全部効いた。
+/// ∴ 先に DSR（`ESC [ 5 n`）だけを `poll` で短く問い、答えた端末でだけ本番の問い合わせを出す。
+/// 本番の問い合わせも DSR で締める作りなので、答える端末ならスレッドは必ず抜ける。
+/// ⚠️ 答えない端末で待つ [`ANSWER_WAIT`] の間に打たれたキーは、こちらの read が読む（窓が 2 秒＋置き去り
+/// から数百 ms に縮むだけ）。
+pub(crate) fn query_picker() -> Option<Picker> {
+    if !terminal_answers(ANSWER_WAIT) {
+        return None;
+    }
+    Picker::from_query_stdio().ok()
+}
+
+/// 端末の返事を待つ長さ。⚠️ 長いほど遠い ssh の先でも画像が出るが、答えない端末の起動が遅れる。
+const ANSWER_WAIT: std::time::Duration = std::time::Duration::from_millis(400);
+
+/// DSR（`ESC [ 5 n`）を出し、`ESC [ <数字> n` が返るかを見る（unix のみ・raw モード前提）。
+#[cfg(unix)]
+fn terminal_answers(wait: std::time::Duration) -> bool {
+    use std::io::Write;
+    let mut stdout = io::stdout();
+    if stdout
+        .write_all(b"\x1b[5n")
+        .and_then(|()| stdout.flush())
+        .is_err()
+    {
+        return false;
+    }
+    let deadline = Instant::now() + wait;
+    let mut buf: Vec<u8> = Vec::with_capacity(16);
+    loop {
+        let remain = deadline.saturating_duration_since(Instant::now());
+        if remain.is_zero() {
+            return false;
+        }
+        let mut pfd = libc::pollfd {
+            fd: 0,
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        // SAFETY: fd 0 への poll/read。buf の領域は自前の配列。
+        let rc = unsafe { libc::poll(&mut pfd, 1, remain.as_millis() as i32) };
+        if rc <= 0 {
+            return false;
+        }
+        let mut chunk = [0u8; 32];
+        let n = unsafe { libc::read(0, chunk.as_mut_ptr().cast(), chunk.len()) };
+        if n <= 0 {
+            return false;
+        }
+        buf.extend_from_slice(&chunk[..n as usize]);
+        if contains_dsr_reply(&buf) {
+            return true;
+        }
+    }
+}
+
+/// ⚠️ unix 以外は `poll` が無い ＝ 先に確かめられない。これまでどおり本番の問い合わせに任せる。
+#[cfg(not(unix))]
+fn terminal_answers(_wait: std::time::Duration) -> bool {
+    true
+}
+
+/// `ESC [ <数字> n` が在るか（前に打鍵などが混ざっていてもよい）。
+#[cfg(any(unix, test))]
+fn contains_dsr_reply(buf: &[u8]) -> bool {
+    buf.windows(2).enumerate().any(|(i, w)| {
+        w == b"\x1b[" && {
+            let rest = &buf[i + 2..];
+            let digits = rest.iter().take_while(|b| b.is_ascii_digit()).count();
+            digits > 0 && rest.get(digits) == Some(&b'n')
+        }
+    })
 }
 
 /// XTSMGRAPHICS で色レジスタ数の引き上げを頼み、答えを返す（unix のみ・raw モード前提）。
@@ -849,8 +987,11 @@ mod tests {
     /// 同フォルダを自然順で並べ、開いた物の位置を見つける。
     #[test]
     fn gallery_lists_siblings_and_finds_the_index() {
-        let dir = std::env::temp_dir().join(format!("czv_gallery_{}", std::process::id()));
-        let _ = std::fs::create_dir_all(&dir);
+        let tmp = tempfile::Builder::new()
+            .prefix("czv_gallery_")
+            .tempdir()
+            .unwrap();
+        let dir = tmp.path().to_path_buf();
         for name in ["3.png", "1.png", "2.png", "readme.txt", "10.png"] {
             std::fs::write(dir.join(name), b"x").unwrap();
         }
@@ -887,13 +1028,103 @@ mod tests {
             sniff_image(b"\x00\x00\x01\x00\x00\x00\x20\x20\x00\x00\x01\x00\x20\x00...."),
             None
         );
-        // ⚠️ AVIF は読めない（`Cargo.toml` の `image` の項）ので絵と言わない —— 言うと
-        // ビューアへ回して decode で落ちる。
-        assert_eq!(sniff_image(b"\x00\x00\x00\x1cftypavif...."), None);
+        // AVIF は feature `avif` のときだけ絵と言う —— 読めない構成で言うとビューアへ回して
+        // decode で落ちる（0.2.35 で一度そうなっていた）。
+        let avif_major = b"\x00\x00\x00\x1cftypavif\x00\x00\x00\x00mif1miaf";
+        // major が `mif1` で、`avif` は互換ブランドにだけ居る形（16 バイトでは見えない）。
+        let avif_compatible = b"\x00\x00\x00\x1cftypmif1\x00\x00\x00\x00miafavif";
+        let expect = if cfg!(feature = "avif") {
+            Some("AVIF")
+        } else {
+            None
+        };
+        assert_eq!(sniff_image(avif_major), expect);
+        assert_eq!(sniff_image(avif_compatible), expect);
+        // HEIC は同じ箱の形でも AVIF ではない。
+        assert_eq!(
+            sniff_image(b"\x00\x00\x00\x18ftypheic\x00\x00\x00\x00mif1heic"),
+            None
+        );
+        // 箱の大きさより後ろのバイトはブランドとして読まない。
+        assert_eq!(
+            sniff_image(b"\x00\x00\x00\x10ftypmif1\x00\x00\x00\x00avif...."),
+            None
+        );
         assert_eq!(sniff_image(b"#!/bin/sh\n......."), None);
         assert_eq!(sniff_image(b""), None);
         // ⚠️ 短すぎる断片は「絵」と言わない（RIFF だけでは WebP と決められない）。
         assert_eq!(sniff_image(b"RIFF"), None);
+    }
+
+    /// 実物の AVIF（30×50 のグラデーション・ImageMagick で作った 301 バイト）を読めて、
+    /// ファイルの入口・フォルダナビの並びも AVIF を拾う。
+    #[cfg(feature = "avif")]
+    #[test]
+    fn a_real_avif_decodes_through_every_entry() {
+        const TINY_AVIF: &[u8] = include_bytes!("testdata/tiny.avif");
+        assert_eq!(sniff_image(&TINY_AVIF[..SNIFF_LEN]), Some("AVIF"));
+        let img = decode_bytes(TINY_AVIF).expect("AVIF を読める");
+        assert_eq!(img.dimensions(), (30, 50));
+
+        let dir = tempfile::Builder::new()
+            .prefix("czv-avif")
+            .tempdir()
+            .unwrap();
+        let path = dir.path().join("p.avif");
+        std::fs::write(&path, TINY_AVIF).unwrap();
+        let (img, label) = load_entry(&path).expect("ファイルの入口でも読める");
+        assert_eq!((img.dimensions(), label.as_str()), ((30, 50), "p.avif"));
+        assert!(has_image_extension(&path), "フォルダナビに並ぶ");
+    }
+
+    /// 壊れた AVIF は panic せずにエラーで返す（czv は理由を 1 行出して終わる・壊れた PNG と同じ）。
+    #[cfg(feature = "avif")]
+    #[test]
+    fn a_broken_avif_is_an_error_not_a_panic() {
+        let head = b"\x00\x00\x00\x1cftypavif\x00\x00\x00\x00mif1miaf\x00\x00\x00\x08junk";
+        assert!(decode_bytes(head).is_err());
+    }
+
+    /// 別のエンコーダ（Apple の ImageIO・`sips -s format avif`）で書いた、格子の無い AVIF も読める。
+    #[cfg(feature = "avif")]
+    #[test]
+    fn an_apple_written_avif_decodes() {
+        let img = decode_bytes(include_bytes!("testdata/apple-520x8.avif")).expect("読める");
+        assert_eq!(img.dimensions(), (520, 8));
+    }
+
+    /// 割り切れない格子（1030 幅を 512 のタイルで・Apple の ImageIO が書いた物）は、化けた
+    /// 縦積みの絵ではなく「読めない」になる（`decode_avif` の 🚨）。
+    /// ⭐ 上流が並びの記述を読むようになったら、ここは「1030×4 で読める」に書き換える。
+    #[cfg(feature = "avif")]
+    #[test]
+    fn a_tiled_avif_whose_layout_is_guessed_is_refused_not_garbled() {
+        const GRID: &[u8] = include_bytes!("testdata/apple-grid-1030x4.avif");
+        // 前提: 上流は今もこれを縦積み（出力の寸法 0）として推している —— 外れたら上の ⭐ の出番。
+        let parser = zenavif_parse::AvifParser::from_bytes(GRID).unwrap();
+        let grid = parser.grid_config().expect("格子の AVIF");
+        assert_eq!((grid.columns, grid.output_width), (1, 0));
+        // 守りが無ければ zenavif はこれを 512×1536 の縦積みの絵として返す（対照）。
+        let raw = zenavif::decode(GRID).unwrap();
+        assert_ne!((raw.width(), raw.height()), (1030, 4));
+
+        let err = decode_bytes(GRID).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert!(err.to_string().contains("tiled"), "{err}");
+    }
+
+    /// DSR の返事（`ESC [ <数字> n`）を見分ける —— 前置きの混入・別の返事・途中で切れた物。
+    #[test]
+    fn dsr_reply_detection() {
+        assert!(contains_dsr_reply(b"\x1b[0n"));
+        assert!(contains_dsr_reply(b"\x1b[3n")); // 「不調」も返事は返事（答える端末）
+        assert!(contains_dsr_reply(b"jk\x1b[0n")); // 打鍵が前に混ざる
+        assert!(contains_dsr_reply(b"\x1b[?62;4c\x1b[0n")); // 別の返事の後ろ
+        assert!(!contains_dsr_reply(b"\x1b[0")); // まだ途中
+        assert!(!contains_dsr_reply(b"\x1b[n")); // 数字が無い
+        assert!(!contains_dsr_reply(b"\x1b[12;40R")); // カーソル位置の返事は DSR 5 の返事ではない
+        assert!(!contains_dsr_reply(b"j"));
+        assert!(!contains_dsr_reply(b""));
     }
 
     /// 返事のパース —— 成功・失敗・前置きの混入。

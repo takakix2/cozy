@@ -57,6 +57,14 @@ impl TerminalSession {
 
 impl Drop for TerminalSession {
     fn drop(&mut self) {
+        // The event loop turns wheel reporting off on its way out, but not past a
+        // panic — a shell left reporting would echo `^[[<64;…M` on every notch.
+        {
+            use std::io::Write;
+            let mut stdout = io::stdout();
+            let _ = stdout.write_all(crate::event_loop::WHEEL_OFF);
+            let _ = stdout.flush();
+        }
         if self.bracketed_paste_enabled {
             let _ = utils::terminal::disable_bracketed_paste();
         }
@@ -131,18 +139,69 @@ pub fn run_cli_view_from_env() -> io::Result<()> {
     }
 }
 
-/// 第 1 引数を返す。`--version` / `-V` なら版を名乗って `None`（＝もう走らない）。
+/// 第 1 引数を返す。`--version` / `-V` なら版を、`--help` / `-h` なら使い方を出して `None`
+/// （＝もう走らない）。⭐ どちらも**端末に触る前**に答える（raw モードにも代替画面にも入らない）。
 ///
 /// ⚠️ **`name` で名乗りを変える** —— `czv --version` が `cozy` と名乗ると、
 /// どちらを入れたのか分からなくなる。📌 版番号は同じ（同じクレートから焼かれる）。
 fn args_or_version(name: &str) -> Option<Option<String>> {
-    match std::env::args().nth(1) {
-        Some(arg) if arg == "--version" || arg == "-V" => {
-            println!("{} {}", name, env!("CARGO_PKG_VERSION"));
+    match cli_arg(std::env::args().nth(1)) {
+        CliArg::Version => {
+            println!("{} {}", name, crate::VERSION);
             None
         }
-        other => Some(other),
+        CliArg::Help => {
+            print!("{}", usage(name));
+            None
+        }
+        CliArg::File(file) => Some(file),
     }
+}
+
+/// 第 1 引数の読み方。`std::env::args` から切り離してある ＝ 検体で撃てる。
+#[derive(Debug, PartialEq, Eq)]
+enum CliArg {
+    Version,
+    Help,
+    File(Option<String>),
+}
+
+/// 🆕 **`--help` / `-h` は `#23`（2026-10-10）** —— それまでは `--version` 以外を全部ファイル名にしていたので、
+/// `cozy --help` は `--help` という名前のファイルを開こうとした（端末が無ければ `Device not configured`）。
+/// ⚠️ 見るのは**完全一致の 4 つだけ** —— `-v` や `--versions` は今までどおりファイル名（`./-v` と書かなくても開ける）。
+fn cli_arg(first: Option<String>) -> CliArg {
+    match first.as_deref() {
+        Some("--version" | "-V") => CliArg::Version,
+        Some("--help" | "-h") => CliArg::Help,
+        _ => CliArg::File(first),
+    }
+}
+
+/// `cozy --help` / `czv --help` の本文（末尾に改行あり・`\n` 区切り）。
+///
+/// ⭐ **埋め込みホストも同じ本文を出す**ために公開している（argotty はアプリ内の `cozy` を横取りする・
+/// argotty `#117`）—— 文言を 2 か所で持たない。`name` は打たれた方（`cozy` / `czv`）。
+/// 📏 **どの行も 36 桁以内**（`usage_fits_a_phone_in_portrait`）—— だから名前と説明を縦に積む。
+/// 🚨 **最初は 43 桁で作って、実機で 5 行折れた**（2026-10-10）—— 43 は argotty の `hsh --help` の検体が
+/// **iPhone 17 Pro の sim** で測った幅で、📏 **iPhone XS（argotty の既定のフォント）は 37 桁**だった。
+/// ⭐ ∴ 物差しは「借りた数字」ではなく**手元で一番狭い実機**から取る（37 に 1 桁の余裕）。
+/// 📌 鍵は**既定値**（`shortcuts.toml` で変えられる）なので、そう書く。全部は中の Help（`Ctrl+H`）が持つ。
+pub fn usage(name: &str) -> String {
+    let pictures = if cfg!(feature = "imageview") {
+        " (pictures too)"
+    } else {
+        ""
+    };
+    format!(
+        "{name} {version}\n\
+         Type like nano, move like vim.\n\
+         Usage:\n  cozy [FILE]\n    Edit FILE (none: start screen)\n  \
+         czv [FILE]\n    Read FILE{pictures}\n    `czv -` or a pipe reads stdin\n\
+         Options:\n  -h, --help     Print this, exit\n  -V, --version  Print version, exit\n\
+         Keys (defaults; Ctrl+H lists all):\n  Ctrl+S save · Ctrl+X exit\n  Ctrl+Q quit without saving\n\
+         A file whose name starts with '-':\n  cozy ./-name\n",
+        version = crate::VERSION,
+    )
 }
 
 /// Run with CLI terminal setup using an explicit configuration.
@@ -160,4 +219,48 @@ pub fn run_cli_with_config(config: CozyConfig) -> io::Result<()> {
     crate::imageview::inline::capture_caps();
     let mut event_src = CrosstermEventSource;
     run(io::stdout(), config, &mut event_src)
+}
+
+#[cfg(test)]
+mod cli_tests {
+    use super::*;
+
+    #[test]
+    fn the_four_flags_are_read_and_everything_else_is_a_file() {
+        assert_eq!(cli_arg(Some("--version".into())), CliArg::Version);
+        assert_eq!(cli_arg(Some("-V".into())), CliArg::Version);
+        assert_eq!(cli_arg(Some("--help".into())), CliArg::Help);
+        assert_eq!(cli_arg(Some("-h".into())), CliArg::Help);
+        assert_eq!(cli_arg(None), CliArg::File(None));
+        for f in ["notes.md", "-v", "--versions", "--helpme", "-", "./--help"] {
+            assert_eq!(
+                cli_arg(Some(f.into())),
+                CliArg::File(Some(f.into())),
+                "{f:?}"
+            );
+        }
+    }
+
+    /// 📏 iPhone XS 縦の端末は **37 桁**（2026-10-10 実機・argotty の既定フォント）→ 1 桁残して 36。
+    /// ⚠️ argotty の `help_fits_a_phone_in_portrait` の 43 は 17 Pro sim の幅 ＝ XS では折れる。
+    /// ⚠️ 数えるのは**文字数**（`—` も `·` も 1 桁）。名前は長い方の `cozy` で測る。
+    #[test]
+    fn usage_fits_a_phone_in_portrait() {
+        let text = usage("cozy");
+        for line in text.lines() {
+            assert!(
+                line.chars().count() <= 36,
+                "{} 桁: {line:?}",
+                line.chars().count()
+            );
+        }
+    }
+
+    #[test]
+    fn usage_names_the_typed_command_and_both_flags() {
+        assert!(usage("czv").starts_with(&format!("czv {}\n", crate::VERSION)));
+        let text = usage("cozy");
+        assert!(text.contains("--help") && text.contains("--version"));
+        assert!(text.ends_with('\n'));
+    }
 }

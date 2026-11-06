@@ -200,6 +200,9 @@ pub struct EditorState {
     pub markdown_cursor_line: usize, // Markdown preview の現在行
     pub markdown_view_height: usize, // Markdown preview の表示行数
     pub markdown_rendered_line_count: usize, // Markdown preview のレンダリング後の行数
+    /// プレビューに出ている URL の画像（描くたびに数え直す・`i` が取りに行く相手）。
+    /// 端末が画像を描けないとき・feature `remote-images` が無いときは空。
+    pub markdown_remote_images: Vec<String>,
     pub show_line_numbers_runtime: Option<bool>, // 新規: ランタイム行番号表示フラグ (Noneならconfigに従う)
     pub goto_line_buffer: String,                // 行ジャンプ入力バッファ
     /// All search match positions: (line_y, byte_start, byte_end)
@@ -390,7 +393,7 @@ impl EditorState {
                     FileFormat::default(),
                     None,
                     EditorMode::Browse,
-                    Some(tree),
+                    Some(*tree),
                     None,
                     false,
                 ),
@@ -453,6 +456,7 @@ impl EditorState {
             markdown_cursor_line: 0,
             markdown_view_height: 0,
             markdown_rendered_line_count: 1,
+            markdown_remote_images: Vec::new(),
             show_line_numbers_runtime: None,
             goto_line_buffer: String::new(),
             search_matches: Vec::new(),
@@ -662,6 +666,7 @@ impl EditorState {
                 self.markdown_cursor_line = 0;
                 self.markdown_view_height = 0;
                 self.markdown_rendered_line_count = 1;
+                self.markdown_remote_images.clear();
                 self.glide_prefix = None;
                 self.glide_count.clear();
                 self.status_message = None;

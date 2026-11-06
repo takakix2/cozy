@@ -14,6 +14,12 @@ pub enum Action {
     HalfPageDown,
     PageTop,
     PageBottom,
+    // マウスホイール（＋ argotty の指のスワイプ）: 読むモードの**表示位置**を N 行送る（負で上）。
+    // 現在行のハイライトは文書の同じ行に残り、画面から出るときだけ端で押される（vim の `Ctrl-E`/`Ctrl-Y`）。
+    Wheel(isize),
+    // Markdown プレビューの `i`: 文書に出てくる URL の画像を取りに行く（feature `remote-images`）。
+    // ⭐ プレビューを描くだけでは通信しない —— 外へ出るのはこの Action のときだけ。
+    FetchRemoteImages,
     FileTop,
     FileBottom,
     Home,

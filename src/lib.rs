@@ -7,6 +7,7 @@ mod event_loop;
 mod file_io;
 mod glide;
 mod host;
+mod host_backend;
 #[cfg(feature = "imageview")]
 mod imageview;
 mod input;
@@ -30,10 +31,11 @@ mod vendor;
 /// **「上書きしなければどこか」も公開する**のが対（片方だけ公開している状態だった）。
 pub use config_io::user_config_path;
 pub use host::{
-    run_cli, run_cli_from_env, run_cli_view, run_cli_view_from_env, run_cli_with_config,
+    run_cli, run_cli_from_env, run_cli_view, run_cli_view_from_env, run_cli_with_config, usage,
 };
+use host_backend::HostBackend;
 pub use input::{CrosstermEventSource, EventSource};
-use ratatui::{Terminal, backend::CrosstermBackend};
+use ratatui::Terminal;
 use state::EditorState;
 use state::editor::EditorStateInit;
 use std::io::{self, Write};
@@ -158,10 +160,15 @@ pub fn run<W: Write>(
             return imageview::run_embedded(path, writer, event_src, &caps, config.terminal_size);
         }
     }
+    // Ask the terminal for wheel reports only when it is a real one (no fixed
+    // size handed in): crossterm then parses the replies. An embedding host
+    // (argotty) feeds key names through its own queue, so the report bytes
+    // would arrive there as stray keys; such a host sends `Action::Wheel` itself.
+    let report_wheel = config.terminal_size.is_none();
     let mut terminal = create_terminal(writer, config.terminal_size)?;
     let mut editor = create_editor(config);
 
-    event_loop::run(&mut terminal, &mut editor, event_src)?;
+    event_loop::run(&mut terminal, &mut editor, event_src, report_wheel)?;
 
     Ok(())
 }
@@ -169,8 +176,8 @@ pub fn run<W: Write>(
 fn create_terminal<W: Write>(
     writer: W,
     terminal_size: Option<(u16, u16)>,
-) -> io::Result<Terminal<CrosstermBackend<W>>> {
-    let backend = CrosstermBackend::new(writer);
+) -> io::Result<Terminal<HostBackend<W>>> {
+    let backend = HostBackend::new(writer, terminal_size);
     if let Some((cols, rows)) = terminal_size {
         use ratatui::layout::Rect;
         Terminal::with_options(
@@ -296,14 +303,16 @@ mod embedded_image_tests {
     }
 
     /// 32×32 の PNG を一時ディレクトリに置く（テストごとに別の場所）。
-    fn png(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("cozy-22-{}-{name}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("pic.png");
+    fn png(name: &str) -> (tempfile::TempDir, PathBuf) {
+        let tmp = tempfile::Builder::new()
+            .prefix(&format!("cozy-22-{name}-"))
+            .tempdir()
+            .unwrap();
+        let path = tmp.path().join("pic.png");
         image::RgbaImage::from_pixel(32, 32, image::Rgba([200, 40, 40, 255]))
             .save(&path)
             .unwrap();
-        path
+        (tmp, path)
     }
 
     fn sixel_caps(registers: u32) -> ImageCaps {
@@ -334,7 +343,7 @@ mod embedded_image_tests {
     fn with_caps_a_png_is_drawn_as_sixel() {
         for registers in [256, 4096] {
             let out = czv(
-                &png(&format!("caps{registers}")),
+                &png(&format!("caps{registers}")).1,
                 Some(sixel_caps(registers)),
             );
             assert!(
@@ -349,7 +358,7 @@ mod embedded_image_tests {
     /// これが無いと「常に画像の道へ行く」実装が上を通る。
     #[test]
     fn without_caps_a_png_opens_as_text() {
-        let out = czv(&png("nocaps"), None);
+        let out = czv(&png("nocaps").1, None);
         assert!(!out.contains("\u{1b}P"), "能力が無いのに Sixel を書いた");
         assert!(out.contains("PNG"), "文字の閲覧面で開いていない");
     }
@@ -357,7 +366,11 @@ mod embedded_image_tests {
     /// 文章のファイルは、能力があっても文字で開く。
     #[test]
     fn with_caps_a_text_file_still_opens_as_text() {
-        let path = std::env::temp_dir().join(format!("cozy-22-{}-text.md", std::process::id()));
+        let tmp = tempfile::Builder::new()
+            .prefix("cozy-22-text-")
+            .tempdir()
+            .unwrap();
+        let path = tmp.path().join("text.md");
         std::fs::write(&path, "hello cozy\n").unwrap();
         let out = czv(&path, Some(sixel_caps(4096)));
         assert!(!out.contains("\u{1b}P"), "文章なのに Sixel を書いた");
@@ -398,7 +411,7 @@ mod embedded_image_tests {
 
     #[test]
     fn only_image_files_take_the_image_path() {
-        let pic = png("detect");
+        let (_tmp, pic) = png("detect");
         assert_eq!(
             imageview::embedded_image_path(pic.to_str().unwrap()),
             Some(pic.clone())

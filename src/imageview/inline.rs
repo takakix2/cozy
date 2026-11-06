@@ -25,7 +25,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use image::{DynamicImage, GenericImageView, ImageReader, RgbaImage};
+use image::{DynamicImage, GenericImageView, RgbaImage};
 use ratatui::{
     buffer::Buffer,
     layout::{Rect, Size},
@@ -64,10 +64,21 @@ struct Fitted {
     font_h: u32,
 }
 
-/// `(解決済みパス, セル幅)`。
-type FitKey = (PathBuf, u16);
-/// `(パス, 幅, 上に隠す行, 描く行)`。
-type SliceKey = (PathBuf, u16, u16, u16);
+/// 画像の出どころ。手元のファイルか、`i` で取ってきた URL か。
+///
+/// ⭐ URL の物は取ってきたバイト列（[`super::fetch`]・メモリだけ）から読む —— ディスクに書いて
+/// パスに化けさせない（「開いている間だけ覚える」を文字どおり守る）。
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum ImageSource {
+    File(PathBuf),
+    #[cfg(feature = "remote-images")]
+    Url(String),
+}
+
+/// `(出どころ, セル幅)`。
+type FitKey = (ImageSource, u16);
+/// `(出どころ, 幅, 上に隠す行, 描く行)`。
+type SliceKey = (ImageSource, u16, u16, u16);
 
 thread_local! {
     static CAPS: RefCell<Option<Caps>> = const { RefCell::new(None) };
@@ -86,7 +97,8 @@ enum Content {
 /// CLI 起動時に 1 度呼ぶ（cozy が raw モードに入った直後）。端末へ問い合わせて能力を仕舞う。
 /// ⚠️ 失敗（問い合わせに答えない端末・埋め込みホスト）なら caps は空のまま ＝ 画像は出ない。
 pub(crate) fn capture_caps() {
-    let Ok(picker) = Picker::from_query_stdio() else {
+    // ⚠️ 素の `Picker::from_query_stdio` は答えない端末で最初の入力を食う（`#26`）—— 入口を通す。
+    let Some(picker) = super::query_picker() else {
         return;
     };
     let sixel_hi = picker.protocol_type() == ProtocolType::Sixel
@@ -112,17 +124,17 @@ pub(crate) fn available() -> bool {
 
 /// 画像を用意して**予約すべき行数**を返す。使えない／読めない／デコード不能なら `None`
 /// （呼び手は文字フォールバックのまま）。`max_rows` でプレビューに対して大きすぎる画像を抑える。
-/// 🚨 **予約行数は view より必ず低くする**（max_rows は呼び手が view の 8 割で渡す）——
+/// 🚨 **予約行数は view より必ず低くする**（max_rows は呼び手が view の半分で渡す）——
 /// こうすると画像は常にビューポートより低く、スクロールで**同時に切れる端は片方だけ**になる。
-pub(crate) fn reserve_rows(path: &Path, cols: u16, max_rows: u16) -> Option<usize> {
+pub(crate) fn reserve_rows(source: &ImageSource, cols: u16, max_rows: u16) -> Option<usize> {
     if cols == 0 || !available() {
         return None;
     }
-    let key = (path.to_path_buf(), cols);
+    let key = (source.clone(), cols);
     let fitted = FITTED.with(|c| {
         c.borrow_mut()
             .entry(key)
-            .or_insert_with(|| fit(path, cols, max_rows))
+            .or_insert_with(|| fit(source, cols, max_rows))
             .clone()
     });
     fitted.map(|f| f.full_cells.height as usize)
@@ -136,15 +148,22 @@ pub(crate) fn reserve_rows(path: &Path, cols: u16, max_rows: u16) -> Option<usiz
 /// 画像は view より低いので、切れるのは上下どちらか一方だけ:
 /// `skip > 0` ＝ 上が隠れている → 下側を残す（下アンカー）。`skip == 0` ＝ 上は見えていて
 /// 下がはみ出す（または全見え）→ 上側を残す（上アンカー）。
-pub(crate) fn blit(path: &Path, cols: u16, skip: u16, draw: u16, rect: Rect, buf: &mut Buffer) {
+pub(crate) fn blit(
+    source: &ImageSource,
+    cols: u16,
+    skip: u16,
+    draw: u16,
+    rect: Rect,
+    buf: &mut Buffer,
+) {
     if draw == 0 || rect.width == 0 {
         return;
     }
-    let rkey = (path.to_path_buf(), cols, skip, draw);
+    let rkey = (source.clone(), cols, skip, draw);
     let content = RENDER.with(|c| {
         c.borrow_mut()
             .entry(rkey)
-            .or_insert_with(|| render_slice(path, cols, skip, draw))
+            .or_insert_with(|| render_slice(source, cols, skip, draw))
             .clone()
     });
     let Some(content) = content else { return };
@@ -156,8 +175,8 @@ pub(crate) fn blit(path: &Path, cols: u16, skip: u16, draw: u16, rect: Rect, buf
 }
 
 /// `(skip, draw)` のスライスを切り出して描く中身を作る（RENDER キャッシュの中身）。
-fn render_slice(path: &Path, cols: u16, skip: u16, draw: u16) -> Option<Content> {
-    let key = (path.to_path_buf(), cols);
+fn render_slice(source: &ImageSource, cols: u16, skip: u16, draw: u16) -> Option<Content> {
+    let key = (source.clone(), cols);
     let fitted = FITTED.with(|c| c.borrow().get(&key).cloned().flatten())?;
     let clip_top = skip > 0;
     let draw_cells = Size::new(fitted.full_cells.width, draw);
@@ -200,7 +219,7 @@ fn render_slice(path: &Path, cols: u16, skip: u16, draw: u16) -> Option<Content>
 }
 
 /// デコード → 幅に合わせて縮小（重い所はここだけ・(path, 幅) ごとに 1 度）。
-fn fit(path: &Path, cols: u16, max_rows: u16) -> Option<Fitted> {
+fn fit(source: &ImageSource, cols: u16, max_rows: u16) -> Option<Fitted> {
     let caps_cell = CAPS.with(|c| {
         c.borrow().as_ref().map(|caps| {
             (
@@ -214,7 +233,7 @@ fn fit(path: &Path, cols: u16, max_rows: u16) -> Option<Fitted> {
     let font_w = (font.width as u32).max(1);
     let font_h = (font.height as u32).max(1);
 
-    let image = decode(path)?;
+    let image = decode(source)?;
     let (ow, oh) = image.dimensions();
     if ow == 0 || oh == 0 {
         return None;
@@ -248,44 +267,65 @@ fn fit(path: &Path, cols: u16, max_rows: u16) -> Option<Fitted> {
     })
 }
 
-fn decode(path: &Path) -> Option<DynamicImage> {
+fn decode(source: &ImageSource) -> Option<DynamicImage> {
+    match source {
+        ImageSource::File(path) => decode_file(path),
+        #[cfg(feature = "remote-images")]
+        ImageSource::Url(url) => {
+            // 手元の物（`decode_file`）と同じく、czv が知っている形式のマジックバイトだけ受ける。
+            // 📌 HTML のエラーページは、これが無くても `decode_bytes` が形式を推し量れずに断る
+            // （検体 `a_failed_or_pending_fetch_says_so` はどちらでも緑）—— 二重の守りで、
+            // 揃えているのは「どの形式を開くか」の方。
+            let bytes = super::fetch::bytes(url)?;
+            super::sniff_image(&bytes[..bytes.len().min(super::SNIFF_LEN)])?;
+            super::decode_bytes(&bytes).ok()
+        }
+    }
+}
+
+fn decode_file(path: &Path) -> Option<DynamicImage> {
     // マジックバイトで絵だけ受ける（壊れたファイル・テキストを掴まない）。
-    let mut head = [0u8; 16];
+    let mut head = [0u8; super::SNIFF_LEN];
     let n = std::fs::File::open(path)
         .and_then(|mut f| std::io::Read::read(&mut f, &mut head))
         .ok()?;
     super::sniff_image(&head[..n])?;
-    ImageReader::open(path)
-        .ok()?
-        .with_guessed_format()
-        .ok()?
-        .decode()
-        .ok()
+    super::decode_bytes(&std::fs::read(path).ok()?).ok()
 }
 
 /// Markdown 内の画像パスを**その .md のディレクトリ基準**で解決する。
-/// 絶対パス・`~` はそのまま（`~` は展開）。URL（`http(s)://`）は `None`（ネットは引かない）。
-pub(crate) fn resolve(doc_dir: Option<&Path>, src: &str) -> Option<PathBuf> {
+/// 絶対パス・`~` はそのまま（`~` は展開）。
+///
+/// URL（`http(s)://`）は `ImageSource::Url` になる —— ⚠️ **解決しただけでは取りに行かない**
+/// （取るのは `i` を押したとき・[`super::fetch::request`]）。feature `remote-images` が無ければ `None`。
+pub(crate) fn resolve(doc_dir: Option<&Path>, src: &str) -> Option<ImageSource> {
     if src.starts_with("http://") || src.starts_with("https://") {
+        #[cfg(feature = "remote-images")]
+        return Some(ImageSource::Url(src.to_string()));
+        #[cfg(not(feature = "remote-images"))]
         return None;
     }
     let expanded = crate::file_io::expand_tilde(src);
     if expanded.is_absolute() {
-        return Some(expanded);
+        return Some(ImageSource::File(expanded));
     }
-    doc_dir.map(|d| d.join(expanded))
+    doc_dir.map(|d| ImageSource::File(d.join(expanded)))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    fn file(p: &str) -> Option<ImageSource> {
+        Some(ImageSource::File(PathBuf::from(p)))
+    }
+
     #[test]
     fn resolve_is_relative_to_the_doc_dir() {
         let doc = Path::new("/home/u/notes");
         assert_eq!(
             resolve(Some(doc), "img/a.png"),
-            Some(PathBuf::from("/home/u/notes/img/a.png"))
+            file("/home/u/notes/img/a.png")
         );
     }
 
@@ -293,23 +333,37 @@ mod tests {
     fn absolute_paths_pass_through() {
         assert_eq!(
             resolve(Some(Path::new("/home/u/notes")), "/tmp/x.png"),
-            Some(PathBuf::from("/tmp/x.png"))
+            file("/tmp/x.png")
         );
     }
 
+    /// URL は URL のまま返す（手元のパスに化けない）。解決しても取りに行かない ——
+    /// 取得の表に載らないことまで見る。
+    #[cfg(feature = "remote-images")]
     #[test]
-    fn urls_are_not_fetched() {
+    fn urls_resolve_to_urls_and_are_not_fetched() {
+        let url = "https://e.com/resolve-only.png";
+        assert_eq!(
+            resolve(Some(Path::new("/x")), url),
+            Some(ImageSource::Url(url.to_string()))
+        );
+        assert_eq!(
+            resolve(Some(Path::new("/x")), "http://e.com/a.png"),
+            Some(ImageSource::Url("http://e.com/a.png".to_string()))
+        );
+        assert_eq!(super::super::fetch::status(url), None);
+    }
+
+    #[cfg(not(feature = "remote-images"))]
+    #[test]
+    fn without_remote_images_urls_do_not_resolve() {
         assert_eq!(resolve(Some(Path::new("/x")), "https://e.com/a.png"), None);
-        assert_eq!(resolve(Some(Path::new("/x")), "http://e.com/a.png"), None);
     }
 
     #[test]
     fn no_doc_dir_means_only_absolute_resolves() {
         assert_eq!(resolve(None, "img/a.png"), None);
-        assert_eq!(
-            resolve(None, "/tmp/x.png"),
-            Some(PathBuf::from("/tmp/x.png"))
-        );
+        assert_eq!(resolve(None, "/tmp/x.png"), file("/tmp/x.png"));
     }
 
     /// caps 未取得（埋め込みホスト・問い合わせ失敗）では必ず `None` ＝ 文字フォールバックへ。
@@ -317,6 +371,13 @@ mod tests {
     fn without_caps_nothing_reserves() {
         CAPS.with(|c| *c.borrow_mut() = None);
         assert!(!available());
-        assert_eq!(reserve_rows(Path::new("/tmp/whatever.png"), 40, 20), None);
+        assert_eq!(
+            reserve_rows(
+                &ImageSource::File(PathBuf::from("/tmp/whatever.png")),
+                40,
+                20
+            ),
+            None
+        );
     }
 }

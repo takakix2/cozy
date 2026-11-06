@@ -1,5 +1,28 @@
 # Changelog
 
+## v0.2.38
+
+### Added
+
+- **`cozy --help` / `-h` (and `czv --help`) print a short usage and exit.** Until now only `--version` / `-V` were read, so `--help` was taken as a file name — the editor opened a file called `--help`, or, with no terminal attached, failed with `Device not configured`. The usage fits a small phone in portrait (36 columns) and names the typed command, as `--version` does. Other arguments are unchanged: `-v` or `--versions` still open files of that name.
+- **`cozy::usage(name)`** — the same text, for hosts that answer `cozy --help` themselves.
+- **The mouse wheel scrolls the reading views** — the Markdown preview, Help and `czv`. The text moves and the highlighted row stays on its line until it would leave the screen, then it is pushed along at the edge (vim's `Ctrl-E` / `Ctrl-Y`). The ↑ / ↓ keys do the same, as in `less`: they move the text one row. `j` / `k` and `H` / `M` / `L` are unchanged and still move the highlight. cozy does not take the mouse from the terminal — it asks only that the wheel be sent as ↑ / ↓ (alternate scroll) while a reading view is open — so text can be selected and copied with the mouse everywhere, without holding Shift. How far a notch goes is the terminal's setting.
+- **Images from the web in the Markdown preview, when you ask for them.** An `![alt](https://…)` image shows as `[image: alt · press i to fetch]`; press `i` in the preview to fetch every web image in the document, and each one is drawn as it arrives (the status bar counts them, `images 2/5`). Nothing is fetched until you press `i` — opening a document never contacts the image's server. cozy runs `curl` to fetch (no new dependency; proxy and certificate settings work as they do for curl), takes `http` and `https` only, gives up after 10 seconds, and refuses images over 20 MB; a failure is shown in place of the image. Fetched images are kept in memory while cozy runs and are never written to disk. Feature `remote-images`, on by default; hosts that embed cozy with `default-features = false` and `imageview` do not get it.
+- **`Action::Wheel(rows)`** — for hosts that embed cozy and deliver scrolling themselves (for example a finger swipe). In the reading views it scrolls as above; while editing it moves the cursor.
+- **`czv` opens AVIF images** (feature `avif`, on by default). Decoding is pure Rust (zenavif), so the build still needs no C library and no assembler. Folder navigation lists `.avif` files too. A tiled AVIF whose tile layout cannot be read — for example a 2188×1674 picture written as 512-pixel tiles, as macOS writes large images — is refused with `cannot decode AVIF: tiled image …` instead of being shown as a scrambled column of tiles. AVIF is slower to decode than the other formats (about 0.3–0.6 s for a 1350×1920 page).
+
+### Changed
+
+- Images in the Markdown preview now take at most half the preview's height (was four fifths), so the text around a picture stays on screen.
+- Hosts that embed cozy with `default-features = false` and `imageview` get no AVIF decoder unless they also turn on `avif`.
+- **Browse opens large folders at once.** It used to read everything under the folder before drawing anything, so a network share or your home folder kept the screen blank until the whole walk finished (about 1.4 s for 110,000 entries on a warm disk, much longer on a cold network share). Now it reads only the top level, reads a folder when you open it, and walks the rest in the background. The footer shows `indexing N` until the walk is done; the count and the entries found in the background update on their own while you wait, without a key press. `/` still searches folders you have not opened: when you press it, Browse waits up to 0.3 s for the walk to finish, then searches what has been found so far. Folders of ordinary size are walked within 0.1 s of starting, so for them nothing looks different. Taking in what the background walk found never holds the screen for more than about 70 ms at a time, even for hundreds of thousands of entries.
+- Moving the cursor in Browse no longer re-scans every entry while a filter is active. The list of rows on screen is kept and rebuilt only when a folder is opened or closed, the filter changes, or new entries arrive (1.5 ms → about 1 µs per key with 110,000 entries).
+
+### Fixed
+
+- **The first key after starting `cozy` or `czv` is no longer lost when the terminal does not answer queries.** At startup cozy asks the terminal what images it can draw. When nothing answered (some test harnesses and terminal-less sessions do this), startup waited 2 seconds and the reader left behind by that query then swallowed the first thing you typed (up to 50 bytes of a paste). cozy now first asks a single status question and waits up to 0.4 s; only a terminal that answers is asked about images. Terminals that answer — practically every real one — see no change. Others start in about 0.4 s instead of 2, show images as text as before, and keep every key.
+- **Embedded cozy no longer leaves old text on screen after a resize** (for example when a phone's soft keyboard opens and closes). The host's terminal size is now answered from the size the host passes in, instead of asking a terminal the host does not have; the clear that follows a resize used to fail there, so the next frame was drawn over what the smaller screen had shown. The embedded image viewer, which stopped with an error on the same resize, now redraws too.
+
 ## v0.2.37
 
 ### Added

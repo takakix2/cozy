@@ -140,12 +140,13 @@ mod partial_config {
     use super::*;
     use std::fs;
 
-    fn scratch(name: &str) -> PathBuf {
-        let base =
-            std::env::temp_dir().join(format!("cozy_cfg_test_{}_{}", std::process::id(), name));
-        let _ = fs::remove_dir_all(&base);
-        fs::create_dir_all(&base).unwrap();
-        base
+    fn scratch(name: &str) -> (tempfile::TempDir, PathBuf) {
+        let tmp = tempfile::Builder::new()
+            .prefix(&format!("cozy_cfg_test_{name}_"))
+            .tempdir()
+            .unwrap();
+        let base = tmp.path().to_path_buf();
+        (tmp, base)
     }
 
     fn write_config(dir: &Path, body: &str) -> PathBuf {
@@ -157,7 +158,7 @@ mod partial_config {
     /// 🚨 **本丸** —— `[keys]` だけの config が、`[keys]` として効くこと。
     #[test]
     fn a_config_with_only_keys_still_carries_the_keys() {
-        let dir = scratch("keys_only");
+        let (_tmp, dir) = scratch("keys_only");
         let path = write_config(&dir, "[keys]\nenter_help = \"f5\"\n");
         let config = load_from_path(&path).expect("[keys] だけの config が読めない");
         let keys = config.keys.expect("keys が落ちている");
@@ -169,7 +170,7 @@ mod partial_config {
     /// ⭐ 陽性対照 —— 書いた値は**書いたとおり**に効く（既定で上書きしない）。
     #[test]
     fn what_is_written_wins_over_the_default() {
-        let dir = scratch("written");
+        let (_tmp, dir) = scratch("written");
         let path = write_config(&dir, "page_size = 7\n");
         assert_eq!(load_from_path(&path).unwrap().page_size, 7);
     }
@@ -178,7 +179,7 @@ mod partial_config {
     /// ⚠️ cozy はその端末で TUI を描いているので、`eprintln!` は絵の上に混ざる。
     #[test]
     fn a_broken_config_is_reported_through_the_struct() {
-        let dir = scratch("broken");
+        let (_tmp, dir) = scratch("broken");
         write_config(&dir, "page_size = \"not a number\"\n");
         let config = load_from(Some(&dir));
         assert!(
@@ -198,7 +199,7 @@ mod partial_config {
     /// これが無いと「常に苦情を出す」実装が緑で通る。
     #[test]
     fn a_good_config_says_nothing() {
-        let dir = scratch("good");
+        let (_tmp, dir) = scratch("good");
         write_config(&dir, "page_size = 12\n");
         let config = load_from(Some(&dir));
         assert!(

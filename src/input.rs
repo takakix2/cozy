@@ -2,7 +2,7 @@ use crate::action::Action;
 use crate::state::EditorState;
 use crate::state::key::{KeyCode, KeyModifiers};
 use crate::ui::Keymap;
-use crossterm::event::Event;
+use crossterm::event::{Event, MouseEventKind};
 use std::io;
 use std::time::Duration;
 
@@ -51,9 +51,19 @@ pub fn map_event(editor: &EditorState, event: Event) -> InputEvent {
         Event::Paste(data) => InputEvent::Action(Action::InsertString(data)),
         Event::Resize(cols, rows) => InputEvent::Resize(cols, rows),
         Event::FocusLost => InputEvent::Flush,
+        Event::Mouse(mouse) => match mouse.kind {
+            MouseEventKind::ScrollDown => InputEvent::Action(Action::Wheel(WHEEL_LINES)),
+            MouseEventKind::ScrollUp => InputEvent::Action(Action::Wheel(-WHEEL_LINES)),
+            _ => InputEvent::Ignore,
+        },
         _ => InputEvent::Ignore,
     }
 }
+
+/// Rows one wheel report scrolls. One: the terminal already decides how many
+/// reports a notch is worth — Ghostty sends three (its `mouse-scroll-multiplier`),
+/// xterm.js one — so multiplying here would scroll Ghostty nine rows a notch.
+pub const WHEEL_LINES: isize = 1;
 
 fn ct_code(code: crossterm::event::KeyCode) -> Option<KeyCode> {
     use crossterm::event::KeyCode as CT;
@@ -130,5 +140,41 @@ mod tests {
             map_event(&editor, Event::Resize(80, 24)),
             InputEvent::Resize(80, 24)
         ));
+    }
+
+    fn mouse(kind: crossterm::event::MouseEventKind) -> Event {
+        Event::Mouse(crossterm::event::MouseEvent {
+            kind,
+            column: 10,
+            row: 5,
+            modifiers: CtKeyModifiers::NONE,
+        })
+    }
+
+    #[test]
+    fn a_wheel_report_maps_to_one_row() {
+        use crossterm::event::MouseEventKind as K;
+        let editor = EditorState::new(None);
+        assert!(matches!(
+            map_event(&editor, mouse(K::ScrollDown)),
+            InputEvent::Action(Action::Wheel(1))
+        ));
+        assert!(matches!(
+            map_event(&editor, mouse(K::ScrollUp)),
+            InputEvent::Action(Action::Wheel(-1))
+        ));
+    }
+
+    /// 1000 番は押下も報告する —— クリックで何かが起きてはいけない。
+    #[test]
+    fn a_click_is_ignored() {
+        use crossterm::event::{MouseButton, MouseEventKind as K};
+        let editor = EditorState::new(None);
+        for kind in [K::Down(MouseButton::Left), K::Up(MouseButton::Left)] {
+            assert!(matches!(
+                map_event(&editor, mouse(kind)),
+                InputEvent::Ignore
+            ));
+        }
     }
 }

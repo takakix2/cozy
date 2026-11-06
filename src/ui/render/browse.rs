@@ -42,7 +42,7 @@ pub fn render_browse(editor: &EditorState, f: &mut Frame, area: Rect) {
         let node = &tree.nodes[idx];
         let indent = "  ".repeat(node.depth);
         let icon = if node.is_dir {
-            if filtering || tree.expanded.contains(&idx) {
+            if filtering || tree.is_expanded(idx) {
                 "▾ "
             } else {
                 "▸ "

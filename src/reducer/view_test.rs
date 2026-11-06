@@ -246,8 +246,11 @@ fn view_session_outranks_a_configured_default_mode() {
 #[test]
 fn opening_another_file_in_a_view_session_stays_read_only() {
     use std::io::Write;
-    let dir = std::env::temp_dir().join(format!("cozy_view_open_{}", std::process::id()));
-    let _ = std::fs::create_dir_all(&dir);
+    let tmp = tempfile::Builder::new()
+        .prefix("cozy_view_open_")
+        .tempdir()
+        .unwrap();
+    let dir = tmp.path().to_path_buf();
     let writable = dir.join("writable.txt");
     let mut f = std::fs::File::create(&writable).unwrap();
     writeln!(f, "plain writable file").unwrap();

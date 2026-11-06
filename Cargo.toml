@@ -1,6 +1,6 @@
 [package]
 name = "cozy"
-version = "0.2.37"
+version = "0.2.38"
 edition = "2024"
 rust-version = "1.88"
 description = "A Comfort First terminal editor and pager: type like nano, navigate like vim"
@@ -56,6 +56,13 @@ atomicwrites = "0.4.4"
 # 🚨 `avif` は入れない —— image 0.25 の `avif` は**書く側**（rav1e エンコーダ）で、読むのは
 # `avif-native`（dav1d・C ライブラリ）。入れても AVIF は開けず、エンコーダだけが乗っていた。
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif", "ico", "bmp"], optional = true }
+# AVIF は image の外で読む（`#21`）—— zenavif は `rav1d-safe`（dav1d の Rust 移植・unsafe もアセンブリも無し）。
+# ⭐ C も nasm も要らない ＝ 配布物の「`-sys` が無い」前提を崩さない。
+# ⚠️ `avif-decode` は x86 で rav1d のアセンブリ版を引き nasm が必須なので採らない。
+zenavif = { version = "0.1.6", optional = true }
+zenpixels-convert = { version = "0.2", optional = true }
+# 格子（タイル）の AVIF の並びを訊くためだけに使う（zenavif が内部で使っている物と同じ）。
+zenavif-parse = { version = "0.6", optional = true }
 fast_image_resize = { version = "6", optional = true }
 ratatui-image = { version = "11", default-features = false, features = ["crossterm"], optional = true }
 
@@ -69,14 +76,24 @@ anyhow = "1"
 # `sixel4096` のラウンドトリップ検体だけが使う（自前エンコーダの出力を**別実装**で復号して
 # 原画と突き合わせる）。ratatui-image 経由で lock には既に居る版（0.5.1・追加コストなし）。
 icy_sixel = "0.5"
+# テストの一時ディレクトリ —— `TempDir` が drop で消すので /tmp に残らない（2026-10-06・
+# 自前の `temp_dir().join(…)` は片付けず約 3,000 個溜まっていた）。lock には既に居る版。
+tempfile = "3"
 
 
 [features]
-default = ["clipboard", "crossterm-events", "treesitter", "imageview"]
+default = ["clipboard", "crossterm-events", "treesitter", "imageview", "avif", "remote-images"]
 clipboard = ["dep:arboard"]
 # 端末内画像ビューア（`#20`）。CLI（czv/cozy）だけの面 —— 分岐は `run_cli_mode` に在り、
 # 埋め込みホスト（argotty の `run()` 直呼び）はこの道を通らない。軽くしたい embed は外す。
 imageview = ["dep:image", "dep:fast_image_resize", "dep:ratatui-image", "dep:libc"]
+# AVIF を読む（`#21`）。⚠️ `imageview` に混ぜない —— 埋め込み（argotty）は `imageview` だけを名指しで
+# 立てるので、混ぜると**モバイルのアプリに黙ってデコーダが乗る**。載せるかはホストが選ぶ。
+avif = ["imageview", "dep:zenavif", "dep:zenpixels-convert", "dep:zenavif-parse"]
+# Markdown プレビューで URL の画像を `i` で取りに行く（`curl` を呼ぶ・依存は増えない）。
+# ⚠️ `imageview` に混ぜない —— 埋め込み（argotty）は `imageview` だけを名指しで立てるので、
+# 混ぜるとモバイルのアプリが外へ通信する口を黙って持つ。載せるかはホストが選ぶ。
+remote-images = ["imageview"]
 # Disable when embedding in a host that provides its own event source (e.g. hsh-ios)
 crossterm-events = []
 # tree-sitter syntax highlighting. Disable for a lighter embed; falls back to the

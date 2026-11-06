@@ -72,8 +72,7 @@ pub fn collapse_or_parent(editor: &mut EditorState) -> EventResult {
 
 pub fn start_filter(editor: &mut EditorState) -> EventResult {
     if let Some(tree) = &mut editor.browse_tree {
-        tree.filtering = true;
-        tree.filter.clear();
+        tree.begin_filter();
     }
     EventResult::Continue
 }
@@ -101,8 +100,7 @@ pub fn cancel(editor: &mut EditorState) -> EventResult {
         .unwrap_or(false);
     if filtering {
         if let Some(tree) = &mut editor.browse_tree {
-            tree.filtering = false;
-            tree.filter.clear();
+            tree.clear_filter();
         }
     } else {
         editor.mode = editor.home_mode();

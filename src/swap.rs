@@ -208,12 +208,13 @@ mod tests {
     use crate::state::{EditorState, TextBuffer};
     use std::fs;
 
-    fn scratch(name: &str) -> PathBuf {
-        let base =
-            std::env::temp_dir().join(format!("cozy_swap_test_{}_{}", std::process::id(), name));
-        let _ = fs::remove_dir_all(&base);
-        fs::create_dir_all(&base).unwrap();
-        base
+    fn scratch(name: &str) -> (tempfile::TempDir, PathBuf) {
+        let tmp = tempfile::Builder::new()
+            .prefix(&format!("cozy_swap_test_{name}_"))
+            .tempdir()
+            .unwrap();
+        let base = tmp.path().to_path_buf();
+        (tmp, base)
     }
 
     fn editor_at(dir: &Path, file: &str, lines: &[&str]) -> EditorState {
@@ -230,7 +231,7 @@ mod tests {
     /// The whole point: what was typed but never saved comes back.
     #[test]
     fn an_unsaved_buffer_survives_and_is_offered_back() {
-        let dir = scratch("survives");
+        let (_tmp, dir) = scratch("survives");
         fs::write(dir.join("notes.md"), "saved\n").unwrap();
 
         let mut editor = editor_at(&dir, "notes.md", &["saved", "typed but never saved"]);
@@ -246,7 +247,7 @@ mod tests {
     /// tick later, because that tick may never come.
     #[test]
     fn losing_focus_writes_the_swap_at_once() {
-        let dir = scratch("focus_lost");
+        let (_tmp, dir) = scratch("focus_lost");
         fs::write(dir.join("notes.md"), "saved\n").unwrap();
 
         // Typed, but the idle tick has not fired: this is the second of work
@@ -269,7 +270,7 @@ mod tests {
     /// just after a save). Prompting here teaches people to dismiss prompts.
     #[test]
     fn a_swap_matching_the_file_is_not_offered() {
-        let dir = scratch("identical");
+        let (_tmp, dir) = scratch("identical");
         fs::write(dir.join("notes.md"), "same\n").unwrap();
 
         let mut editor = editor_at(&dir, "notes.md", &["same"]);
@@ -282,7 +283,7 @@ mod tests {
     /// Saving means there is nothing to recover.
     #[test]
     fn saving_removes_the_swap() {
-        let dir = scratch("saved");
+        let (_tmp, dir) = scratch("saved");
         fs::write(dir.join("notes.md"), "old\n").unwrap();
 
         let mut editor = editor_at(&dir, "notes.md", &["new"]);
@@ -301,7 +302,7 @@ mod tests {
     /// so the file on disk is untouched until they choose to save.
     #[test]
     fn a_new_session_offers_the_swap_and_enter_restores_it() {
-        let dir = scratch("startup_restore");
+        let (_tmp, dir) = scratch("startup_restore");
         let target = dir.join("notes.md");
         fs::write(&target, "saved\n").unwrap();
         let config = dir.join("config");
@@ -339,7 +340,7 @@ mod tests {
     /// Esc means no. The swap goes away, so the offer is not made again.
     #[test]
     fn esc_discards_the_swap_for_good() {
-        let dir = scratch("startup_discard");
+        let (_tmp, dir) = scratch("startup_discard");
         let target = dir.join("notes.md");
         fs::write(&target, "saved\n").unwrap();
         let config = dir.join("config");
@@ -363,7 +364,7 @@ mod tests {
     /// those keystrokes would be thrown away the moment the swap is restored.
     #[test]
     fn typing_is_swallowed_until_the_offer_is_answered() {
-        let dir = scratch("swallow");
+        let (_tmp, dir) = scratch("swallow");
         let target = dir.join("notes.md");
         fs::write(&target, "saved\n").unwrap();
         let config = dir.join("config");
@@ -388,7 +389,7 @@ mod tests {
     /// Two files with the same basename in different directories get their own swap.
     #[test]
     fn the_key_is_the_whole_path() {
-        let dir = scratch("key");
+        let (_tmp, dir) = scratch("key");
         let a = swap_path(&dir, &dir.join("one/notes.md"));
         let b = swap_path(&dir, &dir.join("two/notes.md"));
         assert_ne!(a, b);
@@ -397,7 +398,7 @@ mod tests {
     /// Garbage in the swap file is ignored, not half-read.
     #[test]
     fn an_unreadable_swap_is_ignored() {
-        let dir = scratch("garbage");
+        let (_tmp, dir) = scratch("garbage");
         let swap = dir.join("x.swap");
         fs::write(&swap, "not a cozy swap file").unwrap();
         assert!(load(&swap, &dir.join("notes.md")).is_none());

@@ -19,6 +19,8 @@ mod editor_test;
 mod paste_test;
 #[cfg(test)]
 mod view_test;
+#[cfg(test)]
+mod wheel_test;
 
 use crate::action::Action;
 use crate::state::EditorState;
@@ -161,6 +163,28 @@ fn set_read_cursor(editor: &mut EditorState, view: ReadView, line: usize) {
     rv_store(editor, view, y, scroll);
 }
 
+/// Scroll the read view itself by `delta` rows; the highlighted row stays on
+/// its document line and is only pushed along when it would leave the screen.
+///
+/// This is what a wheel (or a finger swipe forwarded as one) means. The arrow
+/// keys keep moving the highlight (`move_read_cursor`) — two vim motions, the
+/// same pair vim has in `j` and `Ctrl-E`. The highlight must be kept inside the
+/// visible rows here: the renderer snaps the offset back to it otherwise.
+fn scroll_read_view(editor: &mut EditorState, view: ReadView, delta: isize) {
+    editor.glide_prefix = None;
+    let page = rv_page_step(editor, view);
+    let max_scroll = rv_line_count(editor, view).saturating_sub(page);
+    let current = rv_scroll(editor, view);
+    let scroll = if delta.is_negative() {
+        current.saturating_sub(delta.unsigned_abs())
+    } else {
+        current.saturating_add(delta as usize)
+    }
+    .min(max_scroll);
+    let cursor = rv_cursor(editor, view).clamp(scroll, scroll + page - 1);
+    rv_store(editor, view, cursor, scroll);
+}
+
 fn move_read_cursor(editor: &mut EditorState, view: ReadView, delta: isize) {
     let current = rv_cursor(editor, view);
     let next = if delta.is_negative() {
@@ -239,7 +263,7 @@ fn answer_recovery(editor: &mut EditorState, action: &Action) -> EventResult {
             crate::swap::remove(editor);
             editor.set_status_message(
                 "Unsaved changes discarded".to_string(),
-                crate::state::StatusKind::Info,
+                crate::state::editor::StatusKind::Info,
                 false,
             );
             EventResult::Continue
@@ -283,7 +307,7 @@ fn answer_create_dir(editor: &mut EditorState, action: &Action) -> EventResult {
             editor.create_dir = None;
             editor.set_status_message(
                 "Not saved — the directory was not created".to_string(),
-                crate::state::StatusKind::Info,
+                crate::state::editor::StatusKind::Info,
                 false,
             );
             EventResult::Continue
@@ -554,6 +578,33 @@ pub fn reduce(editor: &mut EditorState, action: Action) -> EventResult {
                 editor::apply_editor_event(editor, &action)
             }
         }
+        Action::FetchRemoteImages => {
+            fetch_remote_images(editor);
+            EventResult::Continue
+        }
+        Action::Wheel(delta) => {
+            if editor.mode == crate::state::EditorMode::View {
+                editor.glide_prefix = None;
+                view_scroll(editor, delta);
+            } else if let Some(view) = read_view(&editor.mode) {
+                scroll_read_view(editor, view, delta);
+            } else if matches!(
+                editor.mode,
+                crate::state::EditorMode::Edit | crate::state::EditorMode::Glide
+            ) {
+                // 編集中はカーソルを動かす —— argotty の指のスワイプが以前から送っていた ↑/↓ と同じ。
+                // 端末のホイールはここへは来ない（端末に頼むのは読むモードの間だけ・`event_loop`）。
+                let step = if delta.is_negative() {
+                    Action::MoveUp
+                } else {
+                    Action::MoveDown
+                };
+                for _ in 0..delta.unsigned_abs() {
+                    editor::apply_editor_event(editor, &step);
+                }
+            }
+            EventResult::Continue
+        }
         Action::HalfPageUp => {
             if editor.mode == crate::state::EditorMode::View {
                 let n = take_read_count_opt(editor).unwrap_or(1);
@@ -679,4 +730,25 @@ pub fn reduce(editor: &mut EditorState, action: Action) -> EventResult {
 
         _ => editor::apply_editor_event(editor, &action),
     }
+}
+
+/// `i`（Markdown プレビュー）: 画面に出ている URL の画像を取りに行く。
+///
+/// 相手は前回描いたときに数えた物（`markdown_remote_images`）—— 描けない端末やプレビュー以外では
+/// 空なので何も起きない。始めた数を伝え、取れた物は描画ループが描き直して出す。
+fn fetch_remote_images(editor: &mut EditorState) {
+    let asked = editor.mode == crate::state::EditorMode::Markdown
+        && !editor.markdown_remote_images.is_empty();
+    #[cfg(feature = "remote-images")]
+    if asked {
+        let started = crate::imageview::fetch::request(&editor.markdown_remote_images);
+        let msg = match started {
+            0 => "Images: already fetched".to_string(),
+            1 => "Images: fetching 1".to_string(),
+            n => format!("Images: fetching {n}"),
+        };
+        editor.set_status_message(msg, crate::state::editor::StatusKind::Info, false);
+    }
+    #[cfg(not(feature = "remote-images"))]
+    let _ = asked;
 }

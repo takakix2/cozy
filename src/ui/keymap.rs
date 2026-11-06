@@ -37,6 +37,15 @@ fn is_printable(modifiers: KeyModifiers) -> bool {
     !modifiers.contains(KeyModifiers::CONTROL) && !modifiers.contains(KeyModifiers::ALT)
 }
 
+/// The read-only scrolling views — the same set `event_loop::wants_wheel` asks
+/// the terminal's wheel for.
+fn is_reading_view(mode: &EditorMode) -> bool {
+    matches!(
+        mode,
+        EditorMode::Markdown | EditorMode::Help | EditorMode::View
+    )
+}
+
 pub struct Keymap;
 
 impl Keymap {
@@ -75,18 +84,22 @@ impl Keymap {
                 EditorAction::End => return Some(Action::End),
                 EditorAction::Undo => return Some(Action::Undo),
                 EditorAction::Redo => return Some(Action::Redo),
+                // ⭐ 読むモード（プレビュー・Help・czv）では ↑/↓ は**表示位置**を動かす
+                // （less と同じ）。端末のホイールは alternate scroll（`?1007`）で ↑/↓ として
+                // 届くので、これがホイールのスクロールでもある（`event_loop::WHEEL_ON`）。
+                // 帯を歩かせたいときは `j`/`k`（変えていない）。
                 EditorAction::MoveUp => {
-                    return Some(if editor.mode == EditorMode::Command {
-                        Action::CommandMoveUp
-                    } else {
-                        Action::MoveUp
+                    return Some(match editor.mode {
+                        EditorMode::Command => Action::CommandMoveUp,
+                        _ if is_reading_view(&editor.mode) => Action::Wheel(-1),
+                        _ => Action::MoveUp,
                     });
                 }
                 EditorAction::MoveDown => {
-                    return Some(if editor.mode == EditorMode::Command {
-                        Action::CommandMoveDown
-                    } else {
-                        Action::MoveDown
+                    return Some(match editor.mode {
+                        EditorMode::Command => Action::CommandMoveDown,
+                        _ if is_reading_view(&editor.mode) => Action::Wheel(1),
+                        _ => Action::MoveDown,
                     });
                 }
                 EditorAction::MoveLeft => return Some(Action::MoveLeft),
@@ -385,6 +398,11 @@ impl Keymap {
                     // 「どうやって抜けるのか」なので、そこを繰り返さない。
                     // 📌 `Ctrl+Q` も `Esc` も残る（大域表と `Cancel`）。3 つとも効く。
                     KeyCode::Char('q') if editor.mode == EditorMode::View => Some(Action::Quit),
+                    // ⭐ `i`: プレビューの URL の画像を取りに行く。外へ通信するのはこの鍵だけ
+                    // （描くだけでは取らない・`imageview::fetch`）。
+                    KeyCode::Char('i') if editor.mode == EditorMode::Markdown => {
+                        Some(Action::FetchRemoteImages)
+                    }
                     // ⭐ **検索を閲覧へ持ち帰ったので、送る鍵も閲覧に置く**（`#18`）。
                     // 🚨 Help / Markdown には効かせない（`/` と同じ理由 —— 検索はバッファを見る）。
                     // 📌 `z` は `zz`/`zt`/`zb` の前置。画像ビューアの `z`（fit ↔ 等倍）は別の画面。

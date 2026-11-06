@@ -867,7 +867,7 @@ fn test_command_palette_quit_without_saving_exits() {
 
 #[test]
 fn test_ensure_default_config_file_creates_config_toml() {
-    let base = config_scratch("ensure_default_file");
+    let (_tmp, base) = config_scratch("ensure_default_file");
 
     let path = Config::ensure_default_config_file(Some(&base)).unwrap();
 
@@ -879,7 +879,7 @@ fn test_ensure_default_config_file_creates_config_toml() {
 
 #[test]
 fn test_load_from_path_reads_runtime_flags() {
-    let base = config_scratch("load_from_path");
+    let (_tmp, base) = config_scratch("load_from_path");
     let path = base.join("config.toml");
     std::fs::write(
         &path,
@@ -997,8 +997,11 @@ fn test_save_bare_filename_uses_current_dir() {
     // and `"".exists()` is false. That empty parent means the current directory and
     // must NOT be rejected as "Directory not found" — otherwise every bare-name save fails.
     use std::io::Read;
-    let dir = std::env::temp_dir().join(format!("cozy_save_test_{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
+    let tmp = tempfile::Builder::new()
+        .prefix("cozy_save_test_")
+        .tempdir()
+        .unwrap();
+    let dir = tmp.path().to_path_buf();
     let prev = std::env::current_dir().unwrap();
     std::env::set_current_dir(&dir).unwrap();
 
@@ -1033,8 +1036,11 @@ fn test_save_success_status_survives_into_edit_mode() {
     // mode switch, so it was wiped instantly and the user saw no confirmation. The
     // success message must be set AFTER entering Edit so it persists.
     // Uses an absolute path (no CWD change) so it can't race the bare-filename test.
-    let dir = std::env::temp_dir().join(format!("cozy_save_status_{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
+    let tmp = tempfile::Builder::new()
+        .prefix("cozy_save_status_")
+        .tempdir()
+        .unwrap();
+    let dir = tmp.path().to_path_buf();
     let path = dir.join("note.txt");
 
     let mut editor = EditorState::new(None);
@@ -1066,8 +1072,11 @@ fn test_save_and_exit_saves_then_exits() {
     // Regression: Ctrl+X "Save and Exit" mapped Enter to Action::Quit, which exited
     // WITHOUT saving (data loss). SaveAndExit must write the file, then exit.
     use std::io::Read;
-    let dir = std::env::temp_dir().join(format!("cozy_save_exit_{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
+    let tmp = tempfile::Builder::new()
+        .prefix("cozy_save_exit_")
+        .tempdir()
+        .unwrap();
+    let dir = tmp.path().to_path_buf();
     let path = dir.join("bye.txt");
 
     let mut editor = EditorState::new(None);
@@ -1131,23 +1140,22 @@ fn test_yank_highlight_cleared_on_next_keypress() {
 
 /// Build a throwaway directory tree for Browse tests. `name` must be unique per
 /// test — tests run in parallel and would otherwise wipe each other's scratch dir.
-fn browse_scratch(name: &str) -> std::path::PathBuf {
+fn browse_scratch(name: &str) -> (tempfile::TempDir, std::path::PathBuf) {
     use std::fs;
-    let base = std::env::temp_dir().join(format!(
-        "cozy_browse_reducer_{}_{}",
-        std::process::id(),
-        name
-    ));
-    let _ = fs::remove_dir_all(&base);
+    let tmp = tempfile::Builder::new()
+        .prefix(&format!("cozy_browse_reducer_{name}_"))
+        .tempdir()
+        .unwrap();
+    let base = tmp.path().to_path_buf();
     fs::create_dir_all(base.join("src")).unwrap();
     fs::write(base.join("README.md"), "readme").unwrap();
     fs::write(base.join("src/main.rs"), "fn main() {}").unwrap();
-    base
+    (tmp, base)
 }
 
 #[test]
 fn test_cozy_dir_arg_opens_browse_not_edit() {
-    let base = browse_scratch("dir_arg");
+    let (_tmp, base) = browse_scratch("dir_arg");
     let editor = EditorState::new(Some(base.to_string_lossy().to_string()));
     assert_eq!(
         editor.mode,
@@ -1164,7 +1172,7 @@ fn test_cozy_dir_arg_opens_browse_not_edit() {
 
 #[test]
 fn test_cozy_file_arg_still_opens_edit() {
-    let base = browse_scratch("file_arg");
+    let (_tmp, base) = browse_scratch("file_arg");
     let file = base.join("README.md");
     let editor = EditorState::new(Some(file.to_string_lossy().to_string()));
     assert_eq!(editor.mode, EditorMode::Edit);
@@ -1174,7 +1182,7 @@ fn test_cozy_file_arg_still_opens_edit() {
 
 #[test]
 fn test_browse_open_file_enters_edit() {
-    let base = browse_scratch("open_file");
+    let (_tmp, base) = browse_scratch("open_file");
     let mut editor = EditorState::new(Some(base.to_string_lossy().to_string()));
     let main_path = base.join("src/main.rs");
     // Preselect the file, then "open" it via the reducer.
@@ -1187,7 +1195,7 @@ fn test_browse_open_file_enters_edit() {
 
 #[test]
 fn test_browse_missing_file_falls_back_to_existing_ancestor() {
-    let base = browse_scratch("missing_file_root");
+    let (_tmp, base) = browse_scratch("missing_file_root");
     let missing = base.join("missing/subdir/note.txt");
     let mut editor = EditorState::new(Some(missing.to_string_lossy().to_string()));
     editor.enter_mode(EditorMode::Browse);
@@ -1201,7 +1209,7 @@ fn test_browse_missing_file_falls_back_to_existing_ancestor() {
 
 #[test]
 fn test_browse_filter_round_trip() {
-    let base = browse_scratch("filter");
+    let (_tmp, base) = browse_scratch("filter");
     let mut editor = EditorState::new(Some(base.to_string_lossy().to_string()));
     reduce(&mut editor, Action::BrowseStartFilter);
     reduce(&mut editor, Action::BrowseFilterChar('m'));
@@ -1226,9 +1234,11 @@ fn test_browse_filter_round_trip() {
 
 #[test]
 fn test_save_prompt_defaults_to_untitled_for_new_buffer() {
-    let dir = std::env::temp_dir().join(format!("cozy_untitled_empty_{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
+    let tmp = tempfile::Builder::new()
+        .prefix("cozy_untitled_empty_")
+        .tempdir()
+        .unwrap();
+    let dir = tmp.path().to_path_buf();
     let mut editor = EditorState::new(None);
     editor._working_dir = dir.clone();
     editor.enter_mode(EditorMode::Save);
@@ -1273,9 +1283,11 @@ fn test_save_prompt_shows_home_as_a_tilde() {
 
 #[test]
 fn test_save_default_name_counts_up_on_collision() {
-    let dir = std::env::temp_dir().join(format!("cozy_untitled_collide_{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
+    let tmp = tempfile::Builder::new()
+        .prefix("cozy_untitled_collide_")
+        .tempdir()
+        .unwrap();
+    let dir = tmp.path().to_path_buf();
     std::fs::write(dir.join("untitled.txt"), "x").unwrap();
 
     let mut editor = EditorState::new(None);
@@ -1294,9 +1306,11 @@ fn test_save_default_name_counts_up_on_collision() {
 fn test_save_resolves_relative_name_against_working_dir() {
     // A relative filename writes into the anchored working dir, not the process
     // cwd — so the collision check and the write always agree (future cross-folder Browse).
-    let dir = std::env::temp_dir().join(format!("cozy_anchor_{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
+    let tmp = tempfile::Builder::new()
+        .prefix("cozy_anchor_")
+        .tempdir()
+        .unwrap();
+    let dir = tmp.path().to_path_buf();
 
     let mut editor = EditorState::new(None);
     editor._working_dir = dir.clone();
@@ -1379,7 +1393,7 @@ fn test_glide_home_gotoline_returns_to_glide() {
 
 #[test]
 fn test_glide_home_browse_open_enters_glide() {
-    let base = browse_scratch("glide_open");
+    let (_tmp, base) = browse_scratch("glide_open");
     let mut editor = EditorState::new(Some(base.to_string_lossy().to_string()));
     set_glide_home(&mut editor);
     let main_path = base.join("src/main.rs");
@@ -1446,7 +1460,7 @@ fn test_glide_home_esc_round_trip() {
 #[test]
 fn test_glide_home_startup_from_file_arg() {
     // `cozy <file>` with default_mode="glide" in the config dir starts in Glide.
-    let base = browse_scratch("glide_startup");
+    let (_tmp, base) = browse_scratch("glide_startup");
     std::fs::write(
         base.join("config.toml"),
         "page_size = 20\ndefault_mode = \"glide\"\n",
@@ -1464,17 +1478,18 @@ fn test_glide_home_startup_from_file_arg() {
     let _ = std::fs::remove_dir_all(&base);
 }
 
-fn config_scratch(name: &str) -> std::path::PathBuf {
-    let base =
-        std::env::temp_dir().join(format!("cozy_config_test_{}_{}", std::process::id(), name));
-    let _ = std::fs::remove_dir_all(&base);
-    std::fs::create_dir_all(&base).unwrap();
-    base
+fn config_scratch(name: &str) -> (tempfile::TempDir, std::path::PathBuf) {
+    let tmp = tempfile::Builder::new()
+        .prefix(&format!("cozy_config_test_{name}_"))
+        .tempdir()
+        .unwrap();
+    let base = tmp.path().to_path_buf();
+    (tmp, base)
 }
 
 #[test]
 fn test_missing_config_dir_gets_default_config_toml() {
-    let base = config_scratch("create_default");
+    let (_tmp, base) = config_scratch("create_default");
 
     let config = Config::load_from(Some(&base));
 
@@ -1492,7 +1507,7 @@ fn test_missing_config_dir_gets_default_config_toml() {
 
 #[test]
 fn test_existing_config_is_not_overwritten_when_default_is_generated() {
-    let base = config_scratch("keep_existing");
+    let (_tmp, base) = config_scratch("keep_existing");
     let existing = "page_size = 42\ndefault_mode = \"glide\"\n";
     std::fs::write(base.join("cozy.toml"), existing).unwrap();
 
@@ -1519,11 +1534,13 @@ fn test_existing_config_is_not_overwritten_when_default_is_generated() {
 //   ③ Esc ではファイルシステムに一切触れない
 //   ④ **他の失敗はオファーにならない** ← ①だけだと「全部オファーにする」で緑になる
 
-fn probe_dir(name: &str) -> std::path::PathBuf {
-    let dir = std::env::temp_dir().join(format!("cozy_mkdir_{}_{}", name, std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
-    dir
+fn probe_dir(name: &str) -> (tempfile::TempDir, std::path::PathBuf) {
+    let tmp = tempfile::Builder::new()
+        .prefix(&format!("cozy_mkdir_{name}_"))
+        .tempdir()
+        .unwrap();
+    let dir = tmp.path().to_path_buf();
+    (tmp, dir)
 }
 
 fn editor_saving_to(target: &std::path::Path) -> EditorState {
@@ -1537,7 +1554,7 @@ fn editor_saving_to(target: &std::path::Path) -> EditorState {
 
 #[test]
 fn a_missing_parent_asks_instead_of_failing() {
-    let root = probe_dir("ask");
+    let (_tmp, root) = probe_dir("ask");
     let target = root.join("nodir").join("a.txt");
     let mut editor = editor_saving_to(&target);
 
@@ -1556,7 +1573,7 @@ fn a_missing_parent_asks_instead_of_failing() {
 
 #[test]
 fn enter_creates_the_directory_and_finishes_the_save() {
-    let root = probe_dir("enter");
+    let (_tmp, root) = probe_dir("enter");
     let target = root.join("nodir").join("deeper").join("a.txt");
     let mut editor = editor_saving_to(&target);
 
@@ -1570,7 +1587,7 @@ fn enter_creates_the_directory_and_finishes_the_save() {
 
 #[test]
 fn esc_does_not_touch_the_filesystem() {
-    let root = probe_dir("esc");
+    let (_tmp, root) = probe_dir("esc");
     let target = root.join("nodir").join("a.txt");
     let mut editor = editor_saving_to(&target);
 
@@ -1590,7 +1607,7 @@ fn esc_does_not_touch_the_filesystem() {
 fn a_failure_cozy_cannot_offer_to_fix_stays_an_error() {
     // ⚠️ 陽性対照。親が**ファイル**として存在するので `exists()` は真 ——
     // 「無い親」ではないから、オファーではなくエラーで出なければならない。
-    let root = probe_dir("notadir");
+    let (_tmp, root) = probe_dir("notadir");
     std::fs::write(root.join("afile"), b"x").unwrap();
     let target = root.join("afile").join("a.txt");
     let mut editor = editor_saving_to(&target);
@@ -1608,7 +1625,7 @@ fn a_failure_cozy_cannot_offer_to_fix_stays_an_error() {
 fn typing_while_the_question_is_open_does_not_reach_the_buffer() {
     // swap 復元と同じ理由: 答えているつもりの打鍵がバッファへ落ちてはいけない。
     // しかも今回は**ディスクに副作用が出る**質問なので、なおさら推測しない。
-    let root = probe_dir("typing");
+    let (_tmp, root) = probe_dir("typing");
     let target = root.join("nodir").join("a.txt");
     let mut editor = editor_saving_to(&target);
 
@@ -1631,7 +1648,7 @@ fn typing_while_the_question_is_open_does_not_reach_the_buffer() {
 fn save_and_exit_still_exits_after_creating() {
     // Ctrl+X → Enter で来た保存は、作って保存できたら**そのまま終了する**のが意図。
     // ここを取り違えると、作って保存した後にエディタへ残る。
-    let root = probe_dir("exit");
+    let (_tmp, root) = probe_dir("exit");
     let target = root.join("nodir").join("a.txt");
     let mut editor = editor_saving_to(&target);
 
@@ -1651,7 +1668,7 @@ fn save_and_exit_still_exits_after_creating() {
 fn ctrl_q_still_quits_while_the_question_is_open() {
     // ⚠️ 質問が終了キーを飲み込むと、利用者はエディタに閉じ込められる（しかも
     // 強く押しても何も起きない＝一番悪い形）。ここは通す。バッファは swap が持つ。
-    let root = probe_dir("quitq");
+    let (_tmp, root) = probe_dir("quitq");
     let target = root.join("nodir").join("a.txt");
     let mut editor = editor_saving_to(&target);
 
@@ -1682,7 +1699,7 @@ fn enter_answers_the_question_even_from_the_save_prompt() {
     use crate::state::key::{KeyCode as CtKeyCode, KeyModifiers};
     use crate::ui::Keymap;
 
-    let root = probe_dir("keymap");
+    let (_tmp, root) = probe_dir("keymap");
     let target = root.join("nodir").join("a.txt");
     let mut editor = editor_saving_to(&target);
 

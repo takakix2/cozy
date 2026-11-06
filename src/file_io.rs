@@ -22,7 +22,8 @@ pub(crate) enum StartupDocument {
         read_only: bool,
     },
     Directory {
-        tree: BrowseTree,
+        // 裏の索引の受け口などを持って大きいので箱に入れる（他の場合と大きさを揃える）。
+        tree: Box<BrowseTree>,
     },
     /// 存在するのに読めなかったファイル。**開かない**（＝バッファにも名前にも載せない）。
     /// 🚨 空バッファ＋ファイル名 で開くと、次の `Ctrl+S` が元のバイト列を消す。
@@ -230,7 +231,7 @@ pub(crate) fn load_startup_document(filename: Option<&str>) -> StartupDocument {
     let path_ref = expanded.as_path();
     if path_ref.is_dir() {
         return StartupDocument::Directory {
-            tree: BrowseTree::build(path_ref),
+            tree: Box::new(BrowseTree::build(path_ref)),
         };
     }
 
@@ -1031,13 +1032,14 @@ mod write_buffer_tests {
     use std::fs;
     use std::os::unix::fs::{MetadataExt, PermissionsExt};
 
-    /// 一時ディレクトリ（tempfile 非依存・テストごとに一意。browse の慣習に揃える）。
-    fn scratch(name: &str) -> PathBuf {
-        let base =
-            std::env::temp_dir().join(format!("cozy_write_test_{}_{}", std::process::id(), name));
-        let _ = fs::remove_dir_all(&base);
-        fs::create_dir_all(&base).unwrap();
-        base
+    /// 一時ディレクトリ（`TempDir` の drop で消える・名前はテストごとに一意。browse の慣習に揃える）。
+    fn scratch(name: &str) -> (tempfile::TempDir, PathBuf) {
+        let tmp = tempfile::Builder::new()
+            .prefix(&format!("cozy_write_test_{name}_"))
+            .tempdir()
+            .unwrap();
+        let base = tmp.path().to_path_buf();
+        (tmp, base)
     }
 
     fn editor_with(lines: &[&str]) -> EditorState {
@@ -1055,7 +1057,7 @@ mod write_buffer_tests {
     /// それだけに頼っているとここだけ素朴な rename に落ちてリンクが実体化する。
     #[test]
     fn editing_through_a_dangling_symlink_keeps_the_link() {
-        let dir = scratch("dangling");
+        let (_tmp, dir) = scratch("dangling");
         fs::create_dir_all(dir.join("dotfiles")).unwrap();
         let real = dir.join("dotfiles/hshrc"); // まだ存在しない
         let link = dir.join("hshrc");
@@ -1080,7 +1082,7 @@ mod write_buffer_tests {
     /// 相対リンクも同じ（リンクのある場所を基準に解決する）。
     #[test]
     fn editing_through_a_relative_dangling_symlink_keeps_the_link() {
-        let dir = scratch("dangling_relative");
+        let (_tmp, dir) = scratch("dangling_relative");
         fs::create_dir_all(dir.join("dotfiles")).unwrap();
         let link = dir.join("hshrc");
         std::os::unix::fs::symlink("dotfiles/hshrc", &link).unwrap();
@@ -1103,7 +1105,7 @@ mod write_buffer_tests {
     /// （`ensure_parent_dir` の流儀＝エディタは勝手にディレクトリを生やさない）。
     #[test]
     fn a_dangling_symlink_into_a_missing_directory_is_refused() {
-        let dir = scratch("dangling_no_parent");
+        let (_tmp, dir) = scratch("dangling_no_parent");
         let link = dir.join("hshrc");
         std::os::unix::fs::symlink(dir.join("no_such_dir/hshrc"), &link).unwrap();
 
@@ -1123,7 +1125,7 @@ mod write_buffer_tests {
     /// **リンクが実体ファイルに化けない**（素朴な rename はここで壊す）。
     #[test]
     fn editing_through_a_symlink_keeps_the_link() {
-        let dir = scratch("symlink");
+        let (_tmp, dir) = scratch("symlink");
         fs::create_dir_all(dir.join("dotfiles")).unwrap();
         let real = dir.join("dotfiles/hshrc");
         fs::write(&real, "original\n").unwrap();
@@ -1146,7 +1148,7 @@ mod write_buffer_tests {
     /// 預かったファイルの mode を変えない（0600 の rc が 0664 になって漏れない）。
     #[test]
     fn preserves_the_mode_of_the_file_it_was_given() {
-        let dir = scratch("mode");
+        let (_tmp, dir) = scratch("mode");
         let path = dir.join("secret.conf");
         fs::write(&path, "old\n").unwrap();
         fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
@@ -1161,7 +1163,7 @@ mod write_buffer_tests {
     /// その場書きへ落ちて inode を保つ（nano と同じ振る舞い）。
     #[test]
     fn hardlinked_file_stays_the_same_inode() {
-        let dir = scratch("hardlink");
+        let (_tmp, dir) = scratch("hardlink");
         let a = dir.join("a.txt");
         let b = dir.join("b.txt");
         fs::write(&a, "old\n").unwrap();
@@ -1185,7 +1187,7 @@ mod write_buffer_tests {
     /// 普通のファイルは rename で置換される（＝保存中の姿が観測されない）。
     #[test]
     fn plain_file_is_replaced_by_rename() {
-        let dir = scratch("plain");
+        let (_tmp, dir) = scratch("plain");
         let path = dir.join("note.md");
         fs::write(&path, "old\n").unwrap();
         let ino = fs::metadata(&path).unwrap().ino();
@@ -1203,7 +1205,7 @@ mod write_buffer_tests {
     /// 一時ファイルを置き去りにしない（`.note.md.tmp` が残ると壊れて見える）。
     #[test]
     fn leaves_no_temp_file_behind() {
-        let dir = scratch("strays");
+        let (_tmp, dir) = scratch("strays");
         save_to(&dir.join("note.md"), &["x"]);
 
         let names: Vec<_> = fs::read_dir(&dir)
@@ -1218,7 +1220,7 @@ mod write_buffer_tests {
     /// 新規ファイルもちゃんと作れる（存在しないので canonicalize は失敗する経路）。
     #[test]
     fn creates_a_new_file() {
-        let dir = scratch("new");
+        let (_tmp, dir) = scratch("new");
         let path = dir.join("fresh.md");
         save_to(&path, &["hello"]);
         assert_eq!(fs::read_to_string(&path).unwrap(), "hello\n");
@@ -1254,12 +1256,13 @@ mod refusing_unreadable_files {
     /// 📌 Shift_JIS が開けて往復することは `#4` 側の網（`legacy_encodings`）が持つ。
     const UNREADABLE: &[u8] = &[0xff, 0xfe, 0x80, 0x81, 0x0a];
 
-    fn scratch(name: &str) -> PathBuf {
-        let base =
-            std::env::temp_dir().join(format!("cozy_open_test_{}_{}", std::process::id(), name));
-        let _ = fs::remove_dir_all(&base);
-        fs::create_dir_all(&base).unwrap();
-        base
+    fn scratch(name: &str) -> (tempfile::TempDir, PathBuf) {
+        let tmp = tempfile::Builder::new()
+            .prefix(&format!("cozy_open_test_{name}_"))
+            .tempdir()
+            .unwrap();
+        let base = tmp.path().to_path_buf();
+        (tmp, base)
     }
 
     /// ⚠️ **env を読むテストは、env を書くテストと直列化する。**
@@ -1287,7 +1290,7 @@ mod refusing_unreadable_files {
     #[test]
     fn a_brand_new_file_still_opens_empty_with_its_name() {
         let _guard = env_guard();
-        let dir = scratch("new_file");
+        let (_tmp, dir) = scratch("new_file");
         let path = dir.join("does-not-exist-yet.md");
         match load_startup_document(path.to_str()) {
             StartupDocument::File {
@@ -1315,7 +1318,7 @@ mod refusing_unreadable_files {
     #[test]
     fn a_file_in_no_supported_encoding_opens_as_view_only() {
         let _guard = env_guard();
-        let dir = scratch("startup_view");
+        let (_tmp, dir) = scratch("startup_view");
         let path = sjis_file(&dir);
         match load_startup_document(path.to_str()) {
             StartupDocument::File { format, lines, .. } => {
@@ -1337,7 +1340,7 @@ mod refusing_unreadable_files {
     #[test]
     fn typing_and_saving_a_view_only_file_cannot_touch_it() {
         let _guard = env_guard();
-        let dir = scratch("view_save");
+        let (_tmp, dir) = scratch("view_save");
         let path = sjis_file(&dir);
         let mut editor = EditorState::new(path.to_str().map(str::to_string));
         // ⭐ 開けてはいる（`#10`）。⚠️ しかし保存は通らない。
@@ -1362,7 +1365,7 @@ mod refusing_unreadable_files {
     #[test]
     fn ctrl_o_still_calls_a_missing_file_missing() {
         let _guard = env_guard();
-        let dir = scratch("open_missing");
+        let (_tmp, dir) = scratch("open_missing");
         let mut editor = EditorState::new(None);
         editor._working_dir = dir.clone();
 
@@ -1376,7 +1379,7 @@ mod refusing_unreadable_files {
     #[test]
     fn ctrl_o_opens_an_unsupported_file_as_view_only() {
         let _guard = env_guard();
-        let dir = scratch("open_view");
+        let (_tmp, dir) = scratch("open_view");
         let path = sjis_file(&dir);
         let mut editor = EditorState::new(None);
         editor._working_dir = dir.clone();
@@ -1394,7 +1397,7 @@ mod refusing_unreadable_files {
     #[test]
     fn ctrl_o_resolves_a_relative_name_against_working_dir() {
         let _guard = env_guard();
-        let dir = scratch("open_relative");
+        let (_tmp, dir) = scratch("open_relative");
         fs::write(dir.join("note.md"), "hello\n").unwrap();
 
         let mut editor = EditorState::new(None);
@@ -1420,12 +1423,13 @@ mod byte_for_byte_round_trip {
     use crate::state::{EditorState, TextBuffer};
     use std::fs;
 
-    fn scratch(name: &str) -> PathBuf {
-        let base =
-            std::env::temp_dir().join(format!("cozy_roundtrip_{}_{}", std::process::id(), name));
-        let _ = fs::remove_dir_all(&base);
-        fs::create_dir_all(&base).unwrap();
-        base
+    fn scratch(name: &str) -> (tempfile::TempDir, PathBuf) {
+        let tmp = tempfile::Builder::new()
+            .prefix(&format!("cozy_roundtrip_{name}_"))
+            .tempdir()
+            .unwrap();
+        let base = tmp.path().to_path_buf();
+        (tmp, base)
     }
 
     /// ⚠️ `expand_tilde` が `HOME` / `COZY_SANDBOX_ROOT` を読むので、それを差し替える
@@ -1439,7 +1443,7 @@ mod byte_for_byte_round_trip {
     /// 開いて、**何も編集せず**保存し、ファイルのバイト列を返す。
     fn open_then_save(name: &str, original: &[u8]) -> Vec<u8> {
         let _guard = env_guard();
-        let dir = scratch(name);
+        let (_tmp, dir) = scratch(name);
         let path = dir.join("subject.txt");
         fs::write(&path, original).unwrap();
 
@@ -1567,12 +1571,13 @@ mod read_only_files {
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
 
-    fn scratch(name: &str) -> PathBuf {
-        let base =
-            std::env::temp_dir().join(format!("cozy_ro_test_{}_{}", std::process::id(), name));
-        let _ = fs::remove_dir_all(&base);
-        fs::create_dir_all(&base).unwrap();
-        base
+    fn scratch(name: &str) -> (tempfile::TempDir, PathBuf) {
+        let tmp = tempfile::Builder::new()
+            .prefix(&format!("cozy_ro_test_{name}_"))
+            .tempdir()
+            .unwrap();
+        let base = tmp.path().to_path_buf();
+        (tmp, base)
     }
 
     fn editor_with(lines: &[&str]) -> EditorState {
@@ -1602,7 +1607,7 @@ mod read_only_files {
     /// 🚨 **本丸** —— 読み取り専用は、ハードリンクの有無によらず**同じ結果**になる。
     #[test]
     fn read_only_is_refused_the_same_way_on_both_paths() {
-        let dir = scratch("refused");
+        let (_tmp, dir) = scratch("refused");
         for (name, linked) in [("single", false), ("linked", true)] {
             let (path, before) = subject(&dir, name, 0o444, linked);
             let err = try_save(&path).expect_err(&format!("{name}: 444 なのに保存できてしまった"));
@@ -1627,7 +1632,7 @@ mod read_only_files {
     /// ⭐ ハードリンクの有無を**両方**撃つ —— 経路が 2 本あるのはここでも同じ。
     #[test]
     fn writable_files_still_save_on_both_paths() {
-        let dir = scratch("writable");
+        let (_tmp, dir) = scratch("writable");
         for (name, linked) in [("single", false), ("linked", true)] {
             let (path, _) = subject(&dir, name, 0o644, linked);
             try_save(&path).unwrap_or_else(|e| panic!("{name}: 644 なのに保存できない: {e}"));
@@ -1639,7 +1644,7 @@ mod read_only_files {
     /// `metadata` が無いので検査を素通りすること。
     #[test]
     fn a_new_file_is_not_read_only() {
-        let dir = scratch("new");
+        let (_tmp, dir) = scratch("new");
         let path = dir.join("fresh.txt");
         try_save(&path).unwrap();
         assert_eq!(fs::read_to_string(&path).unwrap(), "edited\n");
@@ -1653,7 +1658,7 @@ mod read_only_files {
         let _guard = HOME_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let dir = scratch("startup");
+        let (_tmp, dir) = scratch("startup");
         let (ro, _) = subject(&dir, "ro.txt", 0o444, false);
         match load_startup_document(ro.to_str()) {
             StartupDocument::File { read_only, .. } => {
@@ -1675,7 +1680,7 @@ mod read_only_files {
     /// 「読み取り専用」と名乗ると**嘘の理由**になるので、そこは下の経路へ渡す。
     #[test]
     fn only_a_permission_error_counts_as_refused() {
-        let dir = scratch("refused_kind");
+        let (_tmp, dir) = scratch("refused_kind");
         let (ro, _) = subject(&dir, "ro.txt", 0o444, false);
         let meta = fs::metadata(&ro).unwrap();
         assert!(
@@ -1712,7 +1717,7 @@ mod read_only_files {
     /// `O_TRUNC` を付けると、検査そのものがファイルを空にする。
     #[test]
     fn probing_does_not_touch_the_contents() {
-        let dir = scratch("probe");
+        let (_tmp, dir) = scratch("probe");
         let (rw, before) = subject(&dir, "rw.txt", 0o644, false);
         let meta = fs::metadata(&rw).unwrap();
         assert!(!write_is_refused(&rw, &meta));
@@ -1729,7 +1734,7 @@ mod read_only_files {
     /// **root でも印は出る**。この 2 つが別基準であることをここで固定しておく。
     #[test]
     fn the_badge_and_the_refusal_are_different_questions() {
-        let dir = scratch("two_questions");
+        let (_tmp, dir) = scratch("two_questions");
         let (ro, _) = subject(&dir, "ro.txt", 0o444, false);
         let meta = fs::metadata(&ro).unwrap();
         // 印は mode を見る ＝ 誰が走らせていても出る。
@@ -1749,7 +1754,7 @@ mod read_only_files {
     /// グループにだけ書ける（`0o464`）ようなファイルは、ここでは拒まない。
     #[test]
     fn only_a_file_with_no_write_bit_at_all_counts() {
-        let dir = scratch("bits");
+        let (_tmp, dir) = scratch("bits");
         let (ro, _) = subject(&dir, "none", 0o444, false);
         assert!(is_read_only(&fs::metadata(&ro).unwrap()));
         let (group, _) = subject(&dir, "group", 0o464, false);
@@ -1775,12 +1780,13 @@ mod legacy_encodings {
     /// EUC-JP の「これはEUC」＋改行。
     const EUCJP: &[u8] = &[0xa4, 0xb3, 0xa4, 0xec, 0xa4, 0xcf, 0x45, 0x55, 0x43, 0x0a];
 
-    fn scratch(name: &str) -> PathBuf {
-        let base =
-            std::env::temp_dir().join(format!("cozy_enc_test_{}_{}", std::process::id(), name));
-        let _ = fs::remove_dir_all(&base);
-        fs::create_dir_all(&base).unwrap();
-        base
+    fn scratch(name: &str) -> (tempfile::TempDir, PathBuf) {
+        let tmp = tempfile::Builder::new()
+            .prefix(&format!("cozy_enc_test_{name}_"))
+            .tempdir()
+            .unwrap();
+        let base = tmp.path().to_path_buf();
+        (tmp, base)
     }
 
     fn guard() -> std::sync::MutexGuard<'static, ()> {
@@ -1792,7 +1798,7 @@ mod legacy_encodings {
     /// 開いて、無編集で保存し、ファイルのバイト列を返す。
     fn open_then_save(name: &str, bytes: &[u8]) -> (Vec<u8>, FileFormat) {
         let _g = guard();
-        let dir = scratch(name);
+        let (_tmp, dir) = scratch(name);
         let path = dir.join("subject.txt");
         fs::write(&path, bytes).unwrap();
         let (lines, format) = match load_startup_document(path.to_str()) {
@@ -1824,7 +1830,7 @@ mod legacy_encodings {
     #[test]
     fn an_edit_is_written_back_in_the_same_encoding() {
         let _g = guard();
-        let dir = scratch("edit");
+        let (_tmp, dir) = scratch("edit");
         let path = dir.join("subject.txt");
         fs::write(&path, SJIS).unwrap();
         let (lines, format) = match load_startup_document(path.to_str()) {
@@ -1849,7 +1855,7 @@ mod legacy_encodings {
     #[test]
     fn a_file_in_no_supported_encoding_opens_but_cannot_be_saved() {
         let _g = guard();
-        let dir = scratch("refused");
+        let (_tmp, dir) = scratch("refused");
         let path = dir.join("subject.txt");
         let junk: &[u8] = &[0xff, 0xfe, 0x80, 0x81, 0x0a];
         fs::write(&path, junk).unwrap();

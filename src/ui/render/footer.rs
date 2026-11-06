@@ -44,6 +44,37 @@ pub fn render_shortcuts(editor: &EditorState, f: &mut Frame, area: Rect) {
     }
 }
 
+/// プレビューに URL の画像があるときの右の一言: まだ取っていなければ `i:images N`、
+/// 取得中は `images k/N`。全部片付いたら（取れた・取れなかった）何も出さない。
+fn remote_images_note(editor: &EditorState) -> String {
+    #[cfg(feature = "remote-images")]
+    {
+        use crate::imageview::fetch::{Status, status};
+        let urls = &editor.markdown_remote_images;
+        if urls.is_empty() {
+            return String::new();
+        }
+        let states: Vec<Option<Status>> = urls.iter().map(|u| status(u)).collect();
+        let total = urls.len();
+        if states.iter().any(Option::is_none) {
+            return format!("i:images {total}  ");
+        }
+        let pending = states
+            .iter()
+            .filter(|s| matches!(s, Some(Status::Pending)))
+            .count();
+        if pending > 0 {
+            return format!("images {}/{total}  ", total - pending);
+        }
+        String::new()
+    }
+    #[cfg(not(feature = "remote-images"))]
+    {
+        let _ = editor;
+        String::new()
+    }
+}
+
 fn shortcut_bar_style(editor: &EditorState) -> Style {
     Style::default().bg(config_color(
         editor.config.footer_bg.as_deref(),
@@ -210,7 +241,12 @@ pub fn render_status_bar(editor: &EditorState, f: &mut Frame, area: Rect) {
                     .position(|&i| i == tree.selected)
                     .map(|p| p + 1)
                     .unwrap_or(0);
-                (left, format!("{}/{} ", pos, vis.len()))
+                // 裏の索引が途中なら件数を出す —— `/` が全体に届いていないことを黙らない（`#24`）。
+                let right = match tree.indexing_progress() {
+                    Some(found) => format!("{}/{}  indexing {} ", pos, vis.len(), found),
+                    None => format!("{}/{} ", pos, vis.len()),
+                };
+                (left, right)
             }
             None => (" Browse".to_string(), String::new()),
         },
@@ -229,7 +265,7 @@ pub fn render_status_bar(editor: &EditorState, f: &mut Frame, area: Rect) {
             let pos = (editor.markdown_cursor_line + 1).min(total.max(1));
             (
                 format!(" Markdown{}{}", hint, status),
-                format!("{}/{} ", pos, total.max(1)),
+                format!("{}{}/{} ", remote_images_note(editor), pos, total.max(1)),
             )
         }
         // `View`（`czv`）。⭐ **名前は Edit と同じ出し方**（利用者は同じファイルを見ている）
