@@ -23,3 +23,8 @@ include = ["README.ja.md", "config.example.toml"]
 # Where the shell installer puts the binary. Not CARGO_HOME: the audience for a
 # prebuilt binary is the one without a Rust toolchain.
 install-path = "~/.local/bin"
+
+# GitHub retired the `macos-14` image that dist 0.32 picks for Apple Silicon by default
+# ("The configuration 'macos-14-arm64-us-default' is not supported"). Name a current one.
+[dist.github-custom-runners]
+aarch64-apple-darwin = "macos-15"
